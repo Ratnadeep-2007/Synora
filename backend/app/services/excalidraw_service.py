@@ -298,20 +298,45 @@ class ExcalidrawService:
         if not state:
             raise ExcalidrawError(f"Project '{project_id}' has no ProjectState.")
 
-        agent_workflow = json.loads(state.agent_workflow_json) if state.agent_workflow_json else []
         nodes_before = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
 
-        # Target nodes based on Project State
-        # If user is in workflow, prepend User
-        nodes_after = list(agent_workflow)
-        if "User" not in nodes_after:
-            nodes_after = ["User"] + nodes_after
+        # Architecture is the semantic visual model. The old agent_workflow field
+        # is retained only for database compatibility and is never used to build
+        # the living visual workspace.
+        architecture_items = json.loads(state.architecture_json) if state.architecture_json else []
+        nodes_from_architecture = []
+        for item in architecture_items:
+            if isinstance(item, dict):
+                label = item.get("name") or item.get("title") or item.get("label")
+            else:
+                label = str(item)
+            if label and label not in nodes_from_architecture:
+                nodes_from_architecture.append(label)
+
+        baseline_nodes = [
+            "Sources / Evidence",
+            "One Shared Synora Agent",
+            "Internal Capabilities",
+            "Deterministic Guardrails",
+            "Authoritative Project State",
+            "Excalidraw Living Workspace",
+        ]
+        nodes_after = []
+        for node in baseline_nodes + nodes_from_architecture:
+            if node not in nodes_after:
+                nodes_after.append(node)
 
         nodes_added = [n for n in nodes_after if n not in nodes_before]
         nodes_removed = [n for n in nodes_before if n not in nodes_after]
 
         connections_before = [f"{nodes_before[i]} -> {nodes_before[i+1]}" for i in range(len(nodes_before) - 1)]
-        connections_after = [f"{nodes_after[i]} -> {nodes_after[i+1]}" for i in range(len(nodes_after) - 1)]
+        connections_after = [
+            "Sources / Evidence -> One Shared Synora Agent",
+            "One Shared Synora Agent -> Internal Capabilities",
+            "Internal Capabilities -> Deterministic Guardrails",
+            "Deterministic Guardrails -> Authoritative Project State",
+            "Authoritative Project State -> Excalidraw Living Workspace",
+        ]
 
         diff_preview = {
             "nodes_before": nodes_before,
