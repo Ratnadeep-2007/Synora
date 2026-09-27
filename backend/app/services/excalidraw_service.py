@@ -392,8 +392,8 @@ class ExcalidrawService:
         """
         AI Visual Architecture Generator (Role B - Output):
         Synthesizes an intelligent, multi-tier system architecture diagram for Excalidraw,
-        incorporating client channels, application core, autonomous workforce agents,
-        DeepSeek AI intelligence engine, and persistence layers with living decision/requirement cards.
+        incorporating client channels, application core, one shared Synora Agent,
+        NVIDIA NIM / DeepSeek semantic intelligence, and persistence layers with living decision/requirement cards.
         """
         artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
         state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
@@ -402,7 +402,7 @@ class ExcalidrawService:
         project_obj = db.query(Project).filter(Project.id == project_id).first()
         project_name = project_obj.name if project_obj else f"Project {project_id}"
 
-        workflow = json.loads(state.agent_workflow_json) if (state and state.agent_workflow_json) else []
+        workflow = []
         decisions = json.loads(state.decisions_json) if (state and state.decisions_json) else []
         requirements = json.loads(state.requirements_json) if (state and state.requirements_json) else []
 
@@ -744,7 +744,7 @@ class ExcalidrawService:
         """
         AI Visual Architecture Scene Compiler:
         Produces a rich, multi-tier system architecture diagram for Excalidraw,
-        complete with presentation tier, core AI workforce, persistence layers,
+        complete with presentation tier, core shared Synora Agent, persistence layers,
         connected directional flow arrows, and living decision/requirement sticky cards.
         """
         raw_elements: List[Dict[str, Any]] = []
@@ -757,8 +757,8 @@ class ExcalidrawService:
             "y": 40,
             "width": 1180,
             "height": 55,
-            "backgroundColor": "#1e1b4b",
-            "strokeColor": "#4338ca",
+            "backgroundColor": "#173f35",
+            "strokeColor": "#173f35",
             "fillStyle": "solid",
             "strokeWidth": 2,
             "roundness": {"type": 3},
@@ -1144,7 +1144,7 @@ class ExcalidrawService:
         if not dec_list:
             dec_list = [
                 {"title": "Adopt DeepSeek on NVIDIA NIM", "source": "Architecture Review", "evidence_ref": "EV-DEC-001"},
-                {"title": "One Project = One Project Agent Context", "source": "Core Principle", "evidence_ref": "EV-DEC-002"},
+                {"title": "Projects are context and security boundaries", "source": "Core Principle", "evidence_ref": "EV-DEC-002"},
                 {"title": "Non-Destructive Proposal Gating", "source": "Safety Standard", "evidence_ref": "EV-DEC-003"},
                 {"title": "Multi-Channel Baileys WhatsApp Gateway", "source": "Integration Spec", "evidence_ref": "EV-DEC-004"},
             ]
