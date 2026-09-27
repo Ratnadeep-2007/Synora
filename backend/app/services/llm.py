@@ -193,98 +193,39 @@ class DeterministicRuleLLMClient(LLMClient):
         return items
 
 
-class NvidiaNimLLMClient(LLMClient):
-    """
-    OpenAI-compatible LLM Client for NVIDIA NIM hosting DeepSeek (e.g. deepseek-ai/deepseek-r1).
-    Provides structured JSON extraction and falls back to DeterministicRuleLLMClient on failure.
-    """
+class OllamaLLMClient(LLMClient):
+    """Local Ollama semantic inference client; no recurring external API bill required."""
 
-    def __init__(
-        self,
-        api_key: str,
-        model_name: str = "deepseek-ai/deepseek-r1",
-        base_url: str = "https://integrate.api.nvidia.com/v1",
-        timeout_seconds: float = 30.0,
-    ):
-        self.api_key = api_key
-        self.model_name = model_name
+    def __init__(self, base_url: str, model_name: str, timeout_seconds: float = 120.0):
         self.base_url = base_url.rstrip("/")
+        self.model_name = model_name
         self.timeout_seconds = timeout_seconds
-        self._fallback_client = DeterministicRuleLLMClient()
 
     def generate_structured(self, prompt: str, schema: Type[T]) -> T:
-        """
-        Calls NVIDIA NIM chat completion endpoint with DeepSeek model and parses response into schema.
-        Falls back gracefully to deterministic rule engine if API key is invalid or request fails.
-        """
-        if not self.api_key or self.api_key.startswith("your-") or not self.api_key.strip():
-            logger.info("NVIDIA NIM API key not configured. Using deterministic rule engine.")
-            return self._fallback_client.generate_structured(prompt, schema)
-
         import httpx
-
-        system_instruction = (
-            "You are an enterprise software architecture intelligence extraction model for Synora. "
-            "Analyze the meeting or chat dialogue evidence and extract architectural candidate items: "
-            "proposals, requirements, confirmed decisions, questions, assumptions, and action items. "
-            "For each item, specify category ('proposal', 'requirement_candidate', 'decision_candidate', 'question', 'assumption', 'action_item'), "
-            "classification ('PROPOSAL', 'REQUIREMENT', 'DECISION', 'QUESTION', 'ASSUMPTION', 'ACTION_ITEM'), "
-            "title (concise), content (summary text), confidence (float between 0.0 and 1.0), and evidence_ids (array of evidence IDs from the prompt). "
-            "Respond strictly in valid JSON matching this schema: "
-            "{\"items\": [{\"category\": \"...\", \"classification\": \"...\", \"title\": \"...\", \"content\": \"...\", \"confidence\": 0.95, \"evidence_ids\": [\"ev_...\"]}]}"
-        )
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
         payload = {
             "model": self.model_name,
             "messages": [
-                {"role": "system", "content": system_instruction},
+                {"role": "system", "content": (
+                    "You are Synora, an evidence-first enterprise project intelligence agent. "
+                    "Return only JSON matching the requested schema. Never invent evidence."
+                )},
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"},
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.1},
         }
-
         try:
             with httpx.Client(timeout=self.timeout_seconds) as client:
-                resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
-                if resp.status_code != 200:
-                    logger.warning(
-                        f"NVIDIA NIM returned HTTP {resp.status_code}: {resp.text[:200]}. Falling back to rule engine."
-                    )
-                    return self._fallback_client.generate_structured(prompt, schema)
-
-                res_json = resp.json()
-                content = res_json["choices"][0]["message"]["content"]
-                parsed = json.loads(content)
-
-                if schema == ExtractionBatchResult:
-                    items = []
-                    raw_items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
-                    for it in raw_items:
-                        items.append(CandidateItemDTO(
-                            category=it.get("category", "proposal"),
-                            classification=it.get("classification", ClassificationEnum.PROPOSAL),
-                            title=it.get("title", "Candidate"),
-                            content=it.get("content", ""),
-                            confidence=float(it.get("confidence", 0.9)),
-                            evidence_ids=it.get("evidence_ids", []),
-                        ))
-                    return ExtractionBatchResult(
-                        items=items,
-                        model=f"nvidia-nim/{self.model_name}",
-                        prompt_version="v2.0-deepseek",
-                    )  # type: ignore
-
+                response = client.post(f"{self.base_url}/api/chat", json=payload)
+                response.raise_for_status()
+                parsed = json.loads(response.json()["message"]["content"])
                 return schema.model_validate(parsed)
-
         except Exception as exc:
-            logger.warning(f"NVIDIA NIM DeepSeek call failed: {exc}. Using deterministic rule engine fallback.")
-            return self._fallback_client.generate_structured(prompt, schema)
+            logger.warning("Ollama semantic inference unavailable: %s", exc)
+            return DeterministicRuleLLMClient().generate_structured(prompt, schema)
+
 
 
 def get_default_llm_client() -> LLMClient:
