@@ -443,19 +443,18 @@ class ExcalidrawService:
             project_id=project_id,
             tenant_id=tenant_id,
             derived_from_state_version=state_version,
-            status=ExcalidrawProposalStatus.APPROVED.value if direct_apply else ExcalidrawProposalStatus.PENDING.value,
+            status=ExcalidrawProposalStatus.PENDING.value,
             reason=reason,
             proposed_elements_json=json.dumps(proposed_elements),
             diff_preview_json=json.dumps(diff_preview),
             evidence_ids_json="[]",
         )
-        # Consequential visual changes stay proposal-first. direct_apply remains an explicit
-        # escape hatch for trusted callers only.
+        # Consequential visual changes stay proposal-first.
+        db.add(proposal)
+
         if direct_apply:
             now = datetime.now(timezone.utc)
-            proposal.approved_at = now
-            proposal.approved_by = actor_id
-
+            db.flush()
             previous_revision = (
                 db.query(ExcalidrawRevision)
                 .filter(
@@ -464,6 +463,9 @@ class ExcalidrawService:
                 )
                 .first()
             )
+            proposal.status = ExcalidrawProposalStatus.APPROVED.value
+            proposal.approved_at = now
+            proposal.approved_by = actor_id
             artifact.elements_json = json.dumps(proposed_elements)
             artifact.extracted_nodes_json = json.dumps(nodes_after)
             artifact.version += 1
@@ -474,11 +476,11 @@ class ExcalidrawService:
                 parent_revision_id=previous_revision.id if previous_revision else None,
                 derived_from_state_version=state_version,
                 change_summary={"action": "direct_apply_ai_visual", "reason": reason},
+                source_event_ids=[],
                 proposal_id=proposal.id,
                 actor_id=actor_id,
             )
 
-        db.add(proposal)
         db.commit()
         db.refresh(proposal)
         if direct_apply:
