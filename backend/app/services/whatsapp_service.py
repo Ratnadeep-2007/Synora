@@ -470,7 +470,8 @@ class WhatsAppIntelligenceService:
 
         # Check for core decision / action clause
         core_match = re.search(
-            r"(?:we have decided to|we decided to|decided to|agreed to|confirmed that|confirmed:|let's|switch to|integrate|add)\s+([^.,;\n]+)",
+            r"(?:we have decided to|we decided to|decided to|agreed to|confirmed that|confirmed:|let's|switch to|integrate|add)\s+([^.,;
+]+)",
             first_line,
             re.IGNORECASE,
         )
