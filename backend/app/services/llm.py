@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Type, TypeVar
 from pydantic import BaseModel
 
 from app.schemas.intelligence import CandidateItemDTO, ClassificationEnum, ExtractionBatchResult
+from app.schemas.context import ContextResolutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,17 @@ class DeterministicRuleLLMClient(LLMClient):
         if schema == ExtractionBatchResult:
             items = self._analyze_prompt_evidence(prompt)
             return ExtractionBatchResult(items=items, model=self.model_name, prompt_version="v1.0")  # type: ignore
+
+        if schema == ContextResolutionResult:
+            return ContextResolutionResult(
+                status="unknown",
+                selected_project_id=None,
+                confidence=0.0,
+                reasoning="Semantic context inference unavailable; deterministic resolver will decide.",
+                candidates=[],
+                model=self.model_name,
+                prompt_version="context-v1",
+            )  # type: ignore
 
         raise NotImplementedError(f"Deterministic client does not support schema {schema}")
 
@@ -223,16 +235,27 @@ class NvidiaNimLLMClient(LLMClient):
 
         import httpx
 
-        system_instruction = (
-            "You are an enterprise software architecture intelligence extraction model for Synora. "
-            "Analyze the meeting or chat dialogue evidence and extract architectural candidate items: "
-            "proposals, requirements, confirmed decisions, questions, assumptions, and action items. "
-            "For each item, specify category ('proposal', 'requirement_candidate', 'decision_candidate', 'question', 'assumption', 'action_item'), "
-            "classification ('PROPOSAL', 'REQUIREMENT', 'DECISION', 'QUESTION', 'ASSUMPTION', 'ACTION_ITEM'), "
-            "title (concise), content (summary text), confidence (float between 0.0 and 1.0), and evidence_ids (array of evidence IDs from the prompt). "
-            "Respond strictly in valid JSON matching this schema: "
-            "{\"items\": [{\"category\": \"...\", \"classification\": \"...\", \"title\": \"...\", \"content\": \"...\", \"confidence\": 0.95, \"evidence_ids\": [\"ev_...\"]}]}"
-        )
+        if schema == ContextResolutionResult:
+            system_instruction = (
+                "You are Synora's project-context resolution model. "
+                "Given source content plus bounded existing project summaries, determine which supplied project(s) the content belongs to. "
+                "Never invent a project ID. Prefer ambiguous or unknown over an unsafe assignment. "
+                "Use only candidate project IDs supplied in the prompt. "
+                "Return resolved only when one project is clearly supported, ambiguous when multiple are plausible, and unknown when evidence is insufficient. "
+                "Return JSON fields: status, selected_project_id, confidence, reasoning, candidates, model, prompt_version. "
+                "Each candidate must contain project_id, project_name, confidence, reasons."
+            )
+        else:
+            system_instruction = (
+                "You are an enterprise software architecture intelligence extraction model for Synora. "
+                "Analyze the meeting or chat dialogue evidence and extract architectural candidate items: "
+                "proposals, requirements, confirmed decisions, questions, assumptions, and action items. "
+                "For each item, specify category ('proposal', 'requirement_candidate', 'decision_candidate', 'question', 'assumption', 'action_item'), "
+                "classification ('PROPOSAL', 'REQUIREMENT', 'DECISION', 'QUESTION', 'ASSUMPTION', 'ACTION_ITEM'), "
+                "title (concise), content (summary text), confidence (float between 0.0 and 1.0), and evidence_ids (array of evidence IDs from the prompt). "
+                "Respond strictly in valid JSON matching this schema: "
+                "{\"items\": [{\"category\": \"...\", \"classification\": \"...\", \"title\": \"...\", \"content\": \"...\", \"confidence\": 0.95, \"evidence_ids\": [\"ev_...\"]}]}"
+            )
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
