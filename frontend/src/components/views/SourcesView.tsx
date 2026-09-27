@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { CheckCircle2, MessageCircle, PenTool, RefreshCw, Shield, Video } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { CheckCircle2, Loader2, MessageCircle, PenTool, RefreshCw, Shield, Upload, Video } from "lucide-react";
 import { SourceConnection, WhatsAppStatus } from "@/lib/types";
 import { api } from "@/lib/api";
 
@@ -21,6 +21,9 @@ function Status({ active, label }: { active: boolean; label: string }) {
 
 export function SourcesView({ connections, subscriptionsActive = false, lastMeetEventAt = null, pendingMeetEvents = 0, onConnectGoogle, onSyncGoogleMeet, onNavigateToArchitecture }: SourcesViewProps) {
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadFeedback, setUploadFeedback] = useState<{ success: boolean; message: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const googleConn = connections.find((c) => c.provider === "google");
 
   useEffect(() => {
@@ -31,6 +34,28 @@ export function SourcesView({ connections, subscriptionsActive = false, lastMeet
     const timer = setInterval(fetchStatus, 4000);
     return () => clearInterval(timer);
   }, []);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    setUploadFeedback(null);
+    try {
+      const res = await api.uploadWhatsAppExport(file);
+      setUploadFeedback({
+        success: true,
+        message: `Imported ${res.processed_count} messages (${res.matched_count} matched, ${res.visual_proposals_created} proposals created).`,
+      });
+    } catch (err: any) {
+      setUploadFeedback({
+        success: false,
+        message: err.message || "Failed to import export file.",
+      });
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const googleConnected = googleConn?.status === "active";
   const sessionStatus = waStatus?.details?.session_status || waStatus?.status || "unconfigured";
@@ -113,7 +138,44 @@ export function SourcesView({ connections, subscriptionsActive = false, lastMeet
               <p>Start the Baileys bridge via <code className="px-1 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">start.bat</code> and scan the QR code using WhatsApp &gt; Linked Devices.</p>
             </div>
           )}
-          <div className="mt-4 p-3 rounded-lg bg-canvas border border-border text-[11px] text-text-muted">
+
+          <div className="mt-4 pt-3 border-t border-border">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept=".zip"
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md border border-border bg-surface text-xs font-semibold text-text-main hover:bg-canvas disabled:opacity-50 transition-colors"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                  <span>Ingesting export…</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-3.5 h-3.5 text-text-muted" />
+                  <span>Import Chat Export (.zip)</span>
+                </>
+              )}
+            </button>
+            {uploadFeedback && (
+              <p
+                className={`mt-2 text-[11px] ${
+                  uploadFeedback.success ? "text-success" : "text-error"
+                }`}
+              >
+                {uploadFeedback.message}
+              </p>
+            )}
+          </div>
+
+          <div className="mt-3 p-3 rounded-lg bg-canvas border border-border text-[11px] text-text-muted">
             Messages enter Synora as evidence and are matched to a project context under connector policy.
           </div>
         </section>

@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
 
-    model_config = SettingsConfigDict(env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(".env", "backend/.env", "../.env"), env_file_encoding="utf-8", extra="ignore")
 
     @property
     def is_google_oauth_configured(self) -> bool:

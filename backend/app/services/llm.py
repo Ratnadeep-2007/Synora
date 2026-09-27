@@ -259,7 +259,17 @@ class NvidiaNimLLMClient(LLMClient):
                     return self._fallback_client.generate_structured(prompt, schema)
 
                 res_json = resp.json()
-                content = res_json["choices"][0]["message"]["content"]
+                msg = res_json["choices"][0]["message"]
+                content = msg.get("content") or msg.get("reasoning_content") or ""
+                if not content or not content.strip():
+                    logger.warning("NVIDIA NIM DeepSeek returned empty content. Falling back to rule engine.")
+                    return self._fallback_client.generate_structured(prompt, schema)
+
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+
                 parsed = json.loads(content)
 
                 if schema == ExtractionBatchResult:

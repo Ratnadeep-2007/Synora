@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, List, Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ClassificationEnum(str, Enum):
@@ -24,6 +24,29 @@ class CandidateItemDTO(BaseModel):
     content: str
     confidence: float = Field(0.85, ge=0.0, le=1.0)
     evidence_ids: List[str] = Field(..., min_length=1, description="Must reference at least one evidence ID")
+
+    @field_validator("classification", mode="before")
+    @classmethod
+    def normalize_classification(cls, v: Any) -> Any:
+        if isinstance(v, ClassificationEnum):
+            return v
+        s = str(v).strip().upper().replace(" ", "_").replace("-", "_")
+        lookup = {
+            "IDEA": ClassificationEnum.IDEA,
+            "PROPOSAL": ClassificationEnum.PROPOSAL,
+            "DISCUSSION": ClassificationEnum.DISCUSSION,
+            "DECISION": ClassificationEnum.DECISION,
+            "REJECTED": ClassificationEnum.REJECTED,
+            "SUPERSEDED": ClassificationEnum.SUPERSEDED,
+            "QUESTION": ClassificationEnum.QUESTION,
+            "REQUIREMENT": ClassificationEnum.REQUIREMENT,
+            "ASSUMPTION": ClassificationEnum.ASSUMPTION,
+            "ACTION_ITEM": ClassificationEnum.ACTION_ITEM,
+            "ACTIONITEM": ClassificationEnum.ACTION_ITEM,
+            "INFORMATIONAL": ClassificationEnum.DISCUSSION,
+            "INFO": ClassificationEnum.DISCUSSION,
+        }
+        return lookup.get(s, ClassificationEnum.DISCUSSION)
 
 
 class ExtractionBatchResult(BaseModel):

@@ -1,7 +1,10 @@
+import base64
 import json
 import logging
+import re
+import time
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -14,6 +17,7 @@ from app.models.source_event import SourceEvent
 from app.models.user import User
 from app.services.ingestion_service import IngestionService
 from app.services.whatsapp_service import WhatsAppIntelligenceService
+from app.services.whatsapp_export_parser import WhatsAppZipParser
 from app.services.metrics import metrics
 
 logger = logging.getLogger(__name__)
@@ -292,5 +296,123 @@ def get_whatsapp_history(
             "reasoning": meta.get("reasoning"),
         })
     return results
+
+
+@router.post("/whatsapp/import-export", summary="Import WhatsApp Chat Export Archive (.zip)")
+async def import_whatsapp_export(
+    file: UploadFile = File(..., description="WhatsApp exported chat .zip archive"),
+    target_project: Optional[str] = Query(None, description="Optional target project ID (e.g. proj_default)"),
+    limit: Optional[int] = Query(None, ge=1, le=2000, description="Optional limit of messages to process"),
+    include_media: bool = Query(True, description="Process voice notes (Whisper) and diagram images (Vision)"),
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
+) -> Dict[str, Any]:
+    """
+    Bulk imports an exported WhatsApp chat archive (.zip) into Synora.
+    Extracts text messages, parses timestamps and speakers, attaches referenced
+    audio notes / diagrams, passes them through Context Intelligence and Knowledge Extraction,
+    and creates Living Workspace (Excalidraw) proposals for human review.
+    """
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .zip WhatsApp export files are supported.",
+        )
+
+    try:
+        content_bytes = await file.read()
+        parser = WhatsAppZipParser(content_bytes)
+        parsed_messages = parser.parse_messages()
+    except Exception as exc:
+        logger.error(f"Failed to parse WhatsApp export zip: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid WhatsApp export zip: {exc}",
+        )
+
+    total_parsed = len(parsed_messages)
+    if limit and limit > 0:
+        parsed_messages = parsed_messages[:limit]
+
+    tenant_id = "default_tenant"
+    if x_user_id:
+        user = db.query(User).filter(User.id == x_user_id).first()
+        if user and hasattr(user, "tenant_id") and user.tenant_id:
+            tenant_id = user.tenant_id
+
+    matched_count = 0
+    unknown_count = 0
+    proposals_count = 0
+    audio_transcriptions = 0
+    images_analyzed = 0
+
+    group_name = file.filename.replace(".zip", "")
+    if "WhatsApp Chat with " in group_name:
+        group_name = group_name.replace("WhatsApp Chat with ", "")
+
+    t_start = time.time()
+
+    for idx, msg in enumerate(parsed_messages, 1):
+        sender = msg["sender"]
+        text = msg["text"]
+        attachment = msg["attachment"]
+
+        if target_project:
+            text = f"[{target_project}] {text}"
+
+        sender_jid = f"{re.sub(r'[^a-zA-Z0-9]', '', sender).lower() or 'user'}@s.whatsapp.net"
+        message_id = f"wamid_export_{int(time.time()*1000)}_{idx}"
+
+        payload: Dict[str, Any] = {
+            "message_id": message_id,
+            "sender_jid": sender_jid,
+            "sender_name": sender,
+            "group_jid": "120363025812345678@g.us",
+            "group_name": group_name,
+            "text": text,
+        }
+
+        if include_media and attachment:
+            raw_media = parser.read_attachment_bytes(attachment)
+            if raw_media:
+                b64 = base64.b64encode(raw_media).decode("utf-8")
+                if attachment.lower().endswith((".opus", ".ogg", ".mp3", ".m4a")):
+                    payload["audio_base64"] = b64
+                    payload["media_type"] = "audio"
+                    payload["filename"] = attachment
+                    audio_transcriptions += 1
+                elif attachment.lower().endswith((".jpg", ".png", ".jpeg", ".webp")):
+                    payload["image_base64"] = b64
+                    payload["media_type"] = "image"
+                    payload["filename"] = attachment
+                    images_analyzed += 1
+
+        try:
+            res = whatsapp_service.process_incoming_message(payload, db, tenant_id=tenant_id)
+            if res.get("status") == "unknown_context":
+                unknown_count += 1
+            elif res.get("matched_project"):
+                matched_count += 1
+            if res.get("visual_proposal_pending"):
+                proposals_count += 1
+        except Exception as exc:
+            logger.warning(f"Error processing export message {idx}: {exc}")
+
+    elapsed = time.time() - t_start
+
+    return {
+        "ok": True,
+        "filename": file.filename,
+        "total_in_archive": total_parsed,
+        "processed_count": len(parsed_messages),
+        "target_project": target_project,
+        "matched_count": matched_count,
+        "unknown_context_count": unknown_count,
+        "visual_proposals_created": proposals_count,
+        "audio_transcriptions": audio_transcriptions,
+        "images_analyzed": images_analyzed,
+        "elapsed_seconds": round(elapsed, 2),
+    }
+
 
 
