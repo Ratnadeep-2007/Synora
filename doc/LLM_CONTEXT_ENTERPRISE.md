@@ -33,8 +33,7 @@ For incoming Slack/WhatsApp/source events:
 The model proposes. Deterministic state services validate and persist. Human approval is required for configured high-impact changes.
 
 ## Excalidraw rule
-Generate visual structures, not prose. Prefer:
-nodes, arrows, groups, short labels, icons, relationships, decision markers, requirement markers, and compact evidence references.
+Generate visual structures, not prose. Prefer nodes, arrows, groups, short labels, icons, relationships, decision markers, requirement markers, and compact evidence references.
 
 For high-impact visual updates:
 proposal → visual diff → human approval → apply.
@@ -42,7 +41,7 @@ proposal → visual diff → human approval → apply.
 Never inject raw model output directly into Excalidraw.
 
 ## Model provider
-Ollama is the default local inference provider. Provider abstraction permits optional paid adapters. If semantic inference is unavailable, report that fact and use only deterministic operations that are actually supported.
+NVIDIA NIM + DeepSeek is the primary semantic intelligence provider for Synora. Provider abstraction permits future adapters, but the supported product path is NVIDIA NIM. If NIM is unavailable, report semantic inference as unavailable rather than fabricating an AI result.
 
 ## Forbidden behavior
 Never fabricate evidence, state, project membership, tool execution, source connectivity, synchronization status, or AI confidence. Never reveal hidden reasoning. Never cross project boundaries without authorization.
