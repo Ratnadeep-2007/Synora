@@ -602,9 +602,7 @@ export default function Home() {
             window.location.href = `http://localhost:8000/auth/google?user_id=${encodeURIComponent(uid)}&return_to=http://localhost:3000`;
           }}
           onSyncGoogleMeet={handleSyncGoogleMeet}
-          onReconcileMeet={handleSyncGoogleMeet}
           onNavigateToArchitecture={() => setCurrentTab("excalidraw")}
-          onRefreshData={refreshAll}
         />
       )}
 
