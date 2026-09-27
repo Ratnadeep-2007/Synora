@@ -44,6 +44,10 @@ interface VisualRevisionDiff {
   removed_elements: any[];
   changed_elements: any[];
   unchanged_count: number;
+  overlay_elements?: any[];
+  added_count?: number;
+  removed_count?: number;
+  changed_count?: number;
 }
 import { ExcalidrawCanvas } from "@/components/canvas/ExcalidrawCanvas";
 import { ExcalidrawSyncBar } from "@/components/common/ExcalidrawSyncBar";
@@ -91,6 +95,7 @@ export function ArchitectureView({
   const [selectedRevision, setSelectedRevision] = useState<number | null>(null);
   const [revisionDiff, setRevisionDiff] = useState<VisualRevisionDiff | null>(null);
   const [isComparing, setIsComparing] = useState(false);
+  const [previewRevision, setPreviewRevision] = useState<VisualRevision | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -370,7 +375,7 @@ export function ArchitectureView({
                     {onLoadRevision && (
                       <button
                         className="px-2.5 py-1.5 text-xs font-medium bg-surface border border-border rounded-md hover:bg-surface/80"
-                        onClick={() => onLoadRevision(revision)}
+                        onClick={() => setPreviewRevision(revision)}
                       >
                         View
                       </button>
@@ -427,9 +432,43 @@ export function ArchitectureView({
               </div>
               <div className="mt-3 p-3 rounded-lg bg-surface border border-border text-xs text-text-muted">
                 Comparison is non-destructive. The main canvas stays on the latest revision; history is shown only for comparison.
+                {revisionDiff.overlay_elements?.length
+                  ? ` ${revisionDiff.overlay_elements.length} overlay elements are prepared for visual comparison.`
+                  : ""}
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {previewRevision && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6">
+          <div className="w-full max-w-6xl h-[86vh] bg-surface border border-border rounded-xl shadow-xl flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <div>
+                <div className="text-sm font-semibold text-text-main">
+                  Historical revision v{previewRevision.revision_number}
+                </div>
+                <div className="text-xs text-text-muted">
+                  Read-only preview. The live canvas remains on the latest revision.
+                </div>
+              </div>
+              <button
+                className="px-3 py-1.5 text-xs font-medium border border-border rounded-md hover:bg-canvas"
+                onClick={() => setPreviewRevision(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <ExcalidrawCanvas
+                projectName={`${artifact?.name || "Architecture"} · v${previewRevision.revision_number}`}
+                version={previewRevision.revision_number}
+                initialElements={previewRevision.snapshot?.elements || []}
+                initialAppState={previewRevision.snapshot?.app_state}
+              />
+            </div>
+          </div>
         </div>
       )}
 
