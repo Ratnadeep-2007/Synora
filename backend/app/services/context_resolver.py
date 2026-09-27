@@ -106,6 +106,10 @@ class ContextResolverService:
             )
         return records
 
+    def embed_and_rank(self, *args: Any, **kwargs: Any) -> List[ContextCandidate]:
+        """Reserved for pgvector-backed semantic ranking; lexical/state ranking is used until embeddings are configured."""
+        return []
+
     @staticmethod
     def _metadata_text(metadata: Optional[Dict[str, Any]]) -> str:
         if not metadata:
