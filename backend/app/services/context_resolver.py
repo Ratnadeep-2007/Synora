@@ -456,8 +456,7 @@ class ContextResolverService:
             # Bound the context sent to the model.
             lines.append(json.dumps(record, ensure_ascii=True))
 
-        return "
-".join(lines)
+        return "\n".join(lines)
 
     def move_unknown_evidence_to_project(
         self,
