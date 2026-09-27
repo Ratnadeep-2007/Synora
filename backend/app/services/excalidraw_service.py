@@ -829,10 +829,10 @@ class ExcalidrawService:
         })
 
         t1_components = [
-            ("comp_web_app", "🖥️ Next.js 15 Web Client\nReact 19 • Canvas UI\nState & Approval Console", "#e0e7ff", "#4338ca"),
-            ("comp_meet_ingest", "📹 Google Meet Ingestor\nCloud REST v2 • Pub/Sub\nTranscript Synchronization", "#fee2e2", "#dc2626"),
-            ("comp_wa_gateway", "💬 WhatsApp Gateway\nBaileys WebSockets\nNatural ChatOps & Alerts", "#dcfce7", "#16a34a"),
-            ("comp_slack_bot", "⚡ Slack Events Bot\nSlack Events API\nHandoff Webhooks & Context", "#fef3c7", "#d97706"),
+            ("comp_web_app", "Next.js Web Client\nControl room & visual workspace", "#ffffff", "#173f35"),
+            ("comp_meet_ingest", "Google Meet\nNative transcript + Events API", "#ffffff", "#6b7280"),
+            ("comp_wa_gateway", "WhatsApp\nBaileys group messages", "#ffffff", "#6b7280"),
+            ("comp_excalidraw_input", "Excalidraw\nVisual evidence + workspace", "#ffffff", "#6b7280"),
         ]
         card_w = 265
         card_spacing = 25
@@ -840,8 +840,8 @@ class ExcalidrawService:
         card_y = t1_y + 38
         card_h = 100
 
-        for idx, (cid, ctext, bg_col, strk_col) in enumerate(t1_components):
-            cx = start_cx + idx * (card_w + card_spacing)
+        for idx2, (cid, ctext, bg_col, strk_col) in enumerate(t1_components):
+            cx = start_cx + idx2 * (card_w + card_spacing)
             raw_elements.append({
                 "id": cid,
                 "type": "rectangle",
@@ -866,7 +866,7 @@ class ExcalidrawService:
                 "text": ctext,
                 "fontSize": 12,
                 "fontFamily": 1,
-                "strokeColor": "#0f172a",
+                "strokeColor": "#173f35",
                 "textAlign": "left",
                 "containerId": cid,
             })
