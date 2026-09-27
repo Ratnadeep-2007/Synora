@@ -333,13 +333,12 @@ class ProjectAgentService:
         from the removed agent_workflow model. Visual regeneration is delegated to
         the Excalidraw service's canonical project-state renderer.
         """
-        state = self.state_service.get_or_create_state(project_id, db)
-        artifact = self.excal_service.get_or_create_artifact(
+        self.state_service.get_or_create_state(project_id, db)
+        return self.excal_service.get_or_create_artifact(
             project_id=project_id,
             db=db,
             tenant_id=tenant_id,
         )
-        return artifact
 
     def format_project_agent_read(self, agent: ProjectAgent, db: Session) -> ProjectAgentRead:
         """Formats the ProjectAgent domain model into a typed read DTO."""
