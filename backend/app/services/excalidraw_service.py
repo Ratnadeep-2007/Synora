@@ -835,10 +835,14 @@ class ExcalidrawService:
         rect("zone_sources", 80, zone_y, 1180, 165)
         text("zone_sources_title", 98, zone_y + 12, 500, 20, "SOURCES & CONTEXT", 12)
         source_cards = [
-            ("google_meet", "Google Meet\nNative transcript"),
-            ("whatsapp", "WhatsApp\nBaileys messages"),
-            ("excalidraw_input", "Excalidraw\nVisual evidence"),
-            ("context_intel", "Context Intelligence\nResolve project / quarantine"),
+            ("google_meet", "Google Meet
+Native transcript"),
+            ("whatsapp", "WhatsApp
+Baileys messages"),
+            ("excalidraw_input", "Excalidraw
+Visual evidence"),
+            ("context_intel", "Context Intelligence
+Resolve project / quarantine"),
         ]
         card_w, gap, card_y, card_h = 265, 25, zone_y + 42, 98
         for i, (cid, value) in enumerate(source_cards):
@@ -855,7 +859,8 @@ class ExcalidrawService:
         rect("synora_agent_core", 155, agent_y + 45, 320, 120, "#173f35")
         raw_elements[-1]["backgroundColor"] = "#f7fbf9"
         text("synora_agent_title", 175, agent_y + 60, 280, 24, "Synora Agent", 16)
-        text("synora_agent_desc", 175, agent_y + 91, 280, 54, "Understands project context\nand coordinates semantic work", 12)
+        text("synora_agent_desc", 175, agent_y + 91, 280, 54, "Understands project context
+and coordinates semantic work", 12)
 
         capability_x = 525
         caps = [
@@ -903,11 +908,14 @@ class ExcalidrawService:
         rect("visual_box", 80, visual_y, 1180, 150)
         text("visual_title", 98, visual_y + 12, 520, 20, "LIVING VISUAL WORKSPACE", 12)
         rect("visual_current", 120, visual_y + 45, 430, 72)
-        text("visual_current_txt", 138, visual_y + 62, 395, 40, "Latest revision\nClean current architecture", 13)
+        text("visual_current_txt", 138, visual_y + 62, 395, 40, "Latest revision
+Clean current architecture", 13)
         rect("visual_history", 600, visual_y + 45, 280, 72)
-        text("visual_history_txt", 618, visual_y + 62, 245, 40, "Visual history\nImmutable revisions", 12)
+        text("visual_history_txt", 618, visual_y + 62, 245, 40, "Visual history
+Immutable revisions", 12)
         rect("visual_compare", 910, visual_y + 45, 290, 72)
-        text("visual_compare_txt", 928, visual_y + 62, 255, 40, "Compare\nPrevious ↔ Current", 12)
+        text("visual_compare_txt", 928, visual_y + 62, 255, 40, "Compare
+Previous ↔ Current", 12)
 
         # Flow arrows between tiers
         arrow("flow_sources_agent", 670, zone_y + 165, 0, 45)
@@ -920,11 +928,13 @@ class ExcalidrawService:
         for idx, item in enumerate((decisions or [])[:3]):
             rect(f"decision_{idx}", 80 + idx * 390, cursor_y, 360, 78)
             value = item.get("title") or item.get("text") or item.get("decision") or f"Decision {idx + 1}"
-            text(f"decision_{idx}_txt", 94 + idx * 390, cursor_y + 12, 332, 52, f"Decision\n{value}", 10)
+            text(f"decision_{idx}_txt", 94 + idx * 390, cursor_y + 12, 332, 52, f"Decision
+{value}", 10)
         for idx, item in enumerate((requirements or [])[:3]):
             rect(f"requirement_{idx}", 80 + idx * 390, cursor_y + 95, 360, 78)
             value = item.get("title") or item.get("text") or item.get("requirement") or f"Requirement {idx + 1}"
-            text(f"requirement_{idx}_txt", 94 + idx * 390, cursor_y + 107, 332, 52, f"Requirement\n{value}", 10)
+            text(f"requirement_{idx}_txt", 94 + idx * 390, cursor_y + 107, 332, 52, f"Requirement
+{value}", 10)
 
         return [self._normalize_element(el, idx=i) for i, el in enumerate(raw_elements, 1)]
 
@@ -1013,7 +1023,8 @@ class ExcalidrawService:
             "y": t1_y + 10,
             "width": 920,
             "height": 35,
-            "text": "📥 SOURCES & EVIDENCE INGESTION\nGoogle Meet Transcripts • WhatsApp Communications • Document & Architecture Uploads",
+            "text": "📥 SOURCES & EVIDENCE INGESTION
+Google Meet Transcripts • WhatsApp Communications • Document & Architecture Uploads",
             "fontSize": 11,
             "fontFamily": 1,
             "strokeColor": "#1e293b",
@@ -1118,7 +1129,9 @@ class ExcalidrawService:
                 "y": cap_y + 12,
                 "width": cap_w - 12,
                 "height": cap_h - 24,
-                "text": f"⚡ {cap_name}\n\n{cap_desc}",
+                "text": f"⚡ {cap_name}
+
+{cap_desc}",
                 "fontSize": 10,
                 "fontFamily": 1,
                 "strokeColor": "#064e3b",
@@ -1164,7 +1177,8 @@ class ExcalidrawService:
             "y": t3_y + 10,
             "width": 920,
             "height": 35,
-            "text": "🛡️ DETERMINISTIC GUARDRAILS & PIPELINE SYNTHESIS\nValidation Rules • Schema Constraints • Semantic Conflict Detection • Non-Destructive Invariant Checks",
+            "text": "🛡️ DETERMINISTIC GUARDRAILS & PIPELINE SYNTHESIS
+Validation Rules • Schema Constraints • Semantic Conflict Detection • Non-Destructive Invariant Checks",
             "fontSize": 11,
             "fontFamily": 1,
             "strokeColor": "#1e3a8a",
@@ -1210,7 +1224,8 @@ class ExcalidrawService:
             "y": t4_y + 10,
             "width": 920,
             "height": 35,
-            "text": "🗄️ AUTHORITATIVE PROJECT STATE (PostgreSQL)\nSingle System of Record • Immutable Version Snapshots • Canonical Source of Truth",
+            "text": "🗄️ AUTHORITATIVE PROJECT STATE (PostgreSQL)
+Single System of Record • Immutable Version Snapshots • Canonical Source of Truth",
             "fontSize": 11,
             "fontFamily": 1,
             "strokeColor": "#92400e",
@@ -1256,7 +1271,8 @@ class ExcalidrawService:
             "y": t5_y + 10,
             "width": 920,
             "height": 35,
-            "text": "🎨 EXCALIDRAW LIVING WORKSPACE (Visual System Model)\nInteractive Architecture Canvas • Human Review & Approval Gates for Consequential Changes",
+            "text": "🎨 EXCALIDRAW LIVING WORKSPACE (Visual System Model)
+Interactive Architecture Canvas • Human Review & Approval Gates for Consequential Changes",
             "fontSize": 11,
             "fontFamily": 1,
             "strokeColor": "#5b21b6",
@@ -1314,7 +1330,11 @@ class ExcalidrawService:
                 })
 
                 # Card Text
-                card_body = f"DECISION\n{d_title}\n\nSOURCE: {d_source}\nEVIDENCE: {d_evidence}"
+                card_body = f"DECISION
+{d_title}
+
+SOURCE: {d_source}
+EVIDENCE: {d_evidence}"
                 raw_elements.append({
                     "id": text_id,
                     "type": "text",
@@ -1377,7 +1397,8 @@ class ExcalidrawService:
                     "y": req_y + 40,
                     "width": 205,
                     "height": 65,
-                    "text": f"REQUIREMENT\n{r_title}",
+                    "text": f"REQUIREMENT
+{r_title}",
                     "fontSize": 10,
                     "fontFamily": 1,
                     "strokeColor": "#1e3a8a",
