@@ -244,7 +244,7 @@ export function ExcalidrawCanvas({
         <div className="flex items-center gap-1.5">
           <Info className="w-3 h-3 text-primary" />
           <span>
-            The Project Agent outputs System Architecture pipelines, Living Decision Cards (emerald), and Requirements (blue) directly onto this canvas.
+            Synora maintains the living visual workspace from project evidence, approved state, and reviewed visual proposals.
           </span>
         </div>
         <div className="font-mono text-[10px]">
