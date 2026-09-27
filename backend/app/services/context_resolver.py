@@ -465,8 +465,6 @@ class ContextResolverService:
             lines.append(json.dumps(record, ensure_ascii=True))
 
         return "\n".join(lines)
-".join(lines)
-
     def move_unknown_evidence_to_project(
         self,
         evidence_id: str,
