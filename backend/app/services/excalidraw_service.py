@@ -741,516 +741,156 @@ class ExcalidrawService:
         requirements: Optional[List[Dict[str, Any]]] = None,
         focus_prompt: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        AI Visual Architecture Scene Compiler:
-        Produces a rich, multi-tier system architecture diagram for Excalidraw,
-        complete with presentation tier, core shared Synora Agent, persistence layers,
-        connected directional flow arrows, and living decision/requirement sticky cards.
-        """
+        """Build a clean, deterministic Excalidraw architecture scene."""
         raw_elements: List[Dict[str, Any]] = []
 
-        # 0. Modern Banner Header
-        raw_elements.append({
-            "id": "banner_ai_box",
-            "type": "rectangle",
-            "x": 80,
-            "y": 40,
-            "width": 1180,
-            "height": 55,
-            "backgroundColor": "#173f35",
-            "strokeColor": "#173f35",
-            "fillStyle": "solid",
-            "strokeWidth": 2,
-            "roundness": {"type": 3},
-            "roughness": 1,
-        })
-        title_text = f"📐 {project_name.upper()} • LIVING EXCALIDRAW BLUEPRINT"
-        raw_elements.append({
-            "id": "banner_ai_title",
-            "type": "text",
-            "x": 100,
-            "y": 48,
-            "width": 1140,
-            "height": 24,
-            "text": title_text,
-            "fontSize": 15,
-            "fontFamily": 1,
-            "strokeColor": "#ffffff",
-            "textAlign": "left",
-            "containerId": "banner_ai_box",
-        })
-        sub_text = "ONE SHARED SYNORA AGENT • DETERMINISTIC GUARDRAILS • POSTGRESQL SYSTEM OF RECORD"
-        if focus_prompt:
-            sub_text += f" • FOCUS: {focus_prompt.upper()}"
-        raw_elements.append({
-            "id": "banner_ai_sub",
-            "type": "text",
-            "x": 100,
-            "y": 72,
-            "width": 1140,
-            "height": 18,
-            "text": sub_text,
-            "fontSize": 10,
-            "fontFamily": 1,
-            "strokeColor": "#d1d5db",
-            "textAlign": "left",
-            "containerId": "banner_ai_box",
-        })
+        def rect(element_id: str, x: float, y: float, w: float, h: float, stroke: str = "#d1d5db"):
+            raw_elements.append({
+                "id": element_id,
+                "type": "rectangle",
+                "x": x, "y": y, "width": w, "height": h,
+                "backgroundColor": "#ffffff",
+                "strokeColor": stroke,
+                "fillStyle": "solid",
+                "strokeWidth": 2,
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
 
-        # 1. Tier 1: Presentation & Ingress Zone
-        t1_x, t1_y, t1_w, t1_h = 80, 115, 1180, 160
-        raw_elements.append({
-            "id": "zone_t1_box",
-            "type": "rectangle",
-            "x": t1_x,
-            "y": t1_y,
-            "width": t1_w,
-            "height": t1_h,
-            "backgroundColor": "#f5f3ff",
-            "strokeColor": "#818cf8",
-            "fillStyle": "solid",
-            "strokeWidth": 2,
-            "strokeStyle": "dashed",
-            "roundness": {"type": 3},
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "zone_t1_title",
-            "type": "text",
-            "x": t1_x + 15,
-            "y": t1_y + 10,
-            "width": 450,
-            "height": 20,
-            "text": "TIER 1: PRESENTATION & MULTI-CHANNEL INGESTION",
-            "fontSize": 12,
-            "fontFamily": 1,
-            "strokeColor": "#4f46e5",
-            "textAlign": "left",
-        })
+        def text(element_id: str, x: float, y: float, w: float, h: float, value: str, size: int = 12, stroke: str = "#173f35"):
+            raw_elements.append({
+                "id": element_id,
+                "type": "text",
+                "x": x, "y": y, "width": w, "height": h,
+                "text": value,
+                "fontSize": size,
+                "fontFamily": 1,
+                "strokeColor": stroke,
+                "textAlign": "left",
+            })
 
-        t1_components = [
-            ("comp_web_app", "Next.js Web Client\nControl room & visual workspace", "#ffffff", "#173f35"),
-            ("comp_meet_ingest", "Google Meet\nNative transcript + Events API", "#ffffff", "#6b7280"),
-            ("comp_wa_gateway", "WhatsApp\nBaileys group messages", "#ffffff", "#6b7280"),
-            ("comp_excalidraw_input", "Excalidraw\nVisual evidence + workspace", "#ffffff", "#6b7280"),
+        def arrow(element_id: str, x: float, y: float, dx: float, dy: float):
+            raw_elements.append({
+                "id": element_id,
+                "type": "arrow",
+                "x": x, "y": y, "width": dx, "height": dy,
+                "points": [[0, 0], [dx, dy]],
+                "endArrowhead": "arrow",
+                "strokeColor": "#6b7280",
+                "strokeWidth": 2,
+                "roughness": 1,
+            })
+
+        # Header
+        rect("banner_ai_box", 80, 40, 1180, 58, "#173f35")
+        raw_elements[-1]["backgroundColor"] = "#173f35"
+        text("banner_ai_title", 102, 49, 1130, 22, f"{project_name.upper()} • LIVING EXCALIDRAW BLUEPRINT", 15, "#ffffff")
+        text(
+            "banner_ai_sub",
+            102,
+            75,
+            1130,
+            16,
+            "Sources → Context Intelligence → One Shared Synora Agent → Guardrails → Project State → Visual Workspace",
+            10,
+            "#d1d5db",
+        )
+
+        # Sources / context
+        zone_y = 125
+        rect("zone_sources", 80, zone_y, 1180, 165)
+        text("zone_sources_title", 98, zone_y + 12, 500, 20, "SOURCES & CONTEXT", 12)
+        source_cards = [
+            ("google_meet", "Google Meet\nNative transcript"),
+            ("whatsapp", "WhatsApp\nBaileys messages"),
+            ("excalidraw_input", "Excalidraw\nVisual evidence"),
+            ("context_intel", "Context Intelligence\nResolve project / quarantine"),
         ]
-        card_w = 265
-        card_spacing = 25
-        start_cx = t1_x + 25
-        card_y = t1_y + 38
-        card_h = 100
+        card_w, gap, card_y, card_h = 265, 25, zone_y + 42, 98
+        for i, (cid, value) in enumerate(source_cards):
+            x = 105 + i * (card_w + gap)
+            rect(cid, x, card_y, card_w, card_h)
+            text(f"{cid}_txt", x + 14, card_y + 15, card_w - 28, card_h - 26, value, 12)
+        for i in range(4):
+            arrow(f"source_arrow_{i}", 105 + i * (card_w + gap) + card_w / 2, card_y + card_h, 0, 25)
 
-        for idx2, (cid, ctext, bg_col, strk_col) in enumerate(t1_components):
-            cx = start_cx + idx2 * (card_w + card_spacing)
-            raw_elements.append({
-                "id": cid,
-                "type": "rectangle",
-                "x": cx,
-                "y": card_y,
-                "width": card_w,
-                "height": card_h,
-                "backgroundColor": bg_col,
-                "strokeColor": strk_col,
-                "fillStyle": "solid",
-                "strokeWidth": 2,
-                "roundness": {"type": 3},
-                "roughness": 1,
-            })
-            raw_elements.append({
-                "id": f"{cid}_txt",
-                "type": "text",
-                "x": cx + 12,
-                "y": card_y + 15,
-                "width": card_w - 24,
-                "height": card_h - 30,
-                "text": ctext,
-                "fontSize": 12,
-                "fontFamily": 1,
-                "strokeColor": "#173f35",
-                "textAlign": "left",
-                "containerId": cid,
-            })
+        # Shared intelligence
+        agent_y = 325
+        rect("zone_agent", 80, agent_y, 1180, 205)
+        text("zone_agent_title", 98, agent_y + 12, 650, 20, "ONE SHARED SYNORA AGENT", 12)
+        rect("synora_agent_core", 155, agent_y + 45, 320, 120, "#173f35")
+        raw_elements[-1]["backgroundColor"] = "#f7fbf9"
+        text("synora_agent_title", 175, agent_y + 60, 280, 24, "Synora Agent", 16)
+        text("synora_agent_desc", 175, agent_y + 91, 280, 54, "Understands project context\nand coordinates semantic work", 12)
 
-        # 2. Tier 2: Synora Agent Intelligence & Deterministic Pipeline
-        t2_x, t2_y, t2_w, t2_h = 80, 310, 1180, 200
-        raw_elements.append({
-            "id": "zone_t2_box",
-            "type": "rectangle",
-            "x": t2_x,
-            "y": t2_y,
-            "width": t2_w,
-            "height": t2_h,
-            "backgroundColor": "#ecfdf5",
-            "strokeColor": "#10b981",
-            "fillStyle": "solid",
-            "strokeWidth": 2,
-            "strokeStyle": "dashed",
-            "roundness": {"type": 3},
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "zone_t2_title",
-            "type": "text",
-            "x": t2_x + 15,
-            "y": t2_y + 10,
-            "width": 500,
-            "height": 20,
-            "text": "TIER 2: SYNORA AGENT INTELLIGENCE & DETERMINISTIC PIPELINE",
-            "fontSize": 12,
-            "fontFamily": 1,
-            "strokeColor": "#059669",
-            "textAlign": "left",
-        })
-
-        t2_components = [
-            ("comp_context", "Context Intelligence\nWhich project?\nMeet • WhatsApp • Excalidraw", "#ffffff", "#173f35"),
-            ("comp_synora_agent", "One Shared Synora Agent\nUnderstand • Analyze • Propose\nProject-scoped context", "#ffffff", "#173f35"),
-            ("comp_capabilities", "Internal Capabilities\nBusiness • Planning • Functional\nTechnical • Frappe / ERP", "#ffffff", "#6b7280"),
-            ("comp_guardrails", "Deterministic Guardrails\nPermissions • Validation • State gates\nNo unsafe auto-apply", "#ffffff", "#6b7280"),
+        capability_x = 525
+        caps = [
+            "Understand requirements",
+            "Analyze decisions",
+            "Detect conflicts",
+            "Reason about architecture",
         ]
-        card_y2 = t2_y + 40
-        card_h2 = 135
+        for i, label in enumerate(caps):
+            x = capability_x + (i % 2) * 320
+            y = agent_y + 45 + (i // 2) * 62
+            rect(f"cap_{i}", x, y, 285, 48)
+            text(f"cap_{i}_txt", x + 12, y + 12, 260, 24, label, 11)
+        text(
+            "model_note",
+            525,
+            agent_y + 168,
+            600,
+            22,
+            "Semantic intelligence: NVIDIA NIM + DeepSeek",
+            11,
+            "#6b7280",
+        )
 
-        for idx, (cid, ctext, bg_col, strk_col) in enumerate(t2_components):
-            cx = start_cx + idx * (card_w + card_spacing)
-            raw_elements.append({
-                "id": cid,
-                "type": "rectangle",
-                "x": cx,
-                "y": card_y2,
-                "width": card_w,
-                "height": card_h2,
-                "backgroundColor": bg_col,
-                "strokeColor": strk_col,
-                "fillStyle": "solid",
-                "strokeWidth": 2,
-                "roundness": {"type": 3},
-                "roughness": 1,
-            })
-            raw_elements.append({
-                "id": f"{cid}_txt",
-                "type": "text",
-                "x": cx + 12,
-                "y": card_y2 + 15,
-                "width": card_w - 24,
-                "height": card_h2 - 30,
-                "text": ctext,
-                "fontSize": 12,
-                "fontFamily": 1,
-                "strokeColor": "#173f35",
-                "textAlign": "left",
-                "containerId": cid,
-            })
+        # Guardrails / state
+        guard_y = 555
+        rect("guardrails_box", 80, guard_y, 1180, 120)
+        text("guardrails_title", 98, guard_y + 12, 330, 20, "DETERMINISTIC GUARDRAILS", 12)
+        text(
+            "guardrails_desc",
+            98,
+            guard_y + 42,
+            720,
+            52,
+            "Project authorization • schema validation • idempotency • conflict gates • human approval",
+            12,
+        )
+        rect("state_box", 850, guard_y + 20, 370, 80, "#173f35")
+        raw_elements[-1]["backgroundColor"] = "#f7fbf9"
+        text("state_title", 870, guard_y + 34, 330, 20, "Authoritative Project State", 13)
+        text("state_desc", 870, guard_y + 58, 330, 28, "PostgreSQL • versioned • evidence-backed", 10, "#6b7280")
 
-        # Connectors from Tier 1 to Tier 2
-        raw_elements.append({
-            "id": "arr_web_to_api",
-            "type": "arrow",
-            "x": start_cx + card_w / 2,
-            "y": card_y + card_h,
-            "width": 0,
-            "height": card_y2 - (card_y + card_h),
-            "points": [[0, 0], [0, card_y2 - (card_y + card_h)]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#64748b",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "arr_meet_to_api",
-            "type": "arrow",
-            "x": start_cx + card_w + card_spacing + card_w / 2,
-            "y": card_y + card_h,
-            "width": -(card_w + card_spacing) / 2,
-            "height": card_y2 - (card_y + card_h),
-            "points": [[0, 0], [-(card_w + card_spacing) / 2, card_y2 - (card_y + card_h)]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#dc2626",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "arr_wa_to_api",
-            "type": "arrow",
-            "x": start_cx + 2 * (card_w + card_spacing) + card_w / 2,
-            "y": card_y + card_h,
-            "width": -(card_w + card_spacing),
-            "height": card_y2 - (card_y + card_h),
-            "points": [[0, 0], [-(card_w + card_spacing), card_y2 - (card_y + card_h)]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#16a34a",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
+        # Visual workspace
+        visual_y = 705
+        rect("visual_box", 80, visual_y, 1180, 150)
+        text("visual_title", 98, visual_y + 12, 520, 20, "LIVING VISUAL WORKSPACE", 12)
+        rect("visual_current", 120, visual_y + 45, 430, 72)
+        text("visual_current_txt", 138, visual_y + 62, 395, 40, "Latest revision\nClean current architecture", 13)
+        rect("visual_history", 600, visual_y + 45, 280, 72)
+        text("visual_history_txt", 618, visual_y + 62, 245, 40, "Visual history\nImmutable revisions", 12)
+        rect("visual_compare", 910, visual_y + 45, 290, 72)
+        text("visual_compare_txt", 928, visual_y + 62, 255, 40, "Compare\nPrevious ↔ Current", 12)
 
-        # Inter-Tier 2 Connectors
-        raw_elements.append({
-            "id": "arr_api_to_agent",
-            "type": "arrow",
-            "x": start_cx + card_w,
-            "y": card_y2 + card_h2 / 2,
-            "width": card_spacing,
-            "height": 0,
-            "points": [[0, 0], [card_spacing, 0]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#0284c7",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "arr_agent_to_caps",
-            "type": "arrow",
-            "x": start_cx + card_w + card_spacing + card_w,
-            "y": card_y2 + card_h2 / 2,
-            "width": card_spacing,
-            "height": 0,
-            "points": [[0, 0], [card_spacing, 0]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#db2777",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "arr_caps_to_guardrails",
-            "type": "arrow",
-            "x": start_cx + 2 * (card_w + card_spacing) + card_w,
-            "y": card_y2 + card_h2 / 2,
-            "width": card_spacing,
-            "height": 0,
-            "points": [[0, 0], [card_spacing, 0]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#ea580c",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
+        # Flow arrows between tiers
+        arrow("flow_sources_agent", 670, zone_y + zone_h if False else 290, 0, 35)
+        arrow("flow_agent_guardrails", 670, agent_y + 205, 0, 25)
+        arrow("flow_guardrails_state", 1035, guard_y + 120, 0, 30)
+        arrow("flow_state_visual", 1035, visual_y - 30, 0, 30)
 
-        # 3. Tier 3: Persistence & Authoritative State
-        t3_x, t3_y, t3_w, t3_h = 80, 545, 1180, 160
-        raw_elements.append({
-            "id": "zone_t3_box",
-            "type": "rectangle",
-            "x": t3_x,
-            "y": t3_y,
-            "width": t3_w,
-            "height": t3_h,
-            "backgroundColor": "#ffffff",
-            "strokeColor": "#d1d5db",
-            "fillStyle": "solid",
-            "strokeWidth": 2,
-            "strokeStyle": "dashed",
-            "roundness": {"type": 3},
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "zone_t3_title",
-            "type": "text",
-            "x": t3_x + 15,
-            "y": t3_y + 10,
-            "width": 550,
-            "height": 20,
-            "text": "TIER 3: PERSISTENCE, EVIDENCE PROVENANCE & AUDIT TRAIL",
-            "fontSize": 12,
-            "fontFamily": 1,
-            "strokeColor": "#173f35",
-            "textAlign": "left",
-        })
-
-        t3_components = [
-            ("comp_db_sor", "PostgreSQL Project State\nAuthoritative requirements, decisions, architecture\nVersion history", "#ffffff", "#173f35"),
-            ("comp_evidence_store", "Evidence Provenance\nSourceEvent → Evidence → Candidate\nTraceable source lineage", "#ffffff", "#6b7280"),
-            ("comp_excal_store", "Excalidraw Revisions\nLatest workspace + immutable history\nHuman-approved visual changes", "#ffffff", "#6b7280"),
-        ]
-        card_w3 = 360
-        spacing3 = 30
-        card_y3 = t3_y + 38
-        card_h3 = 100
-
-        for idx, (cid, ctext, bg_col, strk_col) in enumerate(t3_components):
-            cx = start_cx + idx * (card_w3 + spacing3)
-            raw_elements.append({
-                "id": cid,
-                "type": "rectangle",
-                "x": cx,
-                "y": card_y3,
-                "width": card_w3,
-                "height": card_h3,
-                "backgroundColor": bg_col,
-                "strokeColor": strk_col,
-                "fillStyle": "solid",
-                "strokeWidth": 2,
-                "roundness": {"type": 3},
-                "roughness": 1,
-            })
-            raw_elements.append({
-                "id": f"{cid}_txt",
-                "type": "text",
-                "x": cx + 15,
-                "y": card_y3 + 18,
-                "width": card_w3 - 30,
-                "height": card_h3 - 36,
-                "text": ctext,
-                "fontSize": 12,
-                "fontFamily": 1,
-                "strokeColor": "#173f35",
-                "textAlign": "left",
-                "containerId": cid,
-            })
-
-        # Downward arrows from Tier 2 to Tier 3
-        raw_elements.append({
-            "id": "arr_api_to_db",
-            "type": "arrow",
-            "x": start_cx + card_w / 2,
-            "y": card_y2 + card_h2,
-            "width": 0,
-            "height": card_y3 - (card_y2 + card_h2),
-            "points": [[0, 0], [0, card_y3 - (card_y2 + card_h2)]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#d97706",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
-        raw_elements.append({
-            "id": "arr_agent_to_excal",
-            "type": "arrow",
-            "x": start_cx + card_w + card_spacing + card_w / 2,
-            "y": card_y2 + card_h2,
-            "width": 300,
-            "height": card_y3 - (card_y2 + card_h2),
-            "points": [[0, 0], [300, card_y3 - (card_y2 + card_h2)]],
-            "endArrowhead": "arrow",
-            "strokeColor": "#7c3aed",
-            "strokeWidth": 2,
-            "roughness": 1,
-        })
-
-        # 4. Key Decisions & Evidence Provenance Cards Section
-        dec_y = 735
-        raw_elements.append({
-            "id": "lbl_dec_ai_hdr",
-            "type": "text",
-            "x": 80,
-            "y": dec_y,
-            "width": 550,
-            "height": 26,
-            "text": "KEY ARCHITECTURAL DECISIONS & EVIDENCE CITATIONS",
-            "fontSize": 14,
-            "fontFamily": 1,
-            "strokeColor": "#15803d",
-            "textAlign": "left",
-        })
-
-        dec_list = decisions or []
-        if not dec_list:
-            dec_list = [
-                {"title": "Adopt DeepSeek on NVIDIA NIM", "source": "Architecture Review", "evidence_ref": "EV-DEC-001"},
-                {"title": "Projects are context and security boundaries", "source": "Core Principle", "evidence_ref": "EV-DEC-002"},
-                {"title": "Non-Destructive Proposal Gating", "source": "Safety Standard", "evidence_ref": "EV-DEC-003"},
-                {"title": "Multi-Channel Baileys WhatsApp Gateway", "source": "Integration Spec", "evidence_ref": "EV-DEC-004"},
-            ]
-
-        dec_card_w = 270
-        dec_card_h = 105
-        dec_spacing = 20
-        for idx, d in enumerate(dec_list[:4]):
-            dx = 80 + idx * (dec_card_w + dec_spacing)
-            dy = dec_y + 32
-            d_title = d.get("title") or d.get("decision") or d.get("text") or f"Decision #{idx+1}"
-            d_source = d.get("source", "Meeting / Chat")
-            ev_ref = d.get("evidence_ref") or d.get("evidence_id")
-            if not ev_ref and d.get("evidence_ids"):
-                ev_ids = d.get("evidence_ids")
-                ev_ref = ev_ids[0] if isinstance(ev_ids, list) and ev_ids else str(ev_ids)
-            ev_ref = ev_ref or f"EV-{idx+1}"
-
-            card_id = f"ai_dec_box_{idx+1}"
-            raw_elements.append({
-                "id": card_id,
-                "type": "rectangle",
-                "x": dx,
-                "y": dy,
-                "width": dec_card_w,
-                "height": dec_card_h,
-                "backgroundColor": "#dcfce7",
-                "strokeColor": "#16a34a",
-                "fillStyle": "solid",
-                "strokeWidth": 2,
-                "roundness": {"type": 3},
-                "roughness": 1,
-            })
-            raw_elements.append({
-                "id": f"ai_dec_txt_{idx+1}",
-                "type": "text",
-                "x": dx + 12,
-                "y": dy + 12,
-                "width": dec_card_w - 24,
-                "height": dec_card_h - 24,
-                "text": f"DECISION\n{d_title}\n\nSource: {d_source}\nEvidence: {ev_ref}",
-                "fontSize": 11,
-                "fontFamily": 1,
-                "strokeColor": "#14532d",
-                "textAlign": "left",
-                "containerId": card_id,
-            })
-
-        # 5. Active Requirements & Scope Section
-        req_y = 895
-        raw_elements.append({
-            "id": "lbl_req_ai_hdr",
-            "type": "text",
-            "x": 80,
-            "y": req_y,
-            "width": 500,
-            "height": 26,
-            "text": "ACTIVE REQUIREMENTS & SCOPE BOUNDARIES",
-            "fontSize": 14,
-            "fontFamily": 1,
-            "strokeColor": "#1d4ed8",
-            "textAlign": "left",
-        })
-
-        req_list = requirements or []
-        if not req_list:
-            req_list = [
-                {"title": "Zero LLM Hallucinations on Project State"},
-                {"title": "Strict Human Approval for Diagram Mutations"},
-                {"title": "Bi-directional Excalidraw JSON Sync"},
-                {"title": "Sub-Second Extraction with Flash Model"},
-            ]
-
-        for idx, r in enumerate(req_list[:4]):
-            rx = 80 + idx * (dec_card_w + dec_spacing)
-            ry = req_y + 32
-            r_title = r.get("title") or r.get("requirement") or r.get("text") or f"Requirement #{idx+1}"
-            r_id = f"ai_req_box_{idx+1}"
-            raw_elements.append({
-                "id": r_id,
-                "type": "rectangle",
-                "x": rx,
-                "y": ry,
-                "width": dec_card_w,
-                "height": 85,
-                "backgroundColor": "#eff6ff",
-                "strokeColor": "#3b82f6",
-                "fillStyle": "solid",
-                "strokeWidth": 2,
-                "roundness": {"type": 3},
-                "roughness": 1,
-            })
-            raw_elements.append({
-                "id": f"ai_req_txt_{idx+1}",
-                "type": "text",
-                "x": rx + 12,
-                "y": ry + 12,
-                "width": dec_card_w - 24,
-                "height": 60,
-                "text": f"REQUIREMENT\n{r_title}",
-                "fontSize": 11,
-                "fontFamily": 1,
-                "strokeColor": "#1e3a8a",
-                "textAlign": "left",
-                "containerId": r_id,
-            })
+        # Current decisions / requirements are small evidence-backed cards, never raw transcripts.
+        cursor_y = 900
+        for idx, item in enumerate((decisions or [])[:3]):
+            rect(f"decision_{idx}", 80 + idx * 390, cursor_y, 360, 78)
+            value = item.get("title") or item.get("text") or item.get("decision") or f"Decision {idx + 1}"
+            text(f"decision_{idx}_txt", 94 + idx * 390, cursor_y + 12, 332, 52, f"Decision\n{value}", 10)
+        for idx, item in enumerate((requirements or [])[:3]):
+            rect(f"requirement_{idx}", 80 + idx * 390, cursor_y + 95, 360, 78)
+            value = item.get("title") or item.get("text") or item.get("requirement") or f"Requirement {idx + 1}"
+            text(f"requirement_{idx}_txt", 94 + idx * 390, cursor_y + 107, 332, 52, f"Requirement\n{value}", 10)
 
         return [self._normalize_element(el, idx=i) for i, el in enumerate(raw_elements, 1)]
 
