@@ -17,6 +17,7 @@ from app.services.excalidraw_service import ExcalidrawService
 from app.services.ingestion_service import IngestionService
 from app.services.project_agent_service import ProjectAgentService
 from app.services.context_resolver import ContextResolverService, UNKNOWN_CONTEXT_ID, UNKNOWN_CONTEXT_NAME
+from app.services.meeting_intelligence import MeetingIntelligenceService
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,30 @@ class WhatsAppIntelligenceService:
         self.audit_service = audit_service or AuditService()
         self.context_resolver = context_resolver or ContextResolverService()
 
+    def _recent_group_context(
+        self,
+        group_jid: str,
+        db: Session,
+        limit: int = 8,
+    ) -> List[str]:
+        if not group_jid:
+            return []
+        rows = (
+            db.query(Evidence)
+            .filter(Evidence.source == "whatsapp")
+            .order_by(Evidence.created_at.desc())
+            .limit(limit * 4)
+            .all()
+        )
+        context: List[str] = []
+        for ev in rows:
+            meta = json.loads(ev.metadata_json or "{}")
+            if meta.get("group_jid") == group_jid:
+                context.append(ev.content)
+                if len(context) >= limit:
+                    break
+        return list(reversed(context))
+
     def process_incoming_message(
         self,
         payload: Dict[str, Any],
@@ -54,11 +79,9 @@ class WhatsAppIntelligenceService:
         tenant_id: str = "default_tenant",
     ) -> Dict[str, Any]:
         """
-        End-to-end processing of a WhatsApp group chat message:
-        1. Context Disambiguation (which project are they talking about?)
-        2. Idempotent Ingestion & Evidence Generation
-        3. Architectural Candidate Extraction
-        4. Excalidraw Whiteboard Visual Proposal (human approval required)
+        Shared source pipeline for WhatsApp:
+        Source event → Context Intelligence + Knowledge Intelligence → Evidence →
+        deterministic routing → candidate knowledge → reviewable visual proposal.
         """
         raw_text = payload.get("text") or payload.get("caption") or ""
         sender_name = payload.get("sender_name") or payload.get("pushName") or "WhatsApp User"
@@ -68,39 +91,39 @@ class WhatsAppIntelligenceService:
         message_id = payload.get("message_id") or payload.get("id") or f"wamid_{int(datetime.now().timestamp() * 1000)}"
 
         if not raw_text.strip():
-            return {
-                "ok": False,
-                "message": "Empty message ignored",
-                "processed": False,
-            }
+            return {"ok": False, "message": "Empty message ignored", "processed": False}
 
-        # 1. Filter out casual chit-chat (greetings, lunch, coffee, emojis, link requests) -> LEAVE IT
         if self._is_casual_chitchat(raw_text):
             logger.info(
-                f"WhatsApp message from '{sender_name}' in '{group_name}' flagged as casual chit-chat. "
-                "Leaving Excalidraw whiteboards untouched."
+                "WhatsApp message from '%s' in '%s' flagged as casual conversation.",
+                sender_name,
+                group_name,
             )
             return {
                 "ok": True,
                 "processed": False,
                 "status": "ignored",
-                "reason": "Casual conversation / non-project chit-chat (leave it)",
+                "reason": "Casual conversation / non-project chat",
                 "matched_project": None,
                 "confidence": 0.0,
                 "excalidraw_updated": False,
-                "message": "Message ignored: casual chit-chat detected. All project whiteboards left untouched.",
             }
 
-        # 2. Shared context resolution. Meet and WhatsApp use the same resolver.
+        # Build context independently from the knowledge extraction path.
+        recent_context = self._recent_group_context(group_jid, db)
+        resolver_metadata = {
+            "group_name": group_name,
+            "group_jid": group_jid,
+            "source_name": "whatsapp",
+            "sender_name": sender_name,
+            "recent_context": recent_context,
+            "conversation_context": recent_context + [raw_text],
+        }
         context_result = self.context_resolver.resolve(
             text=raw_text,
             db=db,
-            metadata={
-                "group_name": group_name,
-                "group_jid": group_jid,
-                "source_name": "whatsapp",
-                "sender_name": sender_name,
-            },
+            workspace_id="ws_default",
+            metadata=resolver_metadata,
         )
         matched_project, context_result = self.context_resolver.route_or_quarantine(
             result=context_result,
@@ -108,16 +131,11 @@ class WhatsAppIntelligenceService:
             workspace_id="ws_default",
             tenant_id=tenant_id,
         )
+
         project_id = matched_project.id
         confidence = context_result.confidence
         reasoning = context_result.reasoning
-        logger.info(
-            f"WhatsApp Message from '{sender_name}' in group '{group_name}' "
-            f"classified to Project '{matched_project.name}' ({project_id}) "
-            f"with confidence {confidence:.2f}. Reason: {reasoning}"
-        )
 
-        # 2. Ingest SourceEvent
         event_create = SourceEventCreate(
             tenant_id=tenant_id,
             project_id=project_id,
@@ -138,17 +156,16 @@ class WhatsAppIntelligenceService:
                 "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
                 "confidence": confidence,
                 "reasoning": reasoning,
+                "conversation_context": recent_context,
             },
             status="received",
         )
         source_event = self.ingestion_service.ingest_event(event_create, db)
 
-        # 3. Create Immutable Evidence
-        evidence_content = f"WhatsApp [{group_name}] {sender_name}: {raw_text}"
         evidence = self.ingestion_service.create_evidence_from_event(
             event=source_event,
             db=db,
-            content=evidence_content,
+            content=f"WhatsApp [{group_name}] {sender_name}: {raw_text}",
             metadata={
                 "source": "whatsapp",
                 "group_name": group_name,
@@ -158,31 +175,27 @@ class WhatsAppIntelligenceService:
                 "context_status": context_result.status,
                 "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
                 "reasoning": reasoning,
+                "conversation_context": recent_context,
             },
         )
 
-        # 4. Extract Architectural Knowledge (Decisions, Requirements, Nodes)
-        extracted = self._extract_knowledge_and_components(raw_text)
+        # Shared semantic classifier used by both Meet and WhatsApp.
+        intelligence = MeetingIntelligenceService()
+        extracted_candidates = intelligence.analyze_evidence_records(
+            evidence_records=[evidence],
+            project_id=project_id,
+            db=db,
+            meeting_id=None,
+            source_name="whatsapp",
+            context_status=context_result.status,
+            context_confidence=context_result.confidence,
+            context_model=context_result.model,
+        )
 
-        candidate_item = None
-        if extracted["is_actionable"]:
-            candidate_item = CandidateKnowledge(
-                project_id=project_id,
-                category=extracted["category"],
-                title=extracted["title"],
-                content=raw_text,
-                confidence=confidence,
-                status="proposed",
-                evidence_ids_json=json.dumps([evidence.id]),
-            )
-            db.add(candidate_item)
-            db.commit()
-            db.refresh(candidate_item)
+        # Visual extraction is deliberately separate from semantic classification.
+        extracted_visual = self._extract_visual_components(raw_text)
 
-        # 5. Consequential visual changes are proposal-first.
         if context_result.status != "resolved":
-            # Unknown/ambiguous context is intentionally quarantined. Its Evidence remains
-            # available in the Unknown Context project for later human assignment.
             whiteboard_result = {
                 "updated": False,
                 "artifact_version": None,
@@ -192,7 +205,12 @@ class WhatsAppIntelligenceService:
         else:
             whiteboard_result = self.propose_whiteboard_changes(
                 project=matched_project,
-                extracted=extracted,
+                extracted={
+                    "is_actionable": bool(extracted_candidates),
+                    "category": extracted_candidates[0].category if extracted_candidates else "discussion",
+                    "title": extracted_candidates[0].title if extracted_candidates else "",
+                    "nodes_to_add": extracted_visual,
+                },
                 evidence=evidence,
                 sender_name=sender_name,
                 group_name=group_name,
@@ -200,7 +218,6 @@ class WhatsAppIntelligenceService:
                 tenant_id=tenant_id,
             )
 
-        # 6. Audit Logging
         self.audit_service.record_event(
             action="whatsapp_group_message_processed",
             actor_id=sender_name,
@@ -219,22 +236,26 @@ class WhatsAppIntelligenceService:
             },
         )
 
+        primary = extracted_candidates[0] if extracted_candidates else None
         return {
             "ok": True,
             "processed": True,
             "message_id": message_id,
-            "matched_project": {
-                "id": matched_project.id,
-                "name": matched_project.name,
-            } if project_id != UNKNOWN_CONTEXT_ID else {"id": UNKNOWN_CONTEXT_ID, "name": UNKNOWN_CONTEXT_NAME},
+            "matched_project": (
+                {"id": UNKNOWN_CONTEXT_ID, "name": UNKNOWN_CONTEXT_NAME}
+                if project_id == UNKNOWN_CONTEXT_ID
+                else {"id": project_id, "name": matched_project.name}
+            ),
             "context_status": context_result.status,
             "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
             "confidence": confidence,
             "reasoning": reasoning,
             "evidence_id": evidence.id,
-            "candidate_id": candidate_item.id if candidate_item else None,
-            "extracted_category": extracted["category"] if extracted["is_actionable"] else "general_discussion",
-            "extracted_title": extracted["title"] if extracted["is_actionable"] else None,
+            "candidate_id": primary.id if primary else None,
+            "extracted_category": primary.category if primary else "general_discussion",
+            "extracted_title": primary.title if primary else None,
+            "candidate_count": len(extracted_candidates),
+            "semantic_model": extracted_candidates[0].agent_run.model if primary and primary.agent_run else None,
             "excalidraw_updated": whiteboard_result.get("updated", False),
             "artifact_version": whiteboard_result.get("artifact_version"),
             "nodes_added": whiteboard_result.get("nodes_added", []),
@@ -248,6 +269,39 @@ class WhatsAppIntelligenceService:
                 )
             ),
         }
+
+    def _extract_visual_components(self, text: str) -> List[str]:
+        """Deterministic visual-node extraction only; semantic classification lives in MeetingIntelligenceService."""
+        lower = text.lower()
+        component_candidates = [
+            ("digilocker kyc", "Digilocker KYC Service"),
+            ("fraud detection", "Fraud Detection Engine"),
+            ("aml", "AML Verification Engine"),
+            ("hl7 fhir", "HL7 FHIR Validator"),
+            ("fhir", "FHIR Data Bridge"),
+            ("redis", "Redis Session Cache"),
+            ("jwt", "JWT Auth Gateway"),
+            ("celery", "Celery Task Queue"),
+            ("kafka", "Kafka Event Bus"),
+            ("adjudicator", "Claims Adjudication Engine"),
+            ("tax compliance", "Tax Compliance Module"),
+            ("supplier portal", "Supplier Portal DocType"),
+        ]
+        found: List[str] = []
+        for trigger, label in component_candidates:
+            if trigger in lower and label not in found:
+                found.append(label)
+
+        regex_matches = re.findall(
+            r"(?:add|integrate|include|use)\s+([A-Za-z0-9_\-\s]{3,25}?)\s+(?:api|service|engine|module|component|gateway)",
+            text,
+            re.IGNORECASE,
+        )
+        for match in regex_matches:
+            node = f"{match.strip().title()} Service"
+            if node not in found and len(node) < 40:
+                found.append(node)
+        return found
 
 
     def propose_whiteboard_changes(
