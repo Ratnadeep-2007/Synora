@@ -959,6 +959,33 @@ async def get_coordinator_briefing(
 # Excalidraw Visual Architecture Endpoints
 # ==============================================================================
 
+
+@router.get(
+    "/{project_id}/context",
+    summary="Resolve current project context model",
+)
+async def get_project_context(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return project context summary used by the shared context resolver."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+    resolver = ContextResolverService()
+    records = resolver._project_context_records(
+        db,
+        workspace_id=project.workspace_id,
+        exclude_unknown=False,
+    )
+    return {
+        "project_id": project.id,
+        "project_name": project.name,
+        "context": next((r for r in records if r["project_id"] == project.id), None),
+    }
+
+
 @router.get(
     "/{project_id}/excalidraw",
     response_model=ExcalidrawArtifactRead,
