@@ -412,30 +412,6 @@ class ContextResolverService:
                     source="nim+deterministic",
                 )
 
-            if ai_result.status == "ambiguous":
-                # Keep the richer candidate set but never select a project.
-                return ContextResolutionResult(
-                    status="ambiguous",
-                    selected_project_id=None,
-                    confidence=ai_result.confidence,
-                    reasoning=ai_result.reasoning or "AI context analysis found multiple plausible projects.",
-                    candidates=ai_result.candidates or deterministic_candidates[:self.MAX_CANDIDATES_FOR_LLM],
-                    model=ai_result.model,
-                    prompt_version=ai_result.prompt_version,
-                    source="nim+deterministic",
-                )
-
-            if ai_result.status == "unknown":
-                return ContextResolutionResult(
-                    status="unknown",
-                    selected_project_id=None,
-                    confidence=ai_result.confidence,
-                    reasoning=ai_result.reasoning or "AI could not establish sufficient project context.",
-                    candidates=ai_result.candidates or deterministic_candidates[:self.MAX_CANDIDATES_FOR_LLM],
-                    model=ai_result.model,
-                    prompt_version=ai_result.prompt_version,
-                    source="nim+deterministic",
-                )
         except Exception as exc:
             logger.warning("Context NIM resolution failed; falling back to deterministic result: %s", exc)
 
