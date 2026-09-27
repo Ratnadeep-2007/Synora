@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import SynesisException
 from app.models.excalidraw import (
     ExcalidrawArtifact,
+    ExcalidrawRevision,
     ExcalidrawProposal,
     ExcalidrawProposalStatus,
 )
@@ -16,6 +17,8 @@ from app.models.project_state import ProjectState, ProjectStateVersion
 from app.schemas.excalidraw import (
     ExcalidrawArtifactRead,
     ExcalidrawDiffPreview,
+    ExcalidrawRevisionDiffRead,
+    ExcalidrawRevisionRead,
     ExcalidrawIngestRequest,
     ExcalidrawProposalRead,
 )
@@ -79,10 +82,114 @@ class ExcalidrawService:
                 extracted_nodes_json=json.dumps(baseline_nodes),
             )
             db.add(artifact)
+            db.flush()
+            self._create_revision(
+                artifact,
+                db,
+                revision_number=1,
+                actor_id="system",
+                change_summary={"action": "baseline_created", "revision": 1},
+            )
             db.commit()
             db.refresh(artifact)
             logger.info(f"Initialized ExcalidrawArtifact v1 for project '{project_id}'")
         return artifact
+
+
+    def _snapshot_payload(self, artifact: ExcalidrawArtifact) -> Dict[str, Any]:
+        return {
+            "elements": json.loads(artifact.elements_json) if artifact.elements_json else [],
+            "app_state": json.loads(artifact.app_state_json) if artifact.app_state_json else {},
+            "extracted_nodes": json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else [],
+        }
+
+    def _create_revision(
+        self,
+        artifact: ExcalidrawArtifact,
+        db: Session,
+        *,
+        revision_number: Optional[int] = None,
+        derived_from_state_version: Optional[int] = None,
+        parent_revision_id: Optional[str] = None,
+        change_summary: Optional[Dict[str, Any]] = None,
+        source_event_ids: Optional[List[str]] = None,
+        proposal_id: Optional[str] = None,
+        actor_id: str = "system",
+    ) -> ExcalidrawRevision:
+        revision_number = revision_number or artifact.version
+        existing = (
+            db.query(ExcalidrawRevision)
+            .filter(
+                ExcalidrawRevision.artifact_id == artifact.id,
+                ExcalidrawRevision.revision_number == revision_number,
+            )
+            .first()
+        )
+        if existing:
+            return existing
+
+        revision = ExcalidrawRevision(
+            artifact_id=artifact.id,
+            project_id=artifact.project_id,
+            tenant_id=artifact.tenant_id,
+            revision_number=revision_number,
+            parent_revision_id=parent_revision_id,
+            derived_from_state_version=derived_from_state_version,
+            snapshot_json=json.dumps(self._snapshot_payload(artifact)),
+            change_summary_json=json.dumps(change_summary or {}),
+            source_event_ids_json=json.dumps(source_event_ids or []),
+            proposal_id=proposal_id,
+            actor_id=actor_id,
+        )
+        db.add(revision)
+        db.flush()
+        return revision
+
+    def _ensure_current_revision(
+        self,
+        artifact: ExcalidrawArtifact,
+        db: Session,
+        actor_id: str = "system",
+    ) -> ExcalidrawRevision:
+        existing = (
+            db.query(ExcalidrawRevision)
+            .filter(
+                ExcalidrawRevision.artifact_id == artifact.id,
+                ExcalidrawRevision.revision_number == artifact.version,
+            )
+            .first()
+        )
+        if existing:
+            return existing
+        return self._create_revision(
+            artifact,
+            db,
+            actor_id=actor_id,
+            change_summary={"action": "backfill_current_revision", "revision": artifact.version},
+        )
+
+    @staticmethod
+    def _element_diff(
+        old_elements: List[Dict[str, Any]],
+        new_elements: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        old_by_id = {str(e.get("id")): e for e in old_elements if e.get("id")}
+        new_by_id = {str(e.get("id")): e for e in new_elements if e.get("id")}
+        added = [new_by_id[k] for k in new_by_id.keys() - old_by_id.keys()]
+        removed = [old_by_id[k] for k in old_by_id.keys() - new_by_id.keys()]
+        changed = []
+        for key in new_by_id.keys() & old_by_id.keys():
+            before = old_by_id[key]
+            after = new_by_id[key]
+            if json.dumps(before, sort_keys=True) != json.dumps(after, sort_keys=True):
+                changed.append({"before": before, "after": after})
+        unchanged = len(new_by_id.keys() & old_by_id.keys()) - len(changed)
+        return {
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "unchanged": max(0, unchanged),
+        }
 
     def ingest_diagram(
         self,
@@ -123,6 +230,23 @@ class ExcalidrawService:
             artifact.extracted_nodes_json = json.dumps(extracted_nodes)
             artifact.version += 1
 
+        db.flush()
+        parent = (
+            db.query(ExcalidrawRevision)
+            .filter(
+                ExcalidrawRevision.artifact_id == artifact.id,
+                ExcalidrawRevision.revision_number == artifact.version - 1,
+            )
+            .first()
+        )
+        # Revision is tied to the saved artifact state and is immutable.
+        self._create_revision(
+            artifact,
+            db,
+            parent_revision_id=parent.id if parent else None,
+            actor_id="human",
+            change_summary={"action": "manual_ingest", "name": artifact.name},
+        )
         db.commit()
         db.refresh(artifact)
 
@@ -305,10 +429,27 @@ class ExcalidrawService:
             proposal.approved_at = now
             proposal.approved_by = actor_id
 
+            previous_revision = (
+                db.query(ExcalidrawRevision)
+                .filter(
+                    ExcalidrawRevision.artifact_id == artifact.id,
+                    ExcalidrawRevision.revision_number == artifact.version,
+                )
+                .first()
+            )
             artifact.elements_json = json.dumps(proposed_elements)
             artifact.extracted_nodes_json = json.dumps(nodes_after)
             artifact.version += 1
             artifact.updated_at = now
+            self._create_revision(
+                artifact,
+                db,
+                parent_revision_id=previous_revision.id if previous_revision else None,
+                derived_from_state_version=state_version,
+                change_summary={"action": "direct_apply_ai_visual", "reason": reason},
+                proposal_id=proposal.id,
+                actor_id=actor_id,
+            )
 
         db.add(proposal)
         db.commit()
@@ -360,10 +501,28 @@ class ExcalidrawService:
             artifact = db.query(ExcalidrawArtifact).filter(ExcalidrawArtifact.id == proposal.artifact_id).first()
             if artifact:
                 diff_data = json.loads(proposal.diff_preview_json)
+                previous_revision = (
+                    db.query(ExcalidrawRevision)
+                    .filter(
+                        ExcalidrawRevision.artifact_id == artifact.id,
+                        ExcalidrawRevision.revision_number == artifact.version,
+                    )
+                    .first()
+                )
                 artifact.elements_json = proposal.proposed_elements_json
                 artifact.extracted_nodes_json = json.dumps(diff_data.get("nodes_after", []))
                 artifact.version += 1
                 artifact.updated_at = now
+                self._create_revision(
+                    artifact,
+                    db,
+                    parent_revision_id=previous_revision.id if previous_revision else None,
+                    derived_from_state_version=proposal.derived_from_state_version,
+                    change_summary={"action": "proposal_approved", "reason": proposal.reason},
+                    source_event_ids=json.loads(proposal.evidence_ids_json or "[]"),
+                    proposal_id=proposal.id,
+                    actor_id=actor_id,
+                )
 
             self.audit_service.record_event(
                 action="excalidraw_proposal_approved",
@@ -402,6 +561,96 @@ class ExcalidrawService:
             db.refresh(artifact)
 
         return proposal, artifact
+
+
+    def list_revisions(
+        self,
+        project_id: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        limit: int = 50,
+    ) -> List[ExcalidrawRevision]:
+        artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
+        self._ensure_current_revision(artifact, db)
+        db.commit()
+        return (
+            db.query(ExcalidrawRevision)
+            .filter(
+                ExcalidrawRevision.project_id == project_id,
+                ExcalidrawRevision.tenant_id == tenant_id,
+            )
+            .order_by(ExcalidrawRevision.revision_number.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_revision(
+        self,
+        project_id: str,
+        revision_number: int,
+        db: Session,
+        tenant_id: str = "default_tenant",
+    ) -> ExcalidrawRevision:
+        artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
+        self._ensure_current_revision(artifact, db)
+        revision = (
+            db.query(ExcalidrawRevision)
+            .filter(
+                ExcalidrawRevision.project_id == project_id,
+                ExcalidrawRevision.tenant_id == tenant_id,
+                ExcalidrawRevision.revision_number == revision_number,
+            )
+            .first()
+        )
+        if not revision:
+            raise ExcalidrawError(
+                f"Excalidraw revision v{revision_number} not found for project '{project_id}'."
+            )
+        return revision
+
+    def compare_revisions(
+        self,
+        project_id: str,
+        from_revision: int,
+        to_revision: int,
+        db: Session,
+        tenant_id: str = "default_tenant",
+    ) -> ExcalidrawRevisionDiffRead:
+        before = self.get_revision(project_id, from_revision, db, tenant_id=tenant_id)
+        after = self.get_revision(project_id, to_revision, db, tenant_id=tenant_id)
+        old_snapshot = json.loads(before.snapshot_json)
+        new_snapshot = json.loads(after.snapshot_json)
+        diff = self._element_diff(
+            old_snapshot.get("elements", []),
+            new_snapshot.get("elements", []),
+        )
+        return ExcalidrawRevisionDiffRead(
+            project_id=project_id,
+            artifact_id=after.artifact_id,
+            from_revision=from_revision,
+            to_revision=to_revision,
+            added_elements=diff["added"],
+            removed_elements=diff["removed"],
+            changed_elements=diff["changed"],
+            unchanged_count=diff["unchanged"],
+        )
+
+    def format_revision_read(self, revision: ExcalidrawRevision) -> ExcalidrawRevisionRead:
+        return ExcalidrawRevisionRead(
+            id=revision.id,
+            artifact_id=revision.artifact_id,
+            project_id=revision.project_id,
+            tenant_id=revision.tenant_id,
+            revision_number=revision.revision_number,
+            parent_revision_id=revision.parent_revision_id,
+            derived_from_state_version=revision.derived_from_state_version,
+            snapshot=json.loads(revision.snapshot_json),
+            change_summary=json.loads(revision.change_summary_json or "{}"),
+            source_event_ids=json.loads(revision.source_event_ids_json or "[]"),
+            proposal_id=revision.proposal_id,
+            actor_id=revision.actor_id,
+            created_at=revision.created_at,
+        )
 
     def list_proposals(
         self,
