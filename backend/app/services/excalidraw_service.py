@@ -653,6 +653,32 @@ class ExcalidrawService:
             old_snapshot.get("elements", []),
             new_snapshot.get("elements", []),
         )
+
+        def _overlay_element(element: Dict[str, Any], mode: str) -> Dict[str, Any]:
+            """Build a non-destructive comparison overlay without mutating either revision."""
+            item = dict(element)
+            item["id"] = f"compare_{mode}_{element.get('id', 'element')}"
+            item["locked"] = True
+            item["opacity"] = 35 if mode == "removed" else 100
+            if mode == "removed":
+                item["strokeStyle"] = "dashed"
+                item["strokeWidth"] = max(1, int(item.get("strokeWidth", 2)))
+            elif mode == "changed":
+                item["strokeStyle"] = "dotted"
+            return item
+
+        overlay_elements: List[Dict[str, Any]] = []
+        for element in diff["removed"]:
+            overlay_elements.append(_overlay_element(element, "removed"))
+        for element in diff["added"]:
+            overlay_elements.append(_overlay_element(element, "added"))
+        for change in diff["changed"]:
+            before_el = _overlay_element(change["before"], "changed_before")
+            before_el["opacity"] = 35
+            before_el["strokeStyle"] = "dashed"
+            after_el = _overlay_element(change["after"], "changed_after")
+            overlay_elements.extend([before_el, after_el])
+
         return ExcalidrawRevisionDiffRead(
             project_id=project_id,
             artifact_id=after.artifact_id,
@@ -662,6 +688,10 @@ class ExcalidrawService:
             removed_elements=diff["removed"],
             changed_elements=diff["changed"],
             unchanged_count=diff["unchanged"],
+            overlay_elements=overlay_elements,
+            added_count=len(diff["added"]),
+            removed_count=len(diff["removed"]),
+            changed_count=len(diff["changed"]),
         )
 
     def format_revision_read(self, revision: ExcalidrawRevision) -> ExcalidrawRevisionRead:
