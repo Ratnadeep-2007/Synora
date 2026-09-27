@@ -40,14 +40,12 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"
 
-    # Local semantic inference is the default. Paid providers are optional adapters.
-    LLM_PROVIDER: str = Field(default="ollama", description="ollama | nvidia | deterministic")
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "qwen3:14b"
-    OLLAMA_EMBEDDING_MODEL: str = "qwen3-embedding:0.6b"
-
+    # NVIDIA NIM is the required/default semantic inference provider.
+    # The provider abstraction can host other adapters later, but product
+    # operation and documentation target NVIDIA NIM + DeepSeek.
+    LLM_PROVIDER: str = Field(default="nvidia", description="nvidia | deterministic")
     NVIDIA_API_KEY: str = ""
-    NVIDIA_MODEL: str = ""
+    NVIDIA_MODEL: str = "deepseek-ai/deepseek-v4.1-flash"
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
 
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore")
