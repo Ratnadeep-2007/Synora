@@ -58,7 +58,7 @@ class WhatsAppIntelligenceService:
         1. Context Disambiguation (which project are they talking about?)
         2. Idempotent Ingestion & Evidence Generation
         3. Architectural Candidate Extraction
-        4. Excalidraw Whiteboard Visual Changes & Proposals
+        4. Excalidraw Whiteboard Visual Proposal (human approval required)
         """
         raw_text = payload.get("text") or payload.get("caption") or ""
         sender_name = payload.get("sender_name") or payload.get("pushName") or "WhatsApp User"
