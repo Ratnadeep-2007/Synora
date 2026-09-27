@@ -285,6 +285,9 @@ class NvidiaNimLLMClient(LLMClient):
                 content = res_json["choices"][0]["message"]["content"]
                 parsed = json.loads(content)
 
+                if schema == ContextResolutionResult:
+                    return ContextResolutionResult.model_validate(parsed)
+
                 if schema == ExtractionBatchResult:
                     items = []
                     raw_items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
