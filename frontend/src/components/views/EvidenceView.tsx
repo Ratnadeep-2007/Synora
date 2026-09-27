@@ -10,6 +10,21 @@ interface EvidenceViewProps {
   onOpenEvidenceDetail?: (item: EvidenceItem) => void;
   onOpenMeeting?: (meetingId: string) => void;
   onNavigateToState?: () => void;
+  contextReviewItems?: Array<{
+    evidence_id: string;
+    source: string;
+    content: string;
+    context_status: string;
+    context_candidates?: Array<{
+      project_id: string;
+      project_name: string;
+      confidence: number;
+      reasons?: string[];
+      basis?: string[];
+    }>;
+    reasoning?: string;
+  }>;
+  onAssignContext?: (evidenceId: string, targetProjectId: string) => Promise<void>;
 }
 
 export function EvidenceView({
@@ -17,6 +32,8 @@ export function EvidenceView({
   onOpenEvidenceDetail,
   onOpenMeeting,
   onNavigateToState,
+  contextReviewItems = [],
+  onAssignContext,
 }: EvidenceViewProps) {
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -71,6 +88,56 @@ export function EvidenceView({
           </select>
         </div>
       </div>
+
+      {contextReviewItems.length > 0 && (
+        <section className="rounded-xl bg-warning/5 border border-warning/20 p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-text-main">Context needs review</h2>
+            <p className="text-xs text-text-muted mt-0.5">
+              Synora could not safely place this evidence. Suggested projects are shown with the reasons behind the match.
+            </p>
+          </div>
+          <div className="space-y-3">
+            {contextReviewItems.slice(0, 8).map((item) => (
+              <div key={item.evidence_id} className="rounded-lg bg-surface border border-border p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20">
+                        {item.source}
+                      </span>
+                      <span className="text-[10px] font-mono text-text-muted">{item.evidence_id}</span>
+                    </div>
+                    <p className="text-xs text-text-main leading-relaxed">{item.content}</p>
+                    {item.reasoning && (
+                      <p className="text-[11px] text-text-muted mt-2">{item.reasoning}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {(item.context_candidates || []).slice(0, 3).map((candidate) => (
+                    <div key={candidate.project_id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-canvas border border-border">
+                      <div>
+                        <div className="text-xs font-semibold text-text-main">{candidate.project_name}</div>
+                        <div className="text-[11px] text-text-muted">
+                          {candidate.reasons?.slice(0, 2).join(" • ") || "Context overlap found"}
+                        </div>
+                      </div>
+                      <button
+                        disabled={!onAssignContext}
+                        onClick={() => onAssignContext?.(item.evidence_id, candidate.project_id)}
+                        className="px-2.5 py-1.5 text-xs font-medium text-primary bg-primary-soft border border-primary/20 rounded-md hover:bg-primary/20 disabled:opacity-50"
+                      >
+                        Assign
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {filtered.length === 0 ? (
         <EmptyState
