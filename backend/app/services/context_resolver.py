@@ -115,7 +115,16 @@ class ContextResolverService:
         if not metadata:
             return ""
         values: List[str] = []
-        for key in ("group_name", "meeting_title", "channel_name", "source_name", "participants"):
+        for key in (
+            "group_name",
+            "meeting_title",
+            "channel_name",
+            "source_name",
+            "participants",
+            "recent_context",
+            "thread_context",
+            "conversation_context",
+        ):
             value = metadata.get(key)
             if value is None:
                 continue
