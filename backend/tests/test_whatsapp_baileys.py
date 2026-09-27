@@ -113,6 +113,7 @@ def test_whatsapp_message_processing_and_excalidraw_updates(db_session: Session)
     assert result["confidence"] >= 0.80
     assert result["excalidraw_updated"] is True
     assert result["artifact_version"] == initial_version + 1
+    assert result["context_status"] == "resolved"
     assert "Digilocker KYC Service" in result["nodes_added"]
 
     # Verify Evidence was persisted
@@ -136,7 +137,7 @@ def test_whatsapp_message_processing_and_excalidraw_updates(db_session: Session)
     # Verify ExcalidrawProposal was recorded with diff
     proposal = db_session.query(ExcalidrawProposal).filter(ExcalidrawProposal.id == result["proposal_id"]).first()
     assert proposal is not None
-    assert proposal.status == "approved"
+    assert proposal.status == "pending"
     assert "Digilocker KYC Service" in proposal.reason
 
 
@@ -251,15 +252,11 @@ def test_whatsapp_ignores_casual_chitchat(db_session: Session):
     assert art.version == v_initial
 
 
-def test_whatsapp_leaves_uncreated_project_alone(db_session: Session):
-    """
-    Verify that conversation about a project that is NOT created in the workspace
-    is completely ignored (leave it), and DOES NOT pollute or mutate any existing project's whiteboard.
-    """
+def test_whatsapp_quarantines_unknown_project_context(db_session: Session):
+    """Unknown project discussions are retained under Unknown Context."""
     agent_service = ProjectAgentService()
     service = WhatsAppIntelligenceService()
 
-    # Workspace only has Claims and Core
     claims_proj = agent_service.get_or_create_project(
         project_id="proj_claims_leaveit",
         name="Healthcare Claims Engine",
@@ -280,29 +277,23 @@ def test_whatsapp_leaves_uncreated_project_alone(db_session: Session):
     v_claims_init = art_claims.version
     v_core_init = art_core.version
 
-    # Conversation about an uncreated, unrelated project (e.g. Solana Crypto Wallet)
-    uncreated_proj_message = (
-        "For the Solana Crypto Arbitrage Bot, let's deploy Uniswap v3 flash loans and integrate Phantom Wallet API."
-    )
-
     res = service.process_incoming_message(
         {
             "message_id": "wa_msg_uncreated_1",
             "sender_name": "Crypto Dev",
-            "text": uncreated_proj_message,
+            "group_jid": "120363099999999999@g.us",
+            "group_name": "general",
+            "text": "For the Solana Crypto Arbitrage Bot, let's deploy Uniswap v3 flash loans and integrate Phantom Wallet API.",
         },
         db_session,
     )
 
-    # Must be ignored (leave it)
     assert res["ok"] is True
-    assert res["processed"] is False
-    assert res["status"] == "ignored"
-    assert res["matched_project"] is None
+    assert res["processed"] is True
+    assert res["matched_project"]["id"] == "system_unknown_context"
+    assert res["context_status"] in {"unknown", "ambiguous"}
     assert res["excalidraw_updated"] is False
-    assert "does not match any created project" in res["reason"]
 
-    # Verify BOTH existing project whiteboards remained untouched!
     db_session.refresh(art_claims)
     db_session.refresh(art_core)
     assert art_claims.version == v_claims_init
