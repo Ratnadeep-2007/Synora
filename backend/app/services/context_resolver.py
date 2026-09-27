@@ -346,6 +346,7 @@ class ContextResolverService:
         db: Session,
         actor_id: str,
         tenant_id: str = "default_tenant",
+        trigger_reprocessing: bool = True,
     ) -> Dict[str, Any]:
         if target_project_id == UNKNOWN_CONTEXT_ID:
             raise ContextResolverError("Unknown Context is a quarantine destination, not a reassignment target.")
@@ -378,6 +379,7 @@ class ContextResolverService:
         metadata["context_status"] = "human_assigned"
         metadata["assigned_project_id"] = target_project_id
         metadata["assigned_by"] = actor_id
+        metadata["reprocessing_requested"] = bool(trigger_reprocessing)
         evidence.metadata_json = json.dumps(metadata)
         db.commit()
 
