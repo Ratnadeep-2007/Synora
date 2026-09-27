@@ -378,119 +378,24 @@ class WhatsAppIntelligenceService:
 
         return False
 
+
     def identify_project_from_context(
         self,
         text: str,
         db: Session,
         tenant_id: str = "default_tenant",
     ) -> Tuple[Optional[Project], float, str]:
-        """
-        Disambiguates which Project the people are talking about.
-        
-        Strategy:
-        1. Exact Project ID mention (proj_...)
-        2. Hashtag or Bracketed tag ([Healthcare], #claims, @Claims)
-        3. Name & Domain Keywords Scoring against all created projects
-        4. If top_score >= 3.0: returns matched project
-        5. If top_score < 3.0: returns (None, 0.0, reasoning) -> LEAVE IT.
-           Crucial Rule: NEVER fallback to proj_default for unknown or uncreated projects.
-        """
-        projects = db.query(Project).all()
-        if not projects:
-            return None, 0.0, "No projects exist in the workspace"
-
-        lower_text = text.lower()
-
-        # 1. Exact Project ID in text
-        for p in projects:
-            if p.id.lower() in lower_text:
-                return p, 0.99, f"Explicit Project ID '{p.id}' found in message"
-
-        # 2. Tag / Hashtag / Bracket Matching (e.g. #claims, [Healthcare Claims], @Claims)
-        tag_match = re.search(r"\[([^\]]+)\]|#([a-zA-Z0-9_-]+)|@([a-zA-Z0-9_-]+)", text)
-        if tag_match:
-            tag_val = (tag_match.group(1) or tag_match.group(2) or tag_match.group(3)).lower()
-            for p in projects:
-                p_name_words = [w.lower() for w in re.split(r"[\s_-]+", p.name)]
-                if tag_val in p_name_words or tag_val == p.id.lower() or tag_val in p.name.lower():
-                    return p, 0.97, f"Explicit Project tag '[{tag_val}]' matched '{p.name}'"
-
-        # 3. Keyword Scoring across created projects
-        scores: Dict[str, float] = {}
-        reasons: Dict[str, List[str]] = {}
-
-        for p in projects:
-            score = 0.0
-            matched_terms = []
-            p_name_lower = p.name.lower()
-            p_desc_lower = (p.description or "").lower()
-
-            # Name matching
-            p_tokens = [t for t in re.split(r"[\s_-]+", p_name_lower) if len(t) > 2]
-            for token in p_tokens:
-                if token in lower_text:
-                    score += 3.0
-                    matched_terms.append(f"name_token:{token}")
-
-            # Entire name match
-            if p_name_lower in lower_text:
-                score += 5.0
-                matched_terms.append(f"full_name:{p.name}")
-
-            # Domain keyword dictionaries
-            if "claim" in p_name_lower or "health" in p_name_lower:
-                health_keywords = [
-                    "claims", "claimant", "healthcare", "adjudication", "patient",
-                    "tpa", "fhir", "hl7", "kyc", "insurance", "hospital", "diagnosis",
-                    "billing", "icd10", "policy", "fraud detection", "digilocker", "preauth"
-                ]
-                for kw in health_keywords:
-                    if kw in lower_text:
-                        score += 2.0
-                        matched_terms.append(f"domain:{kw}")
-
-            elif "core" in p_name_lower or "architecture" in p_name_lower or "synesis" in p_name_lower or "synora" in p_name_lower:
-                core_keywords = [
-                    "synora", "core", "auth", "session", "pipeline", "synesis", "rbac", "user",
-                    "agent", "oauth", "jwt", "redis", "postgres", "fastapi", "nextjs", "excalidraw", "whiteboard"
-                ]
-                for kw in core_keywords:
-                    if kw in lower_text:
-                        score += 2.0
-                        matched_terms.append(f"domain:{kw}")
-
-            elif "frappe" in p_name_lower or "erp" in p_name_lower:
-                frappe_keywords = [
-                    "frappe", "doctype", "erpnext", "supplier", "erp", "ledger",
-                    "purchase order", "bench", "mariadb"
-                ]
-                for kw in frappe_keywords:
-                    if kw in lower_text:
-                        score += 2.0
-                        matched_terms.append(f"domain:{kw}")
-
-            # Description matching
-            if p_desc_lower:
-                for token in [t for t in re.split(r"[\s_-]+", p_desc_lower) if len(t) > 3]:
-                    if token in lower_text and token not in matched_terms:
-                        score += 1.0
-                        matched_terms.append(f"desc:{token}")
-
-            scores[p.id] = score
-            reasons[p.id] = matched_terms
-
-        # Pick highest scoring project
-        sorted_projects = sorted(projects, key=lambda p: scores.get(p.id, 0.0), reverse=True)
-        top_project = sorted_projects[0]
-        top_score = scores.get(top_project.id, 0.0)
-
-        if top_score >= 3.0:
-            confidence = min(0.96, 0.70 + (top_score * 0.05))
-            reasoning = f"Matched terms: {', '.join(reasons[top_project.id][:4])}"
-            return top_project, confidence, reasoning
-
-        # If score is below 3.0, it is NOT about any created project! LEAVE IT!
-        return None, 0.0, "Conversation does not match any created project in the workspace"
+        """Backward-compatible wrapper around the shared ContextResolverService."""
+        result = self.context_resolver.resolve(text=text, db=db)
+        if result.status == "resolved" and result.selected_project_id:
+            project = (
+                db.query(Project)
+                .filter(Project.id == result.selected_project_id)
+                .first()
+            )
+            if project:
+                return project, result.confidence, result.reasoning
+        return None, result.confidence, result.reasoning
 
     def _extract_knowledge_and_components(self, text: str) -> Dict[str, Any]:
         """
