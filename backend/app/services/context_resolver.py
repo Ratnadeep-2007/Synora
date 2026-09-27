@@ -191,6 +191,10 @@ class ContextResolverService:
 
         return score, reasons
 
+    def _canonicalize_project_signal(self, value: str) -> str:
+        value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+        return value
+
     def _deterministic_candidates(
         self,
         text: str,
