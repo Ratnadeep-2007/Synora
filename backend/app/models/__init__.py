@@ -23,6 +23,7 @@ from app.models.agent_workforce import (
 )
 from app.models.task_job import TaskJob, JobStatus
 from app.models.audit_log import AuditLog
+from app.models.context import ContextResolution
 from app.models.project import (
     Workspace,
     Project,
@@ -71,6 +72,7 @@ __all__ = [
     "TaskJob",
     "JobStatus",
     "AuditLog",
+    "ContextResolution",
     "ExcalidrawArtifact",
     "ExcalidrawRevision",
     "ExcalidrawProposal",
@@ -80,4 +82,3 @@ __all__ = [
     "MeetSubscriptionTarget",
     "MeetEventRecord",
 ]
-
