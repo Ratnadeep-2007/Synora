@@ -1,0 +1,166 @@
+@import "@xyflow/react/dist/style.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #F6F7F5;
+  --foreground: #171A17;
+}
+
+body {
+  color: #171A17;
+  background-color: #F6F7F5;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid #E7EAE5;
+}
+
+/* Precision neumorphism subtle control */
+.neu-control {
+  background: #FFFFFF;
+  border: 1px solid #E7EAE5;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 1px 2px rgba(23, 26, 23, 0.05);
+}
+
+.neu-control:hover {
+  background: #FBFCFA;
+  border-color: #D8DDD6;
+}
+
+.neu-control:active {
+  box-shadow: inset 0 1px 2px rgba(23, 26, 23, 0.08);
+}
+
+/* Editorial subtle animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-in {
+  animation-duration: 200ms;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-in.fade-in {
+  animation-name: fadeIn;
+}
+
+.animate-in.slide-in-from-right {
+  animation-name: slideInFromRight;
+}
+
+.duration-200 {
+  animation-duration: 200ms;
+}
+
+/* Restrained minimalist scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D8DDD6;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #B6C0B4;
+}
+
+/* High-contrast accessible focus outlines */
+:focus-visible {
+  outline: 2px solid #173F35;
+  outline-offset: 1px;
+}
+
+/* React Flow theme integration */
+.react-flow__controls {
+  box-shadow: 0 1px 3px rgba(23, 26, 23, 0.08) !important;
+  border-radius: 6px !important;
+  border: 1px solid #E7EAE5 !important;
+  overflow: hidden !important;
+}
+
+.react-flow__controls-button {
+  background: #FFFFFF !important;
+  border-bottom: 1px solid #E7EAE5 !important;
+  color: #68706A !important;
+  fill: #68706A !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #FBFCFA !important;
+  color: #171A17 !important;
+  fill: #171A17 !important;
+}
+
+/* Reduced motion accessibility support (design.md Section 37) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Excalidraw Layout Containment & Icon Safety */
+.excalidraw-wrapper {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.excalidraw-wrapper .excalidraw {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+/* Ensure Excalidraw toolbar SVGs never blow out to full screen */
+.excalidraw .ToolIcon__icon svg,
+.excalidraw .unlocked-icon svg,
+.excalidraw .ToolIcon svg,
+.excalidraw button svg,
+.excalidraw .App-toolbar-container svg,
+.excalidraw .App-bottom-bar svg {
+  max-width: 24px !important;
+  max-height: 24px !important;
+}
+

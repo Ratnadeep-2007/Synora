@@ -1,0 +1,82 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments & dependencies
+venv/
+env/
+ENV/
+.venv/
+node_modules/
+baileys_auth_info/
+auth_info_baileys/
+**/auth_info_baileys/
+services/Baileys/
+
+# Next.js and frontend build outputs
+.next/
+out/
+.turbo/
+
+# Environment variables & local configuration
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# SQLite databases & uploads
+*.db
+*.sqlite3
+*.db-journal
+*.sqlite
+**/*.db
+**/*.sqlite3
+**/*.db-journal
+**/*.sqlite
+backend/uploads/
+uploads/
+
+# Testing & caches
+.pytest_cache/
+.coverage
+htmlcov/
+test_pipeline.db
+qa_test.db
+*.log
+
+# IDEs & Editor Tooling
+.idea/
+.vscode/
+.commandcode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+

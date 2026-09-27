@@ -1,0 +1,480 @@
+"use client";
+
+import React, { useRef, useState } from "react";
+import {
+  PenTool,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  ArrowRight,
+  RefreshCw,
+  GitBranch,
+  Shield,
+  Layers,
+  Sparkles,
+  Upload,
+  Download,
+  ExternalLink,
+  Plus,
+} from "lucide-react";
+import { ExcalidrawArtifact, ExcalidrawProposal } from "@/lib/types";
+import { ExcalidrawCanvas } from "@/components/canvas/ExcalidrawCanvas";
+import { ExcalidrawSyncBar } from "@/components/common/ExcalidrawSyncBar";
+
+interface ArchitectureViewProps {
+  artifact: ExcalidrawArtifact | null;
+  proposals: ExcalidrawProposal[];
+  currentStateVersion: number;
+  decisions?: Array<{ id: string; text: string; date: string; evidence_ids?: string[]; approved_by?: string; detail?: string }>;
+  syncStatus?: "synchronized" | "updating" | "pending" | "outdated" | "failed";
+  lastSyncAt?: string | null;
+  onRetrySync?: () => Promise<void>;
+  onGenerateProposal: (stateVersion?: number) => Promise<void>;
+  onReviewProposal: (proposalId: string, action: "approve" | "reject", reason?: string) => Promise<void>;
+  onIngestScene: (scene: { name: string; elements: any[]; app_state?: any }) => Promise<void>;
+  onSyncLivingWorkspace?: () => Promise<void>;
+  onAiGenerateVisuals?: (focusPrompt?: string, directApply?: boolean) => Promise<void>;
+}
+
+export function ArchitectureView({
+  artifact,
+  proposals,
+  currentStateVersion,
+  decisions = [],
+  syncStatus = "synchronized",
+  lastSyncAt = null,
+  onRetrySync,
+  onGenerateProposal,
+  onReviewProposal,
+  onIngestScene,
+  onSyncLivingWorkspace,
+  onAiGenerateVisuals,
+}: ArchitectureViewProps) {
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [isSyncingWorkspace, setIsSyncingWorkspace] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [processingProposalId, setProcessingProposalId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsImporting(true);
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      const elements = Array.isArray(parsed) ? parsed : parsed.elements || [];
+      const appState = parsed.appState || { viewBackgroundColor: "#ffffff" };
+      const name = file.name.replace(/\.[^/.]+$/, "") || "Uploaded Architecture Scene";
+
+      await onIngestScene({
+        name,
+        elements,
+        app_state: appState,
+      });
+    } catch (err: any) {
+      alert(`Failed to parse or ingest Excalidraw file: ${err.message}`);
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleExportExcalidraw = () => {
+    if (!artifact) return;
+    const scene = {
+      type: "excalidraw",
+      version: 2,
+      source: "https://synesis.app",
+      elements: artifact.elements,
+      appState: artifact.app_state || { viewBackgroundColor: "#ffffff", gridSize: 20 },
+      files: {},
+    };
+    const blob = new Blob([JSON.stringify(scene, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${artifact.name || "architecture"}-v${artifact.version}.excalidraw`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleGenerate = async () => {
+    try {
+      setIsGenerating(true);
+      await onGenerateProposal(currentStateVersion);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleReview = async (proposalId: string, action: "approve" | "reject") => {
+    try {
+      setProcessingProposalId(proposalId);
+      await onReviewProposal(proposalId, action);
+    } finally {
+      setProcessingProposalId(null);
+    }
+  };
+
+  const pendingProposals = proposals.filter((p) => p.status === "pending");
+  const reviewedProposals = proposals.filter((p) => p.status !== "pending");
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-200">
+      {/* Clean Human-Friendly Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-border/40">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-text-main flex items-center gap-2">
+            <PenTool className="w-5 h-5 text-primary" />
+            <span>System Architecture</span>
+          </h1>
+          <p className="text-xs text-text-muted mt-0.5">
+            Living visual diagram of your system architecture, decisions, and workflows maintained with your project agent.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".excalidraw,.json"
+            className="hidden"
+          />
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
+            className="px-3 py-1.5 text-xs font-medium text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            title="Import an .excalidraw or JSON file"
+          >
+            <Upload className="w-3.5 h-3.5 text-text-muted" />
+            <span>{isImporting ? "Importing..." : "Import"}</span>
+          </button>
+
+          {artifact && (
+            <button
+              onClick={handleExportExcalidraw}
+              className="px-3 py-1.5 text-xs font-medium text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs"
+              title="Download scene as .excalidraw file"
+            >
+              <Download className="w-3.5 h-3.5 text-text-muted" />
+              <span>Export</span>
+            </button>
+          )}
+
+          {onSyncLivingWorkspace && (
+            <button
+              onClick={async () => {
+                try {
+                  setIsSyncingWorkspace(true);
+                  await onSyncLivingWorkspace();
+                } finally {
+                  setIsSyncingWorkspace(false);
+                }
+              }}
+              disabled={isSyncingWorkspace}
+              className="px-3 py-1.5 text-xs font-medium text-primary bg-primary-soft hover:bg-primary/20 border border-primary/20 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+              title="Update visual diagram with the latest project decisions and state"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingWorkspace ? "animate-spin" : ""}`} />
+              <span>{isSyncingWorkspace ? "Updating..." : "Update from State"}</span>
+            </button>
+          )}
+
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="px-3 py-1.5 text-xs font-medium text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+            title="Generate proposed diagram changes based on the latest project state"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-text-muted" />
+            <span>{isGenerating ? "Drafting..." : "Propose Changes"}</span>
+          </button>
+
+          {onAiGenerateVisuals && (
+            <button
+              onClick={async () => {
+                try {
+                  setIsAiGenerating(true);
+                  await onAiGenerateVisuals(undefined, true);
+                } finally {
+                  setIsAiGenerating(false);
+                }
+              }}
+              disabled={isAiGenerating}
+              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-violet-600 via-indigo-600 to-primary hover:opacity-90 rounded-lg flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
+              title="Ask AI to design and render the complete multi-tier visual architecture on Excalidraw"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? "animate-spin text-amber-300" : "text-amber-300"}`} />
+              <span>{isAiGenerating ? "Designing Scene..." : "AI Visual Architect"}</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Synchronization Bar */}
+      <ExcalidrawSyncBar
+        status={isSyncingWorkspace ? "updating" : syncStatus}
+        lastSyncAt={lastSyncAt || artifact?.updated_at}
+        onRetry={onRetrySync}
+      />
+
+      {/* Primary Human-Facing Agent Output: Embedded Interactive Excalidraw Canvas */}
+      <ExcalidrawCanvas
+        projectName={artifact?.name || "System Architecture"}
+        version={artifact?.version || 1}
+        initialElements={artifact?.elements || []}
+        initialAppState={artifact?.app_state}
+        isSyncing={isSyncingWorkspace}
+        onSyncAgentOutput={onSyncLivingWorkspace}
+        onSaveCanvas={onIngestScene}
+        onExportJson={handleExportExcalidraw}
+      />
+
+      {/* Authoritative Diagram Artifact Breakdown & Decision Citations */}
+      <div className="p-5 rounded-xl bg-surface border border-border shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary-soft flex items-center justify-center font-bold text-primary">
+              <Layers className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-text-main">
+                  {artifact?.name || "System Architecture Diagram"}
+                </h3>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-primary-soft text-primary">
+                  v{artifact?.version || 1}
+                </span>
+              </div>
+              <span className="text-xs text-text-muted">
+                Authoritative visual architecture model synchronized with Project State
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20 flex items-center gap-1 font-mono">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Synced</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Visual Pipeline Flow Nodes */}
+        <div className="pt-3 border-t border-border space-y-2">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted block">
+            Architecture Sequence
+          </span>
+          <div className="flex flex-wrap items-center gap-2 p-3 bg-canvas rounded-lg border border-border">
+            {(artifact?.extracted_nodes || ["User", "BA Agent", "Project Planner Agent", "Functional Agent", "Tech Agent", "Frappe Agent"]).map(
+              (node, idx, arr) => (
+                <React.Fragment key={idx}>
+                  <div className="px-2.5 py-1 rounded bg-surface border border-border text-xs font-medium text-text-main flex items-center gap-1.5 shadow-2xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    <span>{node}</span>
+                  </div>
+                  {idx < arr.length - 1 && (
+                    <ArrowRight className="w-3 h-3 text-text-muted shrink-0" />
+                  )}
+                </React.Fragment>
+              )
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      {/* Pending Diagram Proposals */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-text-main flex items-center gap-2">
+              <GitBranch className="w-4 h-4 text-warning" />
+              <span>Pending Diagram Proposals</span>
+            </h2>
+            <p className="text-xs text-text-muted mt-0.5">
+              Review and approve agent-suggested diagram updates before they are saved to your project.
+            </p>
+          </div>
+          <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-warning/10 text-warning border border-warning/20">
+            {pendingProposals.length} Pending
+          </span>
+        </div>
+
+        {pendingProposals.length === 0 ? (
+          <div className="p-8 rounded-xl bg-surface/50 border border-dashed border-border text-center space-y-2">
+            <CheckCircle2 className="w-8 h-8 text-success mx-auto" />
+            <p className="text-sm font-medium text-text-main">
+              Visual Architecture is fully synchronized with Project State v{currentStateVersion}
+            </p>
+            <p className="text-xs text-text-muted">
+              No pending diagram modification proposals requiring human approval.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {pendingProposals.map((prop) => {
+              const isProcessing = processingProposalId === prop.id;
+              const diff = prop.diff_preview;
+
+              return (
+                <div
+                  key={prop.id}
+                  className="p-6 rounded-xl bg-surface border-2 border-warning/40 shadow-xs space-y-5"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-warning/20 text-warning border border-warning/30">
+                          Pending Human Approval
+                        </span>
+                        <span className="text-xs text-text-muted font-mono">
+                          Derived from State v{prop.derived_from_state_version}
+                        </span>
+                      </div>
+                      <h4 className="text-base font-semibold text-text-main mt-1">
+                        {prop.reason}
+                      </h4>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleReview(prop.id, "reject")}
+                        disabled={isProcessing}
+                        className="px-3 py-1.5 text-xs font-semibold text-danger bg-danger/10 hover:bg-danger/20 border border-danger/20 rounded-md flex items-center gap-1 transition-colors disabled:opacity-50"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>Reject</span>
+                      </button>
+                      <button
+                        onClick={() => handleReview(prop.id, "approve")}
+                        disabled={isProcessing}
+                        className="px-3.5 py-1.5 text-xs font-semibold text-white bg-success hover:bg-success/90 rounded-md flex items-center gap-1 transition-colors shadow-xs disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{isProcessing ? "Applying..." : "Approve Diagram Update"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Structured Diff Preview */}
+                  <div className="p-4 bg-canvas rounded-lg border border-border space-y-4">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted block">
+                      Structured Visual Diff Preview
+                    </span>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Nodes Added */}
+                      <div className="space-y-1.5">
+                        <span className="text-xs font-medium text-text-muted">Nodes Added (+):</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {diff.nodes_added.length > 0 ? (
+                            diff.nodes_added.map((node, i) => (
+                              <span
+                                key={i}
+                                className="px-2.5 py-1 rounded text-xs font-semibold bg-success/15 text-success border border-success/30 font-mono"
+                              >
+                                + {node}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-text-muted italic">None</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Nodes Removed */}
+                      <div className="space-y-1.5">
+                        <span className="text-xs font-medium text-text-muted">Nodes Removed (-):</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {diff.nodes_removed.length > 0 ? (
+                            diff.nodes_removed.map((node, i) => (
+                              <span
+                                key={i}
+                                className="px-2.5 py-1 rounded text-xs font-semibold bg-danger/15 text-danger border border-danger/30 font-mono"
+                              >
+                                - {node}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-text-muted italic">None</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Proposed Sequence Flow */}
+                    <div className="space-y-1.5 pt-2 border-t border-border">
+                      <span className="text-xs font-medium text-text-muted">Proposed Flow After Approval:</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {diff.nodes_after.map((node, i, arr) => (
+                          <React.Fragment key={i}>
+                            <span
+                              className={`px-2.5 py-1 rounded text-xs font-medium border ${
+                                diff.nodes_added.includes(node)
+                                  ? "bg-success/15 text-success border-success/30 font-bold"
+                                  : "bg-surface text-text-main border-border"
+                              }`}
+                            >
+                              {node}
+                            </span>
+                            {i < arr.length - 1 && (
+                              <ArrowRight className="w-3 h-3 text-text-muted shrink-0" />
+                            )}
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Historical Proposals */}
+      {reviewedProposals.length > 0 && (
+        <div className="space-y-3 pt-4 border-t border-border">
+          <h3 className="text-sm font-semibold text-text-muted uppercase tracking-wider">
+            Proposal Audit History
+          </h3>
+          <div className="space-y-2">
+            {reviewedProposals.map((prop) => (
+              <div
+                key={prop.id}
+                className="p-3 bg-surface rounded-lg border border-border flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-2 py-0.5 rounded font-mono font-semibold text-[10px] uppercase ${
+                      prop.status === "approved"
+                        ? "bg-success/10 text-success border border-success/20"
+                        : "bg-danger/10 text-danger border border-danger/20"
+                    }`}
+                  >
+                    {prop.status}
+                  </span>
+                  <span className="text-text-main font-medium">{prop.reason}</span>
+                </div>
+                <div className="text-text-muted font-mono text-[11px]" suppressHydrationWarning>
+                  {prop.approved_at ? new Date(prop.approved_at).toLocaleString() : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

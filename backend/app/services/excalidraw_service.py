@@ -1,0 +1,1268 @@
+from datetime import datetime, timezone
+import json
+import logging
+from typing import Any, Dict, List, Optional
+from sqlalchemy.orm import Session
+
+from app.core.exceptions import SynesisException
+from app.models.excalidraw import (
+    ExcalidrawArtifact,
+    ExcalidrawProposal,
+    ExcalidrawProposalStatus,
+)
+from app.models.evidence import Evidence
+from app.models.project import Project
+from app.models.project_state import ProjectState, ProjectStateVersion
+from app.schemas.excalidraw import (
+    ExcalidrawArtifactRead,
+    ExcalidrawDiffPreview,
+    ExcalidrawIngestRequest,
+    ExcalidrawProposalRead,
+)
+from app.schemas.source_event import SourceEventCreate
+from app.services.audit_service import AuditService
+from app.services.ingestion_service import IngestionService
+
+logger = logging.getLogger(__name__)
+
+
+class ExcalidrawError(SynesisException):
+    """Raised when an operation on an Excalidraw artifact or proposal fails."""
+    pass
+
+
+class ExcalidrawService:
+    """
+    Excalidraw Service managing visual architecture diagrams in Synesis.
+    Fulfills two explicit roles:
+    - Role A (Input): Ingests visual diagram scenes as evidence.
+    - Role B (Output): Proposes diagram changes derived from approved Project State,
+      strictly requiring human approval before mutation (Output Safety).
+    """
+
+    def __init__(
+        self,
+        ingestion_service: Optional[IngestionService] = None,
+        audit_service: Optional[AuditService] = None,
+    ):
+        self.ingestion_service = ingestion_service or IngestionService()
+        self.audit_service = audit_service or AuditService()
+
+    def get_or_create_artifact(
+        self,
+        project_id: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        name: str = "System Architecture Diagram",
+    ) -> ExcalidrawArtifact:
+        """Retrieves existing visual artifact or initializes baseline."""
+        artifact = (
+            db.query(ExcalidrawArtifact)
+            .filter(
+                ExcalidrawArtifact.project_id == project_id,
+                ExcalidrawArtifact.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not artifact:
+            # Default baseline elements
+            baseline_nodes = ["User", "BA Agent", "Project Planner Agent", "Functional Agent", "Tech Agent", "Frappe Agent"]
+            initial_elements = self._build_flow_elements(baseline_nodes)
+            artifact = ExcalidrawArtifact(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                name=name,
+                version=1,
+                elements_json=json.dumps(initial_elements),
+                app_state_json=json.dumps({"viewBackgroundColor": "#ffffff", "gridSize": 20}),
+                extracted_nodes_json=json.dumps(baseline_nodes),
+            )
+            db.add(artifact)
+            db.commit()
+            db.refresh(artifact)
+            logger.info(f"Initialized ExcalidrawArtifact v1 for project '{project_id}'")
+        return artifact
+
+    def ingest_diagram(
+        self,
+        project_id: str,
+        req: ExcalidrawIngestRequest,
+        db: Session,
+        tenant_id: str = "default_tenant",
+    ) -> tuple[ExcalidrawArtifact, Evidence]:
+        """
+        Role A (Input): Ingests an Excalidraw scene as authoritative architectural evidence.
+        Emits a SourceEvent ('excalidraw', 'diagram_change') and creates an Evidence record.
+        """
+        extracted_nodes = self._extract_node_labels(req.elements)
+        artifact = (
+            db.query(ExcalidrawArtifact)
+            .filter(
+                ExcalidrawArtifact.project_id == project_id,
+                ExcalidrawArtifact.tenant_id == tenant_id,
+            )
+            .first()
+        )
+
+        if not artifact:
+            artifact = ExcalidrawArtifact(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                name=req.name,
+                version=1,
+                elements_json=json.dumps(req.elements),
+                app_state_json=json.dumps(req.app_state),
+                extracted_nodes_json=json.dumps(extracted_nodes),
+            )
+            db.add(artifact)
+        else:
+            artifact.name = req.name
+            artifact.elements_json = json.dumps(req.elements)
+            artifact.app_state_json = json.dumps(req.app_state)
+            artifact.extracted_nodes_json = json.dumps(extracted_nodes)
+            artifact.version += 1
+
+        db.commit()
+        db.refresh(artifact)
+
+        # Ingest as SourceEvent + Evidence
+        event_create = SourceEventCreate(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            source="excalidraw",
+            source_event_id=f"excal_{artifact.id}_v{artifact.version}",
+            event_type="diagram_change",
+            actor_id="system_excalidraw",
+            occurred_at=datetime.now(timezone.utc),
+            payload={
+                "artifact_id": artifact.id,
+                "version": artifact.version,
+                "name": artifact.name,
+                "nodes": extracted_nodes,
+                "element_count": len(req.elements),
+                "summary": f"Excalidraw diagram '{req.name}' updated to v{artifact.version} with nodes: {', '.join(extracted_nodes)}",
+            },
+        )
+        source_event = self.ingestion_service.ingest_event(event_create, db)
+        evidence = self.ingestion_service.create_evidence_from_event(
+            event=source_event,
+            db=db,
+            content=f"Architecture Diagram: {req.name} (v{artifact.version}). Nodes: {', '.join(extracted_nodes)}",
+            metadata={"artifact_id": artifact.id, "extracted_nodes": extracted_nodes},
+        )
+
+        logger.info(f"Ingested Excalidraw diagram for project '{project_id}' as evidence '{evidence.id}'")
+        return artifact, evidence
+
+    def generate_proposal_from_state(
+        self,
+        project_id: str,
+        state_version: int,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        reason: Optional[str] = None,
+    ) -> ExcalidrawProposal:
+        """
+        Role B (Output): Generates a structured Excalidraw change proposal from an approved Project State.
+        Computes a visual diff preview without modifying the authoritative artifact.
+        """
+        artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
+        
+        # Read the target state or version snapshot
+        state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
+        if not state:
+            raise ExcalidrawError(f"Project '{project_id}' has no ProjectState.")
+
+        agent_workflow = json.loads(state.agent_workflow_json) if state.agent_workflow_json else []
+        nodes_before = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
+
+        # Target nodes based on Project State
+        # If user is in workflow, prepend User
+        nodes_after = list(agent_workflow)
+        if "User" not in nodes_after:
+            nodes_after = ["User"] + nodes_after
+
+        nodes_added = [n for n in nodes_after if n not in nodes_before]
+        nodes_removed = [n for n in nodes_before if n not in nodes_after]
+
+        connections_before = [f"{nodes_before[i]} -> {nodes_before[i+1]}" for i in range(len(nodes_before) - 1)]
+        connections_after = [f"{nodes_after[i]} -> {nodes_after[i+1]}" for i in range(len(nodes_after) - 1)]
+
+        diff_preview = {
+            "nodes_before": nodes_before,
+            "nodes_after": nodes_after,
+            "nodes_added": nodes_added,
+            "nodes_removed": nodes_removed,
+            "connections_before": connections_before,
+            "connections_after": connections_after,
+        }
+
+        # Build proposed elements scene with decisions and living workspace cards
+        decisions = json.loads(state.decisions_json) if state.decisions_json else []
+        requirements = json.loads(state.requirements_json) if state.requirements_json else []
+        proposed_elements = self._build_living_workspace_elements(
+            node_names=nodes_after,
+            decisions=decisions,
+            requirements=requirements,
+        )
+
+        summary_reason = reason or (
+            f"Align architecture diagram with approved Project State v{state_version}. "
+            f"Added nodes: {', '.join(nodes_added) if nodes_added else 'None'}. "
+            f"Removed nodes: {', '.join(nodes_removed) if nodes_removed else 'None'}."
+        )
+
+        proposal = ExcalidrawProposal(
+            artifact_id=artifact.id,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            derived_from_state_version=state_version,
+            status=ExcalidrawProposalStatus.PENDING.value,
+            reason=summary_reason,
+            proposed_elements_json=json.dumps(proposed_elements),
+            diff_preview_json=json.dumps(diff_preview),
+            evidence_ids_json="[]",
+        )
+        db.add(proposal)
+        db.commit()
+        db.refresh(proposal)
+
+        logger.info(f"Created Excalidraw proposal '{proposal.id}' for project '{project_id}' from state v{state_version}")
+        return proposal
+
+    def generate_ai_visual_architecture(
+        self,
+        project_id: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        focus_prompt: Optional[str] = None,
+        direct_apply: bool = False,
+        actor_id: str = "ai_visual_architect",
+    ) -> tuple[ExcalidrawProposal, Optional[ExcalidrawArtifact]]:
+        """
+        AI Visual Architecture Generator (Role B - Output):
+        Synthesizes an intelligent, multi-tier system architecture diagram for Excalidraw,
+        incorporating client channels, application core, autonomous workforce agents,
+        DeepSeek AI intelligence engine, and persistence layers with living decision/requirement cards.
+        """
+        artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
+        state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
+        state_version = state.current_version if state else 1
+
+        project_obj = db.query(Project).filter(Project.id == project_id).first()
+        project_name = project_obj.name if project_obj else f"Project {project_id}"
+
+        workflow = json.loads(state.agent_workflow_json) if (state and state.agent_workflow_json) else []
+        decisions = json.loads(state.decisions_json) if (state and state.decisions_json) else []
+        requirements = json.loads(state.requirements_json) if (state and state.requirements_json) else []
+
+        nodes_before = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
+        nodes_after = [
+            "Next.js Web Client", "Google Meet Ingestor", "WhatsApp Gateway", "Slack Events Bot",
+            "FastAPI Core Engine", "Project Agent Orchestrator", "DeepSeek AI Engine", "Specialist AI Workforce",
+            "Database System of Record", "Immutable Evidence Store", "Excalidraw Living Store"
+        ]
+
+        proposed_elements = self._build_ai_architecture_scene(
+            project_name=project_name,
+            workflow_nodes=workflow,
+            decisions=decisions,
+            requirements=requirements,
+            focus_prompt=focus_prompt,
+        )
+
+        nodes_added = [n for n in nodes_after if n not in nodes_before]
+        nodes_removed = [n for n in nodes_before if n not in nodes_after]
+
+        diff_preview = {
+            "nodes_before": nodes_before,
+            "nodes_after": nodes_after,
+            "nodes_added": nodes_added,
+            "nodes_removed": nodes_removed,
+            "connections_before": [],
+            "connections_after": ["Ingress -> Core", "Core -> Project Agent", "Project Agent -> DeepSeek", "Core -> Persistence"],
+        }
+
+        reason = (
+            f"AI Visual Architecture: Multi-tier system blueprint for {project_name} "
+            f"with DeepSeek AI, Living Decisions, and 3-Tier Components."
+        )
+        if focus_prompt:
+            reason += f" (Focus: {focus_prompt})"
+
+        proposal = ExcalidrawProposal(
+            artifact_id=artifact.id,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            derived_from_state_version=state_version,
+            status=ExcalidrawProposalStatus.APPROVED.value if direct_apply else ExcalidrawProposalStatus.PENDING.value,
+            reason=reason,
+            proposed_elements_json=json.dumps(proposed_elements),
+            diff_preview_json=json.dumps(diff_preview),
+            evidence_ids_json="[]",
+        )
+        if direct_apply:
+            now = datetime.now(timezone.utc)
+            proposal.approved_at = now
+            proposal.approved_by = actor_id
+
+            artifact.elements_json = json.dumps(proposed_elements)
+            artifact.extracted_nodes_json = json.dumps(nodes_after)
+            artifact.version += 1
+            artifact.updated_at = now
+
+        db.add(proposal)
+        db.commit()
+        db.refresh(proposal)
+        if direct_apply:
+            db.refresh(artifact)
+
+        logger.info(
+            f"AI Visual Architecture generated for '{project_id}' (proposal={proposal.id}, direct_apply={direct_apply})"
+        )
+        return proposal, artifact if direct_apply else None
+
+    def review_proposal(
+        self,
+        proposal_id: str,
+        action: str,  # "approve" or "reject"
+        actor_id: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        reason: Optional[str] = None,
+    ) -> tuple[ExcalidrawProposal, Optional[ExcalidrawArtifact]]:
+        """
+        Human Review Gate: Approves or rejects an Excalidraw change proposal.
+        Only approval commits the proposed elements to the ExcalidrawArtifact.
+        """
+        proposal = (
+            db.query(ExcalidrawProposal)
+            .filter(
+                ExcalidrawProposal.id == proposal_id,
+                ExcalidrawProposal.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not proposal:
+            raise ExcalidrawError(f"Proposal '{proposal_id}' not found.")
+
+        if proposal.status != ExcalidrawProposalStatus.PENDING.value:
+            raise ExcalidrawError(f"Proposal '{proposal_id}' has already been reviewed ({proposal.status}).")
+
+        now = datetime.now(timezone.utc)
+        artifact = None
+
+        if action.lower() == "approve":
+            proposal.status = ExcalidrawProposalStatus.APPROVED.value
+            proposal.approved_at = now
+            proposal.approved_by = actor_id
+
+            # Apply to artifact
+            artifact = db.query(ExcalidrawArtifact).filter(ExcalidrawArtifact.id == proposal.artifact_id).first()
+            if artifact:
+                diff_data = json.loads(proposal.diff_preview_json)
+                artifact.elements_json = proposal.proposed_elements_json
+                artifact.extracted_nodes_json = json.dumps(diff_data.get("nodes_after", []))
+                artifact.version += 1
+                artifact.updated_at = now
+
+            self.audit_service.record_event(
+                action="excalidraw_proposal_approved",
+                actor_id=actor_id,
+                resource_type="excalidraw_proposal",
+                resource_id=proposal.id,
+                db=db,
+                tenant_id=tenant_id,
+                after_state={"status": "approved", "artifact_version": artifact.version if artifact else None},
+            )
+            logger.info(f"Excalidraw proposal '{proposal.id}' approved by '{actor_id}'. Artifact updated to v{artifact.version if artifact else 'N/A'}")
+
+        elif action.lower() == "reject":
+            proposal.status = ExcalidrawProposalStatus.REJECTED.value
+            proposal.approved_at = now
+            proposal.approved_by = actor_id
+            if reason:
+                proposal.reason += f" [Rejected: {reason}]"
+
+            self.audit_service.record_event(
+                action="excalidraw_proposal_rejected",
+                actor_id=actor_id,
+                resource_type="excalidraw_proposal",
+                resource_id=proposal.id,
+                db=db,
+                tenant_id=tenant_id,
+                after_state={"status": "rejected", "rejection_reason": reason},
+            )
+            logger.info(f"Excalidraw proposal '{proposal.id}' rejected by '{actor_id}'.")
+        else:
+            raise ExcalidrawError(f"Invalid review action '{action}'. Must be 'approve' or 'reject'.")
+
+        db.commit()
+        db.refresh(proposal)
+        if artifact:
+            db.refresh(artifact)
+
+        return proposal, artifact
+
+    def list_proposals(
+        self,
+        project_id: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        status: Optional[str] = None,
+    ) -> List[ExcalidrawProposal]:
+        """Lists proposals for a given project."""
+        q = db.query(ExcalidrawProposal).filter(
+            ExcalidrawProposal.project_id == project_id,
+            ExcalidrawProposal.tenant_id == tenant_id,
+        )
+        if status:
+            q = q.filter(ExcalidrawProposal.status == status)
+        return q.order_by(ExcalidrawProposal.created_at.desc()).all()
+
+    def _extract_node_labels(self, elements: List[Dict[str, Any]]) -> List[str]:
+        """Extracts readable node labels from Excalidraw elements."""
+        labels = []
+        for el in elements:
+            if el.get("type") == "text":
+                text = el.get("text", "").strip()
+                if text and text not in labels:
+                    labels.append(text)
+        return labels
+
+    def _normalize_element(self, el: Dict[str, Any], idx: int = 1) -> Dict[str, Any]:
+        """Ensures an Excalidraw element contains all standard properties required by Excalidraw renderers."""
+        defaults = {
+            "angle": 0,
+            "strokeColor": "#1e1e1e",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "groupIds": [],
+            "frameId": None,
+            "roundness": None,
+            "seed": 100000 + idx,
+            "version": 1,
+            "versionNonce": 1,
+            "isDeleted": False,
+            "boundElements": None,
+            "updated": 1,
+            "link": None,
+            "locked": False,
+        }
+        defaults.update(el)
+        return defaults
+
+    def _build_ai_architecture_scene(
+        self,
+        project_name: str,
+        workflow_nodes: List[str],
+        decisions: Optional[List[Dict[str, Any]]] = None,
+        requirements: Optional[List[Dict[str, Any]]] = None,
+        focus_prompt: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        AI Visual Architecture Scene Compiler:
+        Produces a rich, multi-tier system architecture diagram for Excalidraw,
+        complete with presentation tier, core AI workforce, persistence layers,
+        connected directional flow arrows, and living decision/requirement sticky cards.
+        """
+        raw_elements: List[Dict[str, Any]] = []
+
+        # 0. Modern Banner Header
+        raw_elements.append({
+            "id": "banner_ai_box",
+            "type": "rectangle",
+            "x": 80,
+            "y": 40,
+            "width": 1180,
+            "height": 55,
+            "backgroundColor": "#1e1b4b",
+            "strokeColor": "#4338ca",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        title_text = f"📐 {project_name.upper()} SYSTEM ARCHITECTURE • LIVING EXCALIDRAW BLUEPRINT"
+        raw_elements.append({
+            "id": "banner_ai_title",
+            "type": "text",
+            "x": 100,
+            "y": 48,
+            "width": 1140,
+            "height": 24,
+            "text": title_text,
+            "fontSize": 15,
+            "fontFamily": 1,
+            "strokeColor": "#ffffff",
+            "textAlign": "left",
+            "containerId": "banner_ai_box",
+        })
+        sub_text = "ORCHESTRATED BY PROJECT AGENT • POWERED BY DEEPSEEK AI INTELLIGENCE • POSTGRESQL AUDIT SYSTEM"
+        if focus_prompt:
+            sub_text += f" • FOCUS: {focus_prompt.upper()}"
+        raw_elements.append({
+            "id": "banner_ai_sub",
+            "type": "text",
+            "x": 100,
+            "y": 72,
+            "width": 1140,
+            "height": 18,
+            "text": sub_text,
+            "fontSize": 10,
+            "fontFamily": 1,
+            "strokeColor": "#c7d2fe",
+            "textAlign": "left",
+            "containerId": "banner_ai_box",
+        })
+
+        # 1. Tier 1: Presentation & Ingress Zone
+        t1_x, t1_y, t1_w, t1_h = 80, 115, 1180, 160
+        raw_elements.append({
+            "id": "zone_t1_box",
+            "type": "rectangle",
+            "x": t1_x,
+            "y": t1_y,
+            "width": t1_w,
+            "height": t1_h,
+            "backgroundColor": "#f5f3ff",
+            "strokeColor": "#818cf8",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "dashed",
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "zone_t1_title",
+            "type": "text",
+            "x": t1_x + 15,
+            "y": t1_y + 10,
+            "width": 450,
+            "height": 20,
+            "text": "TIER 1: PRESENTATION & MULTI-CHANNEL INGESTION",
+            "fontSize": 12,
+            "fontFamily": 1,
+            "strokeColor": "#4f46e5",
+            "textAlign": "left",
+        })
+
+        t1_components = [
+            ("comp_web_app", "🖥️ Next.js 15 Web Client\nReact 19 • Canvas UI\nState & Approval Console", "#e0e7ff", "#4338ca"),
+            ("comp_meet_ingest", "📹 Google Meet Ingestor\nCloud REST v2 • Pub/Sub\nTranscript Synchronization", "#fee2e2", "#dc2626"),
+            ("comp_wa_gateway", "💬 WhatsApp Gateway\nBaileys WebSockets\nNatural ChatOps & Alerts", "#dcfce7", "#16a34a"),
+            ("comp_slack_bot", "⚡ Slack Events Bot\nSlack Events API\nHandoff Webhooks & Context", "#fef3c7", "#d97706"),
+        ]
+        card_w = 265
+        card_spacing = 25
+        start_cx = t1_x + 25
+        card_y = t1_y + 38
+        card_h = 100
+
+        for idx, (cid, ctext, bg_col, strk_col) in enumerate(t1_components):
+            cx = start_cx + idx * (card_w + card_spacing)
+            raw_elements.append({
+                "id": cid,
+                "type": "rectangle",
+                "x": cx,
+                "y": card_y,
+                "width": card_w,
+                "height": card_h,
+                "backgroundColor": bg_col,
+                "strokeColor": strk_col,
+                "fillStyle": "solid",
+                "strokeWidth": 2,
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
+            raw_elements.append({
+                "id": f"{cid}_txt",
+                "type": "text",
+                "x": cx + 12,
+                "y": card_y + 15,
+                "width": card_w - 24,
+                "height": card_h - 30,
+                "text": ctext,
+                "fontSize": 12,
+                "fontFamily": 1,
+                "strokeColor": "#0f172a",
+                "textAlign": "left",
+                "containerId": cid,
+            })
+
+        # 2. Tier 2: Core Processing & Autonomous AI Workforce
+        t2_x, t2_y, t2_w, t2_h = 80, 310, 1180, 200
+        raw_elements.append({
+            "id": "zone_t2_box",
+            "type": "rectangle",
+            "x": t2_x,
+            "y": t2_y,
+            "width": t2_w,
+            "height": t2_h,
+            "backgroundColor": "#ecfdf5",
+            "strokeColor": "#10b981",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "dashed",
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "zone_t2_title",
+            "type": "text",
+            "x": t2_x + 15,
+            "y": t2_y + 10,
+            "width": 500,
+            "height": 20,
+            "text": "TIER 2: APPLICATION CORE & AUTONOMOUS AI WORKFORCE",
+            "fontSize": 12,
+            "fontFamily": 1,
+            "strokeColor": "#059669",
+            "textAlign": "left",
+        })
+
+        t2_components = [
+            ("comp_fastapi_core", "⚙️ FastAPI Application Core\nPython 3.11 • REST / SSE\nRBAC • Concurrency & Pipeline", "#d1fae5", "#059669"),
+            ("comp_proj_agent", "🧠 Logical Project Agent\nIsolated Memory & Living Context\nCoordinates Specialist Roles", "#e0f2fe", "#0284c7"),
+            ("comp_deepseek_ai", "🤖 DeepSeek AI Engine\nNVIDIA NIM (v4.1-flash)\nStructured Candidate Extraction", "#ffedd5", "#ea580c"),
+            ("comp_specialists", "👥 Specialist AI Workforce\nBA • Planner • Tech • Functional\nFrappe Integration Specialist", "#fce7f3", "#db2777"),
+        ]
+        card_y2 = t2_y + 40
+        card_h2 = 135
+
+        for idx, (cid, ctext, bg_col, strk_col) in enumerate(t2_components):
+            cx = start_cx + idx * (card_w + card_spacing)
+            raw_elements.append({
+                "id": cid,
+                "type": "rectangle",
+                "x": cx,
+                "y": card_y2,
+                "width": card_w,
+                "height": card_h2,
+                "backgroundColor": bg_col,
+                "strokeColor": strk_col,
+                "fillStyle": "solid",
+                "strokeWidth": 2,
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
+            raw_elements.append({
+                "id": f"{cid}_txt",
+                "type": "text",
+                "x": cx + 12,
+                "y": card_y2 + 15,
+                "width": card_w - 24,
+                "height": card_h2 - 30,
+                "text": ctext,
+                "fontSize": 12,
+                "fontFamily": 1,
+                "strokeColor": "#0f172a",
+                "textAlign": "left",
+                "containerId": cid,
+            })
+
+        # Connectors from Tier 1 to Tier 2
+        raw_elements.append({
+            "id": "arr_web_to_api",
+            "type": "arrow",
+            "x": start_cx + card_w / 2,
+            "y": card_y + card_h,
+            "width": 0,
+            "height": card_y2 - (card_y + card_h),
+            "points": [[0, 0], [0, card_y2 - (card_y + card_h)]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#64748b",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arr_meet_to_api",
+            "type": "arrow",
+            "x": start_cx + card_w + card_spacing + card_w / 2,
+            "y": card_y + card_h,
+            "width": -(card_w + card_spacing) / 2,
+            "height": card_y2 - (card_y + card_h),
+            "points": [[0, 0], [-(card_w + card_spacing) / 2, card_y2 - (card_y + card_h)]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#dc2626",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arr_wa_to_api",
+            "type": "arrow",
+            "x": start_cx + 2 * (card_w + card_spacing) + card_w / 2,
+            "y": card_y + card_h,
+            "width": -(card_w + card_spacing),
+            "height": card_y2 - (card_y + card_h),
+            "points": [[0, 0], [-(card_w + card_spacing), card_y2 - (card_y + card_h)]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#16a34a",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+
+        # Inter-Tier 2 Connectors
+        raw_elements.append({
+            "id": "arr_api_to_agent",
+            "type": "arrow",
+            "x": start_cx + card_w,
+            "y": card_y2 + card_h2 / 2,
+            "width": card_spacing,
+            "height": 0,
+            "points": [[0, 0], [card_spacing, 0]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#0284c7",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arr_agent_to_ai",
+            "type": "arrow",
+            "x": start_cx + card_w + card_spacing + card_w,
+            "y": card_y2 + card_h2 / 2,
+            "width": card_spacing,
+            "height": 0,
+            "points": [[0, 0], [card_spacing, 0]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#ea580c",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arr_agent_to_specs",
+            "type": "arrow",
+            "x": start_cx + 2 * (card_w + card_spacing) + card_w,
+            "y": card_y2 + card_h2 / 2,
+            "width": card_spacing,
+            "height": 0,
+            "points": [[0, 0], [card_spacing, 0]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#db2777",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+
+        # 3. Tier 3: Persistence & Authoritative State
+        t3_x, t3_y, t3_w, t3_h = 80, 545, 1180, 160
+        raw_elements.append({
+            "id": "zone_t3_box",
+            "type": "rectangle",
+            "x": t3_x,
+            "y": t3_y,
+            "width": t3_w,
+            "height": t3_h,
+            "backgroundColor": "#fffbeb",
+            "strokeColor": "#f59e0b",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "dashed",
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "zone_t3_title",
+            "type": "text",
+            "x": t3_x + 15,
+            "y": t3_y + 10,
+            "width": 550,
+            "height": 20,
+            "text": "TIER 3: PERSISTENCE, EVIDENCE PROVENANCE & AUDIT TRAIL",
+            "fontSize": 12,
+            "fontFamily": 1,
+            "strokeColor": "#b45309",
+            "textAlign": "left",
+        })
+
+        t3_components = [
+            ("comp_db_sor", "🗄️ Database System of Record\nPostgreSQL / SQLite • SQLAlchemy\nAuthoritative State & Version History", "#fef3c7", "#d97706"),
+            ("comp_evidence_store", "📜 Immutable Evidence Store\nMeeting Transcripts & Events\nVerbatim Text & Audit Lineage", "#e2e8f0", "#475569"),
+            ("comp_excal_store", "🎨 Living Excalidraw Store\nOpen Schema (application/vnd.excalidraw+json)\nHuman Approval Gates & Diff History", "#ede9fe", "#7c3aed"),
+        ]
+        card_w3 = 360
+        spacing3 = 30
+        card_y3 = t3_y + 38
+        card_h3 = 100
+
+        for idx, (cid, ctext, bg_col, strk_col) in enumerate(t3_components):
+            cx = start_cx + idx * (card_w3 + spacing3)
+            raw_elements.append({
+                "id": cid,
+                "type": "rectangle",
+                "x": cx,
+                "y": card_y3,
+                "width": card_w3,
+                "height": card_h3,
+                "backgroundColor": bg_col,
+                "strokeColor": strk_col,
+                "fillStyle": "solid",
+                "strokeWidth": 2,
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
+            raw_elements.append({
+                "id": f"{cid}_txt",
+                "type": "text",
+                "x": cx + 15,
+                "y": card_y3 + 18,
+                "width": card_w3 - 30,
+                "height": card_h3 - 36,
+                "text": ctext,
+                "fontSize": 12,
+                "fontFamily": 1,
+                "strokeColor": "#0f172a",
+                "textAlign": "left",
+                "containerId": cid,
+            })
+
+        # Downward arrows from Tier 2 to Tier 3
+        raw_elements.append({
+            "id": "arr_api_to_db",
+            "type": "arrow",
+            "x": start_cx + card_w / 2,
+            "y": card_y2 + card_h2,
+            "width": 0,
+            "height": card_y3 - (card_y2 + card_h2),
+            "points": [[0, 0], [0, card_y3 - (card_y2 + card_h2)]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#d97706",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arr_agent_to_excal",
+            "type": "arrow",
+            "x": start_cx + card_w + card_spacing + card_w / 2,
+            "y": card_y2 + card_h2,
+            "width": 300,
+            "height": card_y3 - (card_y2 + card_h2),
+            "points": [[0, 0], [300, card_y3 - (card_y2 + card_h2)]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#7c3aed",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+
+        # 4. Key Decisions & Evidence Provenance Cards Section
+        dec_y = 735
+        raw_elements.append({
+            "id": "lbl_dec_ai_hdr",
+            "type": "text",
+            "x": 80,
+            "y": dec_y,
+            "width": 550,
+            "height": 26,
+            "text": "KEY ARCHITECTURAL DECISIONS & EVIDENCE CITATIONS",
+            "fontSize": 14,
+            "fontFamily": 1,
+            "strokeColor": "#15803d",
+            "textAlign": "left",
+        })
+
+        dec_list = decisions or []
+        if not dec_list:
+            dec_list = [
+                {"title": "Adopt DeepSeek on NVIDIA NIM", "source": "Architecture Review", "evidence_ref": "EV-DEC-001"},
+                {"title": "One Project = One Project Agent Context", "source": "Core Principle", "evidence_ref": "EV-DEC-002"},
+                {"title": "Non-Destructive Proposal Gating", "source": "Safety Standard", "evidence_ref": "EV-DEC-003"},
+                {"title": "Multi-Channel Baileys WhatsApp Gateway", "source": "Integration Spec", "evidence_ref": "EV-DEC-004"},
+            ]
+
+        dec_card_w = 270
+        dec_card_h = 105
+        dec_spacing = 20
+        for idx, d in enumerate(dec_list[:4]):
+            dx = 80 + idx * (dec_card_w + dec_spacing)
+            dy = dec_y + 32
+            d_title = d.get("title") or d.get("decision") or d.get("text") or f"Decision #{idx+1}"
+            d_source = d.get("source", "Meeting / Chat")
+            ev_ref = d.get("evidence_ref") or d.get("evidence_id")
+            if not ev_ref and d.get("evidence_ids"):
+                ev_ids = d.get("evidence_ids")
+                ev_ref = ev_ids[0] if isinstance(ev_ids, list) and ev_ids else str(ev_ids)
+            ev_ref = ev_ref or f"EV-{idx+1}"
+
+            card_id = f"ai_dec_box_{idx+1}"
+            raw_elements.append({
+                "id": card_id,
+                "type": "rectangle",
+                "x": dx,
+                "y": dy,
+                "width": dec_card_w,
+                "height": dec_card_h,
+                "backgroundColor": "#dcfce7",
+                "strokeColor": "#16a34a",
+                "fillStyle": "solid",
+                "strokeWidth": 2,
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
+            raw_elements.append({
+                "id": f"ai_dec_txt_{idx+1}",
+                "type": "text",
+                "x": dx + 12,
+                "y": dy + 12,
+                "width": dec_card_w - 24,
+                "height": dec_card_h - 24,
+                "text": f"DECISION\n{d_title}\n\nSource: {d_source}\nEvidence: {ev_ref}",
+                "fontSize": 11,
+                "fontFamily": 1,
+                "strokeColor": "#14532d",
+                "textAlign": "left",
+                "containerId": card_id,
+            })
+
+        # 5. Active Requirements & Scope Section
+        req_y = 895
+        raw_elements.append({
+            "id": "lbl_req_ai_hdr",
+            "type": "text",
+            "x": 80,
+            "y": req_y,
+            "width": 500,
+            "height": 26,
+            "text": "ACTIVE REQUIREMENTS & SCOPE BOUNDARIES",
+            "fontSize": 14,
+            "fontFamily": 1,
+            "strokeColor": "#1d4ed8",
+            "textAlign": "left",
+        })
+
+        req_list = requirements or []
+        if not req_list:
+            req_list = [
+                {"title": "Zero LLM Hallucinations on Project State"},
+                {"title": "Strict Human Approval for Diagram Mutations"},
+                {"title": "Bi-directional Excalidraw JSON Sync"},
+                {"title": "Sub-Second Extraction with Flash Model"},
+            ]
+
+        for idx, r in enumerate(req_list[:4]):
+            rx = 80 + idx * (dec_card_w + dec_spacing)
+            ry = req_y + 32
+            r_title = r.get("title") or r.get("requirement") or r.get("text") or f"Requirement #{idx+1}"
+            r_id = f"ai_req_box_{idx+1}"
+            raw_elements.append({
+                "id": r_id,
+                "type": "rectangle",
+                "x": rx,
+                "y": ry,
+                "width": dec_card_w,
+                "height": 85,
+                "backgroundColor": "#eff6ff",
+                "strokeColor": "#3b82f6",
+                "fillStyle": "solid",
+                "strokeWidth": 2,
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
+            raw_elements.append({
+                "id": f"ai_req_txt_{idx+1}",
+                "type": "text",
+                "x": rx + 12,
+                "y": ry + 12,
+                "width": dec_card_w - 24,
+                "height": 60,
+                "text": f"REQUIREMENT\n{r_title}",
+                "fontSize": 11,
+                "fontFamily": 1,
+                "strokeColor": "#1e3a8a",
+                "textAlign": "left",
+                "containerId": r_id,
+            })
+
+        return [self._normalize_element(el, idx=i) for i, el in enumerate(raw_elements, 1)]
+
+    def _build_living_workspace_elements(
+        self,
+        node_names: List[str],
+        decisions: Optional[List[Dict[str, Any]]] = None,
+        requirements: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Builds the Project's Living Visual Workspace scene elements in Excalidraw format.
+        Renders:
+        - Living Workspace Title Banner
+        - System Architecture Pipeline Flow
+        - Decision Cards (Title, Source e.g. Google Meet/Slack, Evidence references)
+        - Requirements Cards
+        """
+        raw_elements: List[Dict[str, Any]] = []
+
+        # 0. Living Workspace Banner
+        raw_elements.append({
+            "id": "banner_box",
+            "type": "rectangle",
+            "x": 100,
+            "y": 40,
+            "width": 780,
+            "height": 45,
+            "backgroundColor": "#f8fafc",
+            "strokeColor": "#6366f1",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "banner_text",
+            "type": "text",
+            "x": 115,
+            "y": 52,
+            "width": 750,
+            "height": 22,
+            "text": "PROJECT AGENT LIVING VISUAL WORKSPACE  •  POSTGRESQL SYSTEM OF RECORD",
+            "fontSize": 13,
+            "fontFamily": 1,
+            "textAlign": "left",
+            "containerId": "banner_box",
+        })
+
+        # 1. System Architecture Pipeline Flow
+        flow_elements = self._build_flow_elements(node_names, start_x=100, start_y=115)
+        raw_elements.extend(flow_elements)
+
+        # 2. Key Decisions & Evidence Provenance Cards
+        decisions_list = decisions or []
+        if decisions_list:
+            dec_y = 230
+            raw_elements.append({
+                "id": "lbl_decisions_header",
+                "type": "text",
+                "x": 100,
+                "y": dec_y,
+                "width": 450,
+                "height": 26,
+                "text": "KEY PROJECT DECISIONS & EVIDENCE PROVENANCE",
+                "fontSize": 15,
+                "fontFamily": 1,
+                "textAlign": "left",
+            })
+
+            card_x = 100
+            for idx, d in enumerate(decisions_list[:5]):  # Show up to 5 recent decisions
+                d_title = d.get("title") or d.get("decision") or d.get("text") or f"Decision #{idx+1}"
+                d_source = d.get("source", "Google Meet")
+                evidence_val = d.get("evidence_ref") or d.get("evidence_id")
+                if not evidence_val and d.get("evidence_ids"):
+                    ev_ids = d.get("evidence_ids")
+                    if isinstance(ev_ids, list) and len(ev_ids) > 0:
+                        evidence_val = ev_ids[0]
+                    elif isinstance(ev_ids, str):
+                        evidence_val = ev_ids
+                d_evidence = evidence_val or f"EV-MEET-{idx+1}"
+                card_id = f"dec_box_{idx+1}"
+                text_id = f"dec_txt_{idx+1}"
+
+                # Decision Card Rectangle
+                raw_elements.append({
+                    "id": card_id,
+                    "type": "rectangle",
+                    "x": card_x,
+                    "y": dec_y + 35,
+                    "width": 250,
+                    "height": 115,
+                    "backgroundColor": "#dcfce7",
+                    "strokeColor": "#16a34a",
+                    "fillStyle": "solid",
+                    "strokeWidth": 2,
+                    "roundness": {"type": 3},
+                    "roughness": 1,
+                })
+
+                # Card Text
+                card_body = f"DECISION\n{d_title}\n\nSOURCE: {d_source}\nEVIDENCE: {d_evidence}"
+                raw_elements.append({
+                    "id": text_id,
+                    "type": "text",
+                    "x": card_x + 12,
+                    "y": dec_y + 45,
+                    "width": 226,
+                    "height": 95,
+                    "text": card_body,
+                    "fontSize": 11,
+                    "fontFamily": 1,
+                    "textAlign": "left",
+                    "containerId": card_id,
+                })
+                card_x += 280
+
+        # 3. Active Requirements Cards
+        reqs_list = requirements or []
+        if reqs_list:
+            req_y = 410
+            raw_elements.append({
+                "id": "lbl_reqs_header",
+                "type": "text",
+                "x": 100,
+                "y": req_y,
+                "width": 350,
+                "height": 26,
+                "text": "ACTIVE REQUIREMENTS & SCOPE",
+                "fontSize": 15,
+                "fontFamily": 1,
+                "textAlign": "left",
+            })
+
+            req_x = 100
+            for idx, r in enumerate(reqs_list[:4]):
+                r_title = r.get("title") or r.get("requirement") or r.get("text") or f"Requirement #{idx+1}"
+                r_id = f"req_box_{idx+1}"
+                r_txt_id = f"req_txt_{idx+1}"
+
+                raw_elements.append({
+                    "id": r_id,
+                    "type": "rectangle",
+                    "x": req_x,
+                    "y": req_y + 35,
+                    "width": 250,
+                    "height": 90,
+                    "backgroundColor": "#eff6ff",
+                    "strokeColor": "#3b82f6",
+                    "fillStyle": "solid",
+                    "strokeWidth": 2,
+                    "roundness": {"type": 3},
+                    "roughness": 1,
+                })
+
+                raw_elements.append({
+                    "id": r_txt_id,
+                    "type": "text",
+                    "x": req_x + 12,
+                    "y": req_y + 45,
+                    "width": 226,
+                    "height": 70,
+                    "text": f"REQUIREMENT\n{r_title}",
+                    "fontSize": 11,
+                    "fontFamily": 1,
+                    "textAlign": "left",
+                    "containerId": r_id,
+                })
+                req_x += 280
+
+        # Normalize all elements with standard Excalidraw attributes
+        return [self._normalize_element(el, idx=i) for i, el in enumerate(raw_elements, 1)]
+
+    def _build_flow_elements(
+        self,
+        node_names: List[str],
+        start_x: int = 100,
+        start_y: int = 150,
+    ) -> List[Dict[str, Any]]:
+        """Generates standard Excalidraw elements representing a linear pipeline flow."""
+        elements: List[Dict[str, Any]] = []
+        node_width = 160
+        node_height = 60
+        spacing = 90
+
+        colors = ["#e0e7ff", "#fef3c7", "#d1fae5", "#fce7f3", "#ede9fe", "#e0f2fe"]
+
+        for i, name in enumerate(node_names):
+            x = start_x + i * (node_width + spacing)
+            y = start_y
+            color = colors[i % len(colors)]
+            node_id = f"node_{i+1}"
+            text_id = f"text_{i+1}"
+
+            # Box element
+            elements.append({
+                "id": node_id,
+                "type": "rectangle",
+                "x": x,
+                "y": y,
+                "width": node_width,
+                "height": node_height,
+                "backgroundColor": color,
+                "fillStyle": "solid",
+                "strokeWidth": 2,
+                "strokeStyle": "solid",
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
+
+            # Text label element
+            elements.append({
+                "id": text_id,
+                "type": "text",
+                "x": x + 15,
+                "y": y + 20,
+                "width": node_width - 30,
+                "height": 25,
+                "text": name,
+                "fontSize": 14,
+                "fontFamily": 1,
+                "textAlign": "center",
+                "verticalAlign": "middle",
+                "containerId": node_id,
+            })
+
+            # Arrow to next node
+            if i < len(node_names) - 1:
+                arrow_id = f"arrow_{i+1}_{i+2}"
+                next_x = x + node_width + spacing
+                elements.append({
+                    "id": arrow_id,
+                    "type": "arrow",
+                    "x": x + node_width,
+                    "y": y + (node_height / 2),
+                    "width": spacing,
+                    "height": 0,
+                    "points": [[0, 0], [spacing, 0]],
+                    "endArrowhead": "arrow",
+                    "strokeWidth": 2,
+                    "roughness": 1,
+                })
+
+        return elements
+
+    def format_artifact_read(self, artifact: ExcalidrawArtifact) -> ExcalidrawArtifactRead:
+        """Converts model to typed DTO."""
+        elements = json.loads(artifact.elements_json) if artifact.elements_json else []
+        app_state = json.loads(artifact.app_state_json) if artifact.app_state_json else {}
+        nodes = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
+
+        return ExcalidrawArtifactRead(
+            id=artifact.id,
+            project_id=artifact.project_id,
+            tenant_id=artifact.tenant_id,
+            name=artifact.name,
+            version=artifact.version,
+            elements=elements,
+            app_state=app_state,
+            extracted_nodes=nodes,
+            created_at=artifact.created_at,
+            updated_at=artifact.updated_at,
+        )
+
+    def format_proposal_read(self, proposal: ExcalidrawProposal) -> ExcalidrawProposalRead:
+        """Converts proposal model to typed DTO."""
+        diff_data = json.loads(proposal.diff_preview_json) if proposal.diff_preview_json else {}
+        proposed_elements = json.loads(proposal.proposed_elements_json) if proposal.proposed_elements_json else []
+        evidence_ids = json.loads(proposal.evidence_ids_json) if proposal.evidence_ids_json else []
+
+        return ExcalidrawProposalRead(
+            id=proposal.id,
+            artifact_id=proposal.artifact_id,
+            project_id=proposal.project_id,
+            tenant_id=proposal.tenant_id,
+            derived_from_state_version=proposal.derived_from_state_version,
+            status=proposal.status,
+            reason=proposal.reason,
+            diff_preview=ExcalidrawDiffPreview(
+                nodes_before=diff_data.get("nodes_before", []),
+                nodes_after=diff_data.get("nodes_after", []),
+                nodes_added=diff_data.get("nodes_added", []),
+                nodes_removed=diff_data.get("nodes_removed", []),
+                connections_before=diff_data.get("connections_before", []),
+                connections_after=diff_data.get("connections_after", []),
+            ),
+            proposed_elements=proposed_elements,
+            evidence_ids=evidence_ids,
+            created_at=proposal.created_at,
+            approved_at=proposal.approved_at,
+            approved_by=proposal.approved_by,
+        )

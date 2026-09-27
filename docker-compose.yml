@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: synesis-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://synesis_app:synesis_secure_pass_prod@db:5432/synesis_db
+      - SECRET_KEY=${SECRET_KEY:-synesis_production_secret_key_change_me_immediately_98765}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-q1w2e3r4t5y6u7i8o9p0a1s2d3f4g5h6j7k8l9z0x1c2v3b4n5m6}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8000/auth/google/callback}
+      - FRONTEND_URL=http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - synesis-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: synesis-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - synesis-net
+
+  db:
+    image: postgres:16-alpine
+    container_name: synesis-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=synesis_app
+      - POSTGRES_PASSWORD=synesis_secure_pass_prod
+      - POSTGRES_DB=synesis_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synesis_app -d synesis_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - synesis-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: synesis-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - synesis-net
+
+networks:
+  synesis-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:

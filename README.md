@@ -1,0 +1,104 @@
+# Synora 🚀
+> **Autonomous Multi-Channel Ingestion & Living Architecture Workspace**
+
+Synora bridges unstructured discussions across communication channels (Google Meet transcripts, WhatsApp messages, and direct uploads) with a dynamic, living system architecture workspace powered by Excalidraw, deterministic pipeline synthesis, and AI design via NVIDIA NIM (`deepseek-ai/deepseek-v4.1-flash`).
+
+---
+
+## 🌟 Key Features
+
+1. **Multi-Channel Ingestion Engine**
+   - **Google Meet & Calendar Integration**: Automatic sync, push notifications, and transcript parsing.
+   - **WhatsApp Baileys Bridge**: Native multi-device WebSocket connection for real-time group and direct chat ingestion.
+   - **Manual Transcript Uploader**: Instant text & file pipeline ingestion.
+
+2. **Deterministic-First Synthesis Pipeline**
+   - Resilient architectural component extraction, dependency graph generation, and risk matrix compilation.
+   - High-performance, zero-latency deterministic baseline ensuring 100% system availability even without cloud LLM keys.
+
+3. **AI Visual Canvas Engine (Excalidraw)**
+   - Powered by **NVIDIA NIM** (`deepseek-ai/deepseek-v4.1-flash`).
+   - Translates raw requirements into complete multi-tier visual architectural diagrams (Frontend, Application/API Gateway, Message Bus, Data & Storage tiers) with coordinate placement and typed edge routing.
+   - Fallback to robust deterministic geometric layout if NIM API is unreachable or rate-limited.
+
+4. **Living Workspace & Project Management**
+   - Interactive Excalidraw board with live element synchronisation.
+   - Full project lifecycle tracking: requirements, decisions, tasks, and architecture state history.
+   - Real-time notification center and source connection management.
+
+---
+
+## 🏗️ System Architecture
+
+For a comprehensive breakdown of all 24 database models, 3 architectural pillars, API endpoints, and end-to-end data flows, see:
+📖 **[SYNORA_COMPLETE_SYSTEM_ARCHITECTURE.md](./SYNORA_COMPLETE_SYSTEM_ARCHITECTURE.md)**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    SYNORA PLATFORM                          │
+├──────────────────────┬──────────────────────┬────────────────┤
+│   Ingestion Layer    │   Synthesis Core     │ Living Canvas  │
+│  - Google Meet       │  - Pipeline Engine   │ - Excalidraw   │
+│  - WhatsApp Baileys  │  - Graph Builder     │ - NVIDIA NIM   │
+│  - File/Text Upload  │  - Deterministic DB  │ - Live Sync    │
+└──────────────────────┴──────────────────────┴────────────────┘
+```
+
+---
+
+## 🛠️ Tech Stack
+
+- **Backend**: Python 3.11+, FastAPI, SQLAlchemy, SQLite/PostgreSQL, Pydantic v2, Pytest
+- **Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS, Lucide React, Excalidraw
+- **Microservices**: Node.js Baileys Bridge (WhatsApp Web Multi-Device)
+- **AI / LLM**: NVIDIA NIM Cloud API (`deepseek-ai/deepseek-v4.1-flash`) with automatic deterministic fallback
+
+---
+
+## 🚀 Quick Start
+
+### 1. Prerequisites
+- Python 3.11+
+- Node.js 18+ and npm
+- (Optional) NVIDIA NIM API key for LLM visual generation
+
+### 2. Environment Setup
+Copy the example environment configuration:
+```bash
+cp .env.example .env
+```
+Fill in the credentials as needed:
+- `NVIDIA_API_KEY`: Your NVIDIA NIM key (e.g. `nvapi-...`)
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`: For Google Workspace sync
+
+### 3. Backend Setup
+```bash
+cd backend
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### 4. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open `http://localhost:3000` to access the Synora dashboard.
+
+### 5. Running Tests
+Run the complete backend test suite:
+```bash
+pytest backend/tests -v
+```
+
+---
+
+## 📄 License
+MIT License. Built with ❤️ by the Synora team.

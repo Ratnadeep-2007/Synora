@@ -1,0 +1,1 @@
+"""Synesis backend application package."""

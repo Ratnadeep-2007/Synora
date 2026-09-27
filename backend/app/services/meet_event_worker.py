@@ -1,0 +1,756 @@
+import asyncio
+import base64
+from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
+import logging
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.core.exceptions import (
+    CredentialsExpiredError,
+    GoogleMeetError,
+    GoogleMeetPermissionError,
+    GoogleMeetRateLimitError,
+    GoogleMeetResourceNotFoundError,
+    GoogleMeetTransientError,
+    TranscriptUnavailableError,
+)
+from app.models.meet_event_record import MeetEventRecord
+from app.models.meet_subscription import MeetSubscription, MeetSubscriptionStatus
+from app.models.meeting import Meeting, Participant, Transcript, TranscriptEntry
+from app.models.project import Project
+from app.models.source_connection import ConnectionStatus, SourceConnection
+from app.models.source_event import SourceEvent
+from app.schemas.source_event import SourceEventCreate
+from app.services.google_meet import GoogleMeetService, _parse_iso_datetime
+from app.services.google_oauth import GoogleOAuthService
+from app.services.ingestion_service import IngestionService
+from app.services.metrics import metrics
+
+logger = logging.getLogger(__name__)
+
+TRANSCRIPT_READY_EVENT = "google.workspace.meet.transcript.v2.fileGenerated"
+
+UNASSIGNED_PROJECT_ID = "proj_unassigned"
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def verify_pubsub_request(authorization_header: Optional[str]) -> bool:
+    """Verify a Pub/Sub push request using the shared verification token.
+
+    When PUBSUB_VERIFICATION_TOKEN is unconfigured, verification is skipped
+    (local development) but the event is still marked as unverified in logs.
+    """
+    token = (authorization_header or "").removeprefix("Bearer ").strip()
+    expected = settings.PUBSUB_VERIFICATION_TOKEN
+    if not expected:
+        logger.warning("meet_pubsub_unverified: PUBSUB_VERIFICATION_TOKEN is not configured")
+        return True
+    return hmac.compare_digest(token, expected)
+
+
+def parse_pubsub_envelope(envelope: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse a Pub/Sub push envelope into the Workspace Events payload.
+
+    Raises ValueError for malformed envelopes so the caller can reject
+    without acknowledging durable handling.
+    """
+    if not isinstance(envelope, dict) or "message" not in envelope:
+        raise ValueError("Pub/Sub envelope must contain a 'message' object.")
+    message = envelope["message"]
+    if not isinstance(message, dict) or "data" not in message:
+        raise ValueError("Pub/Sub message must contain base64 'data'.")
+    message_id = message.get("messageId") or message.get("message_id") or ""
+    try:
+        payload = json.loads(base64.b64decode(message["data"]).decode("utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Pub/Sub message data is not valid JSON: {exc}") from exc
+    return {"message_id": message_id, "payload": payload, "attributes": message.get("attributes", {})}
+
+
+def extract_transcript_notification(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract the transcript resource references from a Workspace Events payload.
+
+    Supports the documented transcript fileGenerated shape as well as the
+    generic CloudEvents wrapper Google delivers over Pub/Sub.
+    """
+    event_type = (
+        payload.get("eventType")
+        or payload.get("event_type")
+        or payload.get("type")
+        or ""
+    )
+    data = payload.get("data") or payload.get("eventData") or {}
+    transcript_resource = (
+        data.get("transcript")
+        or data.get("transcriptName")
+        or data.get("resourceName")
+        or payload.get("transcript")
+        or payload.get("resourceName")
+        or ""
+    )
+    conference_record_id = (
+        data.get("conferenceRecord")
+        or data.get("conferenceRecordName")
+        or payload.get("conferenceRecord")
+        or ""
+    )
+    if transcript_resource and not conference_record_id:
+        parts = transcript_resource.split("/transcripts/")
+        if len(parts) == 2:
+            conference_record_id = parts[0]
+    event_id = (
+        payload.get("id")
+        or payload.get("eventId")
+        or payload.get("event_id")
+        or transcript_resource
+    )
+    occurred_at = payload.get("time") or payload.get("occurredAt") or payload.get("occurred_at")
+    subscription = payload.get("subscription") or data.get("subscription")
+    return {
+        "event_type": event_type,
+        "event_id": event_id,
+        "transcript_resource": transcript_resource,
+        "conference_record_id": conference_record_id,
+        "occurred_at": occurred_at,
+        "subscription": subscription,
+    }
+
+
+class MeetEventWorker:
+    """Event-driven transcript pipeline worker.
+
+    Flow per notification (notification != content):
+      Workspace Events -> Pub/Sub -> validate -> deduplicate ->
+      Meet REST retrieval (metadata, entries, participants) ->
+      normalize -> SourceEvent -> Evidence -> downstream agent pipeline.
+
+    Heavy AI work stays out of the Pub/Sub handler: the handler records the
+    event durably and the retrieval/processing stages run as idempotent
+    units that are safe to retry on redelivery.
+    """
+
+    def __init__(
+        self,
+        meet_service: Optional[GoogleMeetService] = None,
+        oauth_service: Optional[GoogleOAuthService] = None,
+        ingestion_service: Optional[IngestionService] = None,
+    ):
+        self.meet_service = meet_service or GoogleMeetService()
+        self.oauth_service = oauth_service or GoogleOAuthService()
+        self.ingestion = ingestion_service or IngestionService()
+
+    # ------------------------------------------------------------------
+    # Stage 1: Pub/Sub intake (lightweight, durable)
+    # ------------------------------------------------------------------
+    def handle_pubsub_push(
+        self,
+        envelope: Dict[str, Any],
+        db: Session,
+        authorization_header: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Validate and durably record a Pub/Sub push message.
+
+        Returns a result dict; raises ValueError for malformed envelopes
+        (caller must NOT acknowledge) and WorkspaceLookupError-free results
+        for duplicates (safe to acknowledge).
+        """
+        if not verify_pubsub_request(authorization_header):
+            metrics.increment("meet_sync_failed_total", labels={"reason": "pubsub_unauthorized"})
+            logger.warning("meet_event_rejected: reason=pubsub_unauthorized")
+            raise ValueError("Invalid Pub/Sub verification token.")
+
+        parsed = parse_pubsub_envelope(envelope)
+        payload = parsed["payload"]
+        notification = extract_transcript_notification(payload)
+
+        if notification["event_type"] and notification["event_type"] != TRANSCRIPT_READY_EVENT:
+            logger.info(
+                "meet_event_ignored: event_type=%s message_id=%s",
+                notification["event_type"],
+                parsed["message_id"],
+            )
+            return {"acknowledged": True, "action": "ignored", "reason": "unsupported_event_type"}
+
+        provider_event_id = notification["event_id"] or parsed["message_id"]
+        if not provider_event_id:
+            raise ValueError("Workspace event has no stable event identifier.")
+
+        existing = (
+            db.query(MeetEventRecord)
+            .filter(MeetEventRecord.provider_event_id == provider_event_id)
+            .first()
+        )
+        if existing:
+            metrics.increment("meet_events_duplicate_total", labels={"provider": "google_meet"})
+            logger.info(
+                "meet_event_duplicate: provider_event_id=%s status=%s",
+                provider_event_id,
+                existing.status,
+            )
+            return {"acknowledged": True, "action": "duplicate", "event_record_id": existing.id}
+
+        record = MeetEventRecord(
+            provider_event_id=provider_event_id,
+            event_type=notification["event_type"] or TRANSCRIPT_READY_EVENT,
+            conference_record_id=notification["conference_record_id"] or None,
+            transcript_resource=notification["transcript_resource"] or None,
+            status="received",
+            attempts="0",
+            user_id="",
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        metrics.increment("meet_events_received_total", labels={"provider": "google_meet"})
+        logger.info(
+            "meet_event_received: provider_event_id=%s conference=%s transcript=%s",
+            provider_event_id,
+            notification["conference_record_id"],
+            notification["transcript_resource"],
+        )
+        return {"acknowledged": False, "action": "recorded", "event_record_id": record.id}
+
+    def bind_event_identity(
+        self,
+        event_record_id: str,
+        user_id: str,
+        subscription_id: Optional[str],
+        project_id: Optional[str],
+        db: Session,
+    ) -> MeetEventRecord:
+        record = db.query(MeetEventRecord).filter(MeetEventRecord.id == event_record_id).first()
+        if not record:
+            raise ValueError(f"Meet event record '{event_record_id}' not found.")
+        record.user_id = user_id
+        record.subscription_id = subscription_id
+        record.project_id = project_id
+        if subscription_id:
+            subscription = (
+                db.query(MeetSubscription).filter(MeetSubscription.id == subscription_id).first()
+            )
+            if subscription:
+                subscription.last_event_at = _now()
+        db.commit()
+        db.refresh(record)
+        return record
+
+    # ------------------------------------------------------------------
+    # Stage 2: Retrieval + persistence (idempotent, retry-safe)
+    # ------------------------------------------------------------------
+    def _get_connection(self, user_id: str, db: Session) -> SourceConnection:
+        connection = (
+            db.query(SourceConnection)
+            .filter(
+                SourceConnection.user_id == user_id,
+                SourceConnection.provider == "google",
+                SourceConnection.status == ConnectionStatus.ACTIVE.value,
+            )
+            .first()
+        )
+        if not connection:
+            metrics.increment("meet_sync_failed_total", labels={"reason": "no_connection"})
+            logger.warning("meet_sync_failed: reason=no_connection user_id=%s", user_id)
+            raise CredentialsExpiredError(
+                f"No active Google connection found for user '{user_id}'. "
+                "Connect via /auth/google first."
+            )
+        return connection
+
+    def _resolve_project(
+        self,
+        db: Session,
+        user_id: str,
+        subscription: Optional[MeetSubscription],
+        conference_record_id: str,
+        source_connection_id: str,
+    ) -> str:
+        """Map a transcript notification to a Synesis project. Never guesses."""
+        if subscription and subscription.project_id:
+            project = db.query(Project).filter(Project.id == subscription.project_id).first()
+            if project:
+                return project.id
+        owned = (
+            db.query(Meeting)
+            .filter(
+                Meeting.provider == "google",
+                Meeting.provider_conference_id == conference_record_id,
+                Meeting.user_id == user_id,
+            )
+            .first()
+        )
+        if owned and owned.project_id:
+            return owned.project_id
+        logger.warning(
+            "meet_project_unassigned: conference=%s user_id=%s",
+            conference_record_id,
+            user_id,
+        )
+        return UNASSIGNED_PROJECT_ID
+
+    def process_event_record(
+        self,
+        event_record_id: str,
+        db: Session,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
+        """Retrieve transcript content for a recorded event and persist it."""
+        record = db.query(MeetEventRecord).filter(MeetEventRecord.id == event_record_id).first()
+        if not record:
+            raise ValueError(f"Meet event record '{event_record_id}' not found.")
+        if record.status == "processed":
+            metrics.increment("meet_events_duplicate_total", labels={"provider": "google_meet"})
+            return {"status": "duplicate", "event_record_id": record.id}
+        if not record.user_id:
+            raise ValueError("Event record has no bound user identity; bind it before processing.")
+
+        attempts = int(record.attempts or "0")
+        record.status = "processing"
+        record.attempts = str(attempts + 1)
+        db.commit()
+
+        try:
+            result = self._retrieve_and_persist(record, db)
+        except (GoogleMeetTransientError, GoogleMeetRateLimitError) as exc:
+            record.status = "pending_retry" if attempts + 1 < max_retries else "failed"
+            record.last_error = str(exc)[:2000]
+            db.commit()
+            metrics.increment("meet_sync_failed_total", labels={"reason": "transient"})
+            logger.warning(
+                "meet_transcript_fetch_retry: provider_event_id=%s attempt=%d error=%s",
+                record.provider_event_id,
+                attempts + 1,
+                exc,
+            )
+            raise
+        except (TranscriptUnavailableError, GoogleMeetResourceNotFoundError) as exc:
+            record.status = "awaiting_transcript"
+            record.last_error = str(exc)[:2000]
+            db.commit()
+            metrics.increment("meet_sync_failed_total", labels={"reason": "transcript_pending"})
+            logger.info(
+                "meet_transcript_pending: provider_event_id=%s error=%s",
+                record.provider_event_id,
+                exc,
+            )
+            raise
+        except (CredentialsExpiredError, GoogleMeetPermissionError) as exc:
+            record.status = "failed"
+            record.last_error = str(exc)[:2000]
+            db.commit()
+            metrics.increment("meet_sync_failed_total", labels={"reason": "auth"})
+            logger.error(
+                "meet_sync_failed: provider_event_id=%s reason=auth error=%s",
+                record.provider_event_id,
+                exc,
+            )
+            raise
+        except GoogleMeetError as exc:
+            record.status = "failed"
+            record.last_error = str(exc)[:2000]
+            db.commit()
+            metrics.increment("meet_sync_failed_total", labels={"reason": "retrieval_failure"})
+            logger.error(
+                "meet_sync_failed: provider_event_id=%s reason=retrieval error=%s",
+                record.provider_event_id,
+                exc,
+            )
+            raise
+
+        record.status = "processed"
+        record.processed_at = _now()
+        record.meeting_id = result["meeting_id"]
+        record.source_event_id = result.get("source_event_id")
+        db.commit()
+        db.refresh(record)
+        metrics.increment("meet_transcript_persisted_total", labels={"provider": "google_meet"})
+        logger.info(
+            "meet_transcript_persisted: provider_event_id=%s meeting_id=%s entries=%d",
+            record.provider_event_id,
+            result["meeting_id"],
+            result["entries_synced"],
+        )
+        return {"status": "processed", **result, "event_record_id": record.id}
+
+    def _retrieve_and_persist(self, record: MeetEventRecord, db: Session) -> Dict[str, Any]:
+        if not record.transcript_resource:
+            raise TranscriptUnavailableError("Event carries no transcript resource reference.")
+        if not record.conference_record_id:
+            raise TranscriptUnavailableError("Event carries no conference record reference.")
+
+        logger.info(
+            "meet_transcript_ready: provider_event_id=%s conference=%s transcript=%s",
+            record.provider_event_id,
+            record.conference_record_id,
+            record.transcript_resource,
+        )
+
+        connection = self._get_connection(record.user_id, db)
+        creds = self.oauth_service.get_decrypted_credentials(connection)
+        access_token = creds.get("access_token", "")
+        if not access_token:
+            raise CredentialsExpiredError("No access token in stored credentials. Re-authenticate via /auth/google.")
+
+        subscription = None
+        if record.subscription_id:
+            subscription = (
+                db.query(MeetSubscription).filter(MeetSubscription.id == record.subscription_id).first()
+            )
+        project_id = self._resolve_project(
+            db, record.user_id, subscription, record.conference_record_id, connection.id
+        )
+        record.project_id = project_id
+
+        logger.info(
+            "meet_transcript_fetch_started: transcript=%s conference=%s project_id=%s",
+            record.transcript_resource,
+            record.conference_record_id,
+            project_id,
+        )
+
+        transcript_meta = asyncio.run(
+            self.meet_service.get_transcript(
+                access_token=access_token,
+                transcript_name=record.transcript_resource,
+                connection=connection,
+                db=db,
+            )
+        )
+        transcript_state = transcript_meta.get("state", "AVAILABLE")
+        if transcript_state not in ("ENDED", "AVAILABLE", "FILE_MUTATED"):
+            raise TranscriptUnavailableError(
+                f"Transcript '{record.transcript_resource}' is in state '{transcript_state}'; not yet retrievable."
+            )
+
+        meeting = self._upsert_meeting(
+            db=db,
+            user_id=record.user_id,
+            project_id=project_id,
+            connection_id=connection.id,
+            conference_record_id=record.conference_record_id,
+            access_token=access_token,
+            connection=connection,
+        )
+        transcript = self._upsert_transcript(
+            db=db,
+            meeting=meeting,
+            transcript_resource=record.transcript_resource,
+            transcript_meta=transcript_meta,
+        )
+        participant_map = self._sync_participants(
+            db=db,
+            meeting=meeting,
+            conference_record_id=record.conference_record_id,
+            access_token=access_token,
+            connection=connection,
+        )
+        entries = asyncio.run(
+            self.meet_service.fetch_all_transcript_entries(
+                access_token=access_token,
+                transcript_name=record.transcript_resource,
+                connection=connection,
+                db=db,
+            )
+        )
+        entries_synced = self._upsert_entries(
+            db=db,
+            transcript=transcript,
+            entries_raw=entries,
+            participant_map=participant_map,
+        )
+        logger.info(
+            "meet_transcript_fetch_completed: transcript=%s entries=%d",
+            record.transcript_resource,
+            entries_synced,
+        )
+
+        events_created = self._create_transcript_ready_event(
+            db=db,
+            record=record,
+            project_id=project_id,
+            meeting=meeting,
+            transcript=transcript,
+        )
+        db.commit()
+        return {
+            "meeting_id": meeting.id,
+            "transcript_id": transcript.id,
+            "entries_synced": entries_synced,
+            "events_created": events_created,
+            "project_id": project_id,
+            "source_event_id": None,
+        }
+
+    def _upsert_meeting(
+        self,
+        db: Session,
+        user_id: str,
+        project_id: str,
+        connection_id: str,
+        conference_record_id: str,
+        access_token: str,
+        connection: SourceConnection,
+    ) -> Meeting:
+        conf_meta: Dict[str, Any] = {}
+        try:
+            conf_meta = asyncio.run(
+                self.meet_service.get_conference_record(
+                    access_token=access_token,
+                    name=conference_record_id,
+                    connection=connection,
+                    db=db,
+                )
+            )
+        except GoogleMeetResourceNotFoundError:
+            conf_meta = {}
+        start_time = _parse_iso_datetime(conf_meta.get("startTime"))
+        end_time = _parse_iso_datetime(conf_meta.get("endTime"))
+
+        meeting = (
+            db.query(Meeting)
+            .filter(
+                Meeting.provider == "google",
+                Meeting.provider_conference_id == conference_record_id,
+            )
+            .first()
+        )
+        title = f"Google Meet {conference_record_id.split('/')[-1]}"
+        if meeting:
+            meeting.start_time = start_time or meeting.start_time
+            meeting.end_time = end_time or meeting.end_time
+            meeting.status = "ENDED" if end_time else meeting.status
+            meeting.source_connection_id = connection_id
+            if conf_meta:
+                import json as _json
+
+                meeting.metadata_json = _json.dumps(conf_meta)
+            meeting.updated_at = _now()
+        else:
+            meeting = Meeting(
+                project_id=project_id,
+                user_id=user_id,
+                provider="google",
+                provider_conference_id=conference_record_id,
+                meeting_space_id=conf_meta.get("space"),
+                title=title,
+                start_time=start_time,
+                end_time=end_time,
+                status="ENDED" if end_time else "ACTIVE",
+                source_connection_id=connection_id,
+            )
+            if conf_meta:
+                import json as _json
+
+                meeting.metadata_json = _json.dumps(conf_meta)
+            db.add(meeting)
+        db.flush()
+        return meeting
+
+    def _upsert_transcript(
+        self,
+        db: Session,
+        meeting: Meeting,
+        transcript_resource: str,
+        transcript_meta: Dict[str, Any],
+    ) -> Transcript:
+        import json as _json
+
+        transcript = (
+            db.query(Transcript)
+            .filter(
+                Transcript.provider == "google",
+                Transcript.provider_transcript_id == transcript_resource,
+            )
+            .first()
+        )
+        state = transcript_meta.get("state", "AVAILABLE")
+        start = _parse_iso_datetime(transcript_meta.get("startTime"))
+        end = _parse_iso_datetime(transcript_meta.get("endTime"))
+        docs_url = transcript_meta.get("docsDestination", {}).get("exportUri")
+        if transcript:
+            transcript.state = state
+            transcript.start_time = start or transcript.start_time
+            transcript.end_time = end or transcript.end_time
+            transcript.docs_destination_url = docs_url or transcript.docs_destination_url
+            transcript.metadata_json = _json.dumps(transcript_meta)
+            transcript.updated_at = _now()
+        else:
+            transcript = Transcript(
+                meeting_id=meeting.id,
+                provider="google",
+                provider_transcript_id=transcript_resource,
+                state=state,
+                start_time=start,
+                end_time=end,
+                docs_destination_url=docs_url,
+                metadata_json=_json.dumps(transcript_meta),
+            )
+            db.add(transcript)
+        db.flush()
+        return transcript
+
+    def _sync_participants(
+        self,
+        db: Session,
+        meeting: Meeting,
+        conference_record_id: str,
+        access_token: str,
+        connection: SourceConnection,
+    ) -> Dict[str, str]:
+        import json as _json
+
+        participant_map: Dict[str, str] = {}
+        try:
+            participants_raw = asyncio.run(
+                self.meet_service.fetch_all_participants(
+                    access_token=access_token,
+                    conference_record_name=conference_record_id,
+                    connection=connection,
+                    db=db,
+                )
+            )
+        except (GoogleMeetError, CredentialsExpiredError) as exc:
+            logger.warning(
+                "meet_participant_lookup_failed: conference=%s error=%s",
+                conference_record_id,
+                exc,
+            )
+            metrics.increment("meet_sync_failed_total", labels={"reason": "participant_lookup"})
+            return participant_map
+
+        for part_raw in participants_raw:
+            part_name = part_raw.get("name", "")
+            if not part_name:
+                continue
+            display_name = None
+            if "signedinUser" in part_raw:
+                display_name = part_raw["signedinUser"].get("displayName")
+            elif "anonymousUser" in part_raw:
+                display_name = part_raw["anonymousUser"].get("displayName")
+            elif "phoneUser" in part_raw:
+                display_name = part_raw["phoneUser"].get("displayName")
+            participant = (
+                db.query(Participant)
+                .filter(
+                    Participant.meeting_id == meeting.id,
+                    Participant.provider_participant_id == part_name,
+                )
+                .first()
+            )
+            if participant:
+                participant.display_name = display_name or participant.display_name
+                participant.metadata_json = _json.dumps(part_raw)
+                participant.updated_at = _now()
+            else:
+                participant = Participant(
+                    meeting_id=meeting.id,
+                    provider_participant_id=part_name,
+                    display_name=display_name,
+                    metadata_json=_json.dumps(part_raw),
+                )
+                db.add(participant)
+            db.flush()
+            participant_map[part_name] = participant.id
+        return participant_map
+
+    def _upsert_entries(
+        self,
+        db: Session,
+        transcript: Transcript,
+        entries_raw: List[Dict[str, Any]],
+        participant_map: Dict[str, str],
+    ) -> int:
+        import json as _json
+
+        count = 0
+        for ent_raw in sorted(entries_raw, key=lambda e: e.get("startTime", "")):
+            ent_name = ent_raw.get("name", "")
+            text = ent_raw.get("text", "")
+            if not ent_name or not text:
+                continue
+            provider_part_ref = ent_raw.get("participant")
+            resolved_part_id = participant_map.get(provider_part_ref) if provider_part_ref else None
+            start = _parse_iso_datetime(ent_raw.get("startTime"))
+            end = _parse_iso_datetime(ent_raw.get("endTime"))
+            lang = ent_raw.get("languageCode", "en-US")
+            entry = (
+                db.query(TranscriptEntry)
+                .filter(
+                    TranscriptEntry.transcript_id == transcript.id,
+                    TranscriptEntry.provider_entry_id == ent_name,
+                )
+                .first()
+            )
+            if entry:
+                entry.text = text
+                entry.participant_id = resolved_part_id or entry.participant_id
+                entry.language_code = lang
+                entry.start_time = start or entry.start_time
+                entry.end_time = end or entry.end_time
+                entry.metadata_json = _json.dumps(ent_raw)
+                entry.updated_at = _now()
+            else:
+                entry = TranscriptEntry(
+                    transcript_id=transcript.id,
+                    provider="google",
+                    provider_entry_id=ent_name,
+                    participant_id=resolved_part_id,
+                    text=text,
+                    language_code=lang,
+                    start_time=start,
+                    end_time=end,
+                    metadata_json=_json.dumps(ent_raw),
+                )
+                db.add(entry)
+            count += 1
+        db.flush()
+        return count
+
+    def _create_transcript_ready_event(
+        self,
+        db: Session,
+        record: MeetEventRecord,
+        project_id: str,
+        meeting: Meeting,
+        transcript: Transcript,
+    ) -> int:
+        """Normalize the notification itself into the Synesis source-event model."""
+        source_event_id = f"meet-event:{record.provider_event_id}"
+        existing = (
+            db.query(SourceEvent)
+            .filter(
+                SourceEvent.project_id == project_id,
+                SourceEvent.source == "google_meet",
+                SourceEvent.source_event_id == source_event_id,
+            )
+            .first()
+        )
+        if existing:
+            return 0
+        event_in = SourceEventCreate(
+            tenant_id="tenant_default",
+            project_id=project_id,
+            source="google_meet",
+            source_event_id=source_event_id,
+            event_type="transcript_ready",
+            actor_id="google_workspace_events",
+            occurred_at=_now(),
+            payload={
+                "conference_record_id": record.conference_record_id,
+                "transcript_resource": record.transcript_resource,
+                "meeting_id": meeting.id,
+                "transcript_id": transcript.id,
+                "provider_event_id": record.provider_event_id,
+            },
+            status="received",
+        )
+        self.ingestion.ingest_event(event_in, db, commit=False)
+        db.flush()
+        return 1
