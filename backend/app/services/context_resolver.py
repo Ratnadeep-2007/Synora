@@ -503,9 +503,7 @@ class ContextResolverService:
         metadata["assigned_by"] = actor_id
         metadata["reprocessing_requested"] = bool(trigger_reprocessing)
         evidence.metadata_json = json.dumps(metadata)
-        db.commit()
-
-        return {
+        assigned = {
             "evidence_id": evidence.id,
             "source_event_id": evidence.source_event_id,
             "project_id": target_project_id,
@@ -513,7 +511,32 @@ class ContextResolverService:
             "previous_project_id": previous_project_id,
             "status": "assigned",
             "actor_id": actor_id,
+            "reprocessing_requested": bool(trigger_reprocessing),
         }
+        db.commit()
+
+        if trigger_reprocessing:
+            # Human assignment should not leave the target project without the
+            # semantic interpretation that was previously quarantined.
+            try:
+                from app.services.meeting_intelligence import MeetingIntelligenceService
+                intelligence = MeetingIntelligenceService()
+                candidates = intelligence.analyze_evidence_records(
+                    evidence_records=[evidence],
+                    project_id=target_project_id,
+                    db=db,
+                    meeting_id=evidence.meeting_id,
+                    source_name=evidence.source,
+                    context_status="human_assigned",
+                    context_confidence=1.0,
+                    context_model="human_assignment",
+                )
+                assigned["candidates_created"] = len(candidates)
+            except Exception as exc:
+                logger.exception("Reprocessing of assigned Unknown Context evidence failed: %s", exc)
+                assigned["reprocessing_status"] = "failed"
+                assigned["reprocessing_error"] = str(exc)
+        return assigned
 
     def route_or_quarantine(
         self,
