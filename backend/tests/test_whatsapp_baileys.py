@@ -27,15 +27,11 @@ def test_whatsapp_baileys_connector_registration():
     assert "Baileys" in health.details.get("client", "")
 
 
-def test_whatsapp_project_identification_claims_engine(db_session: Session):
-    """
-    Verify WhatsApp intelligence understands when team is talking about Healthcare Claims Engine
-    vs Core Architecture.
-    """
+def test_whatsapp_shared_context_resolution(db_session: Session):
+    """Shared context resolver routes clear messages and quarantines unresolved ones."""
     agent_service = ProjectAgentService()
     service = WhatsAppIntelligenceService()
 
-    # Ensure two distinct projects exist in database
     claims_proj = agent_service.get_or_create_project(
         project_id="proj_claims_test",
         name="Healthcare Claims Engine",
@@ -45,31 +41,42 @@ def test_whatsapp_project_identification_claims_engine(db_session: Session):
     )
     core_proj = agent_service.get_or_create_project(
         project_id="proj_core_test",
-        name="Synesis Core Architecture",
-        description="Core platform identity, routing, and database pipeline",
+        name="Synora Core Architecture",
+        description="Core platform identity, routing, Redis, JWT and database pipeline",
         workspace_id="ws_default",
         db=db_session,
     )
 
-    # 1. Message mentioning claims / kyc should route to Healthcare Claims Engine
-    msg_claims = "Team, we decided to integrate Digilocker KYC API for automatic claimant identity verification."
-    matched_p, conf, reason = service.identify_project_from_context(msg_claims, db_session)
-    assert matched_p.id == claims_proj.id
-    assert conf >= 0.70
-    assert "Healthcare Claims" in matched_p.name
+    claims = service.context_resolver.resolve(
+        "For Healthcare Claims Engine, we decided to integrate KYC for claimant verification.",
+        db_session,
+        workspace_id="ws_default",
+        metadata={"source_name": "whatsapp", "group_name": "claims"},
+    )
+    assert claims.status == "resolved"
+    assert claims.selected_project_id == claims_proj.id
 
-    # 2. Message mentioning core auth / session / redis should route to Core Architecture
-    msg_core = "For Core Architecture, let's switch session storage to Redis with JWT validation."
-    matched_core, conf_core, reason_core = service.identify_project_from_context(msg_core, db_session)
-    assert matched_core.id == core_proj.id
-    assert conf_core >= 0.70
-    assert "Core Architecture" in matched_core.name
+    core = service.context_resolver.resolve(
+        "For Core Architecture, let's switch session storage to Redis with JWT validation.",
+        db_session,
+        workspace_id="ws_default",
+        metadata={"source_name": "whatsapp", "group_name": "core"},
+    )
+    assert core.status == "resolved"
+    assert core.selected_project_id == core_proj.id
 
-    # 3. Message with explicit project ID
-    msg_id = f"Regarding {claims_proj.id}: add Fraud Detection Engine to the pipeline."
-    matched_id, conf_id, reason_id = service.identify_project_from_context(msg_id, db_session)
-    assert matched_id.id == claims_proj.id
-    assert conf_id >= 0.95
+    unresolved = service.context_resolver.resolve(
+        "The team discussed a new initiative and deployment approach.",
+        db_session,
+        workspace_id="ws_default",
+        metadata={"source_name": "whatsapp", "group_name": "general"},
+    )
+    project, routed = service.context_resolver.route_or_quarantine(
+        unresolved, db_session, workspace_id="ws_default", tenant_id="default_tenant"
+    )
+    assert project.id == "system_unknown_context"
+    assert routed.selected_project_id is None
+    assert routed.status in {"unknown", "ambiguous"}
 
 
 def test_whatsapp_message_processing_and_excalidraw_updates(db_session: Session):
