@@ -20,7 +20,7 @@ from app.models.agent_workforce import AgentExecution
 from app.models.project import Project, ProjectAgent, Workspace
 from app.models.conflict import Conflict
 from app.models.evidence import Evidence
-from app.models.excalidraw import ExcalidrawArtifact, ExcalidrawProposal
+from app.models.excalidraw import ExcalidrawArtifact, ExcalidrawProposal, ExcalidrawRevision
 from app.models.intelligence import AgentRun, CandidateKnowledge
 from app.models.project_state import (
     ApprovalStatus,
@@ -42,8 +42,11 @@ from app.schemas.excalidraw import (
     ExcalidrawIngestRequest,
     ExcalidrawProposalRead,
     ExcalidrawProposalReviewRequest,
+    ExcalidrawRevisionRead,
+    ExcalidrawRevisionDiffRead,
 )
 from app.schemas.intelligence import AgentRunRead, CandidateKnowledgeRead
+from app.services.context_resolver import ContextResolverService, UNKNOWN_CONTEXT_ID
 from app.schemas.project_state import (
     ProjectStateRead,
     ProjectStateVersionRead,
@@ -1083,6 +1086,125 @@ async def ai_generate_excalidraw_diagram(
         "message": "AI Visual Architecture diagram generated successfully for Excalidraw.",
     }
 
+
+
+
+@router.get(
+    "/{project_id}/excalidraw/revisions",
+    response_model=List[ExcalidrawRevisionRead],
+    summary="List Excalidraw Visual Revisions",
+)
+async def list_excalidraw_revisions(
+    project_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    revisions = excal_service.list_revisions(project_id, db, tenant_id=tenant_id, limit=limit)
+    return [excal_service.format_revision_read(r) for r in revisions]
+
+
+@router.get(
+    "/{project_id}/excalidraw/revisions/{revision_number}",
+    response_model=ExcalidrawRevisionRead,
+    summary="Get Excalidraw Visual Revision",
+)
+async def get_excalidraw_revision(
+    project_id: str,
+    revision_number: int,
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    revision = excal_service.get_revision(project_id, revision_number, db, tenant_id=tenant_id)
+    return excal_service.format_revision_read(revision)
+
+
+@router.get(
+    "/{project_id}/excalidraw/compare",
+    response_model=ExcalidrawRevisionDiffRead,
+    summary="Compare Excalidraw Visual Revisions",
+)
+async def compare_excalidraw_revisions(
+    project_id: str,
+    from_revision: int = Query(..., ge=1),
+    to_revision: int = Query(..., ge=1),
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    return excal_service.compare_revisions(
+        project_id,
+        from_revision,
+        to_revision,
+        db,
+        tenant_id=tenant_id,
+    )
+
+
+@router.get(
+    "/{project_id}/unknown-context",
+    summary="List Unknown Context Items",
+)
+async def list_unknown_context(
+    project_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if project_id != UNKNOWN_CONTEXT_ID:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown Context is a system-managed project.")
+    records = (
+        db.query(Evidence)
+        .filter(Evidence.project_id == UNKNOWN_CONTEXT_ID)
+        .order_by(Evidence.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    results = []
+    for ev in records:
+        metadata = json.loads(ev.metadata_json or "{}")
+        results.append({
+            "evidence_id": ev.id,
+            "source": ev.source,
+            "content": ev.content,
+            "created_at": ev.created_at.isoformat() if ev.created_at else None,
+            "context_status": metadata.get("context_status", "unknown"),
+            "context_candidates": metadata.get("context_candidates", []),
+            "reasoning": metadata.get("reasoning"),
+        })
+    return results
+
+
+@router.post(
+    "/{project_id}/unknown-context/{evidence_id}/assign",
+    summary="Assign Unknown Context Evidence to Project",
+)
+async def assign_unknown_context_evidence(
+    project_id: str,
+    evidence_id: str,
+    target_project_id: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if project_id != UNKNOWN_CONTEXT_ID:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown Context is a system-managed project.")
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    service = ContextResolverService()
+    try:
+        return service.move_unknown_evidence_to_project(
+            evidence_id=evidence_id,
+            target_project_id=target_project_id,
+            db=db,
+            actor_id=current_user.id,
+            tenant_id=tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.post(
