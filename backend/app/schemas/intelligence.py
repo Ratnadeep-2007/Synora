@@ -31,6 +31,9 @@ class ExtractionBatchResult(BaseModel):
     agent_run_id: Optional[str] = None
     model: str = "synesis-intelligence-v1"
     prompt_version: str = "v1.0"
+    source: Optional[str] = None
+    context_project_id: Optional[str] = None
+    context_status: Optional[str] = None
 
 
 class CandidateKnowledgeRead(BaseModel):
