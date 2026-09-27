@@ -876,7 +876,7 @@ class ExcalidrawService:
         text("visual_compare_txt", 928, visual_y + 62, 255, 40, "Compare\nPrevious ↔ Current", 12)
 
         # Flow arrows between tiers
-        arrow("flow_sources_agent", 670, zone_y + zone_h if False else 290, 0, 35)
+        arrow("flow_sources_agent", 670, zone_y + 165, 0, 45)
         arrow("flow_agent_guardrails", 670, agent_y + 205, 0, 25)
         arrow("flow_guardrails_state", 1035, guard_y + 120, 0, 30)
         arrow("flow_state_visual", 1035, visual_y - 30, 0, 30)
