@@ -9,7 +9,7 @@ from app.core.exceptions import SynesisException
 from app.models.evidence import Evidence
 from app.models.intelligence import AgentRun, CandidateKnowledge
 from app.schemas.intelligence import CandidateItemDTO, ExtractionBatchResult
-from app.services.llm import DeterministicRuleLLMClient, LLMClient, get_default_llm_client
+from app.services.llm import LLMClient, get_default_llm_client
 from app.services.context_resolver import ContextResolverService, UNKNOWN_CONTEXT_ID
 
 logger = logging.getLogger(__name__)
