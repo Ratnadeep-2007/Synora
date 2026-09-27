@@ -792,7 +792,7 @@ class ExcalidrawService:
             "text": sub_text,
             "fontSize": 10,
             "fontFamily": 1,
-            "strokeColor": "#c7d2fe",
+            "strokeColor": "#d1d5db",
             "textAlign": "left",
             "containerId": "banner_ai_box",
         })
@@ -903,10 +903,10 @@ class ExcalidrawService:
         })
 
         t2_components = [
-            ("comp_fastapi_core", "⚙️ FastAPI Application Core\nPython 3.11 • REST / SSE\nProject Context & RBAC Boundary", "#d1fae5", "#059669"),
-            ("comp_synora_agent", "🧠 One Shared Synora Agent\nUnified Intelligence Layer\nReasoning Across Project Context", "#e0f2fe", "#0284c7"),
-            ("comp_capabilities", "⚡ Internal Capabilities\nBA • Planning • Functional\nTech Architecture • Frappe", "#fce7f3", "#db2777"),
-            ("comp_guardrails", "🛡️ Deterministic Guardrails\nVerification & Synthesis\nConflict Detection & Safe Gating", "#ffedd5", "#ea580c"),
+            ("comp_context", "Context Intelligence\nWhich project?\nMeet • WhatsApp • Excalidraw", "#ffffff", "#173f35"),
+            ("comp_synora_agent", "One Shared Synora Agent\nUnderstand • Analyze • Propose\nProject-scoped context", "#ffffff", "#173f35"),
+            ("comp_capabilities", "Internal Capabilities\nBusiness • Planning • Functional\nTechnical • Frappe / ERP", "#ffffff", "#6b7280"),
+            ("comp_guardrails", "Deterministic Guardrails\nPermissions • Validation • State gates\nNo unsafe auto-apply", "#ffffff", "#6b7280"),
         ]
         card_y2 = t2_y + 40
         card_h2 = 135
@@ -937,7 +937,7 @@ class ExcalidrawService:
                 "text": ctext,
                 "fontSize": 12,
                 "fontFamily": 1,
-                "strokeColor": "#0f172a",
+                "strokeColor": "#173f35",
                 "textAlign": "left",
                 "containerId": cid,
             })
@@ -1056,9 +1056,9 @@ class ExcalidrawService:
         })
 
         t3_components = [
-            ("comp_db_sor", "🗄️ Database System of Record\nPostgreSQL / SQLite • SQLAlchemy\nAuthoritative State & Version History", "#fef3c7", "#d97706"),
-            ("comp_evidence_store", "📜 Immutable Evidence Store\nMeeting Transcripts & Events\nVerbatim Text & Audit Lineage", "#e2e8f0", "#475569"),
-            ("comp_excal_store", "🎨 Living Excalidraw Store\nOpen Schema (application/vnd.excalidraw+json)\nHuman Approval Gates & Diff History", "#ede9fe", "#7c3aed"),
+            ("comp_db_sor", "PostgreSQL Project State\nAuthoritative requirements, decisions, architecture\nVersion history", "#ffffff", "#173f35"),
+            ("comp_evidence_store", "Evidence Provenance\nSourceEvent → Evidence → Candidate\nTraceable source lineage", "#ffffff", "#6b7280"),
+            ("comp_excal_store", "Excalidraw Revisions\nLatest workspace + immutable history\nHuman-approved visual changes", "#ffffff", "#6b7280"),
         ]
         card_w3 = 360
         spacing3 = 30
