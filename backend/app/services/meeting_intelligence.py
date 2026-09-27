@@ -160,6 +160,91 @@ class MeetingIntelligenceService:
         batch = self.llm_client.generate_structured(prompt, ExtractionBatchResult)
         return [item for item in batch.items if item.category == "question"]
 
+
+    def process_meeting_with_auto_context(
+        self,
+        meeting_id: str,
+        db: Session,
+        workspace_id: str = "ws_default",
+        tenant_id: str = "default_tenant",
+        window_size: int = 6,
+    ) -> Dict[str, Any]:
+        """
+        End-to-end Meet processing with context-first routing per transcript window.
+        Knowledge extraction is independent from routing, while deterministic
+        validation prevents unsafe project assignment.
+        """
+        partitioned = self.resolve_and_partition_meeting_evidence(
+            meeting_id=meeting_id,
+            db=db,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            window_size=window_size,
+        )
+
+        from app.services.ingestion_service import IngestionService
+        ingestion = IngestionService()
+        from app.models.meeting import Meeting
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            raise IntelligenceError(f"Meeting '{meeting_id}' not found.")
+
+        project_results: List[Dict[str, Any]] = []
+        for project_id, entries in partitioned["partitions"].items():
+            evidence_records: List[Evidence] = []
+            for entry in entries:
+                event_in = __import__("app.schemas.source_event", fromlist=["SourceEventCreate"]).SourceEventCreate(
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    source="google_meet",
+                    source_event_id=entry.provider_entry_id,
+                    event_type="transcript_entry",
+                    actor_id=entry.participant.display_name if entry.participant else "Unknown Speaker",
+                    occurred_at=entry.start_time,
+                    payload={
+                        "text": entry.text,
+                        "meeting_id": meeting_id,
+                        "meeting_title": meeting.title,
+                        "conference_id": meeting.provider_conference_id,
+                        "participant_id": entry.participant_id,
+                    },
+                )
+                source_event = ingestion.ingest_event(event_in, db)
+                evidence_records.append(
+                    ingestion.create_evidence_from_event(
+                        source_event,
+                        db,
+                        meeting_id=meeting_id,
+                        transcript_entry_id=entry.id,
+                        content=entry.text,
+                        metadata={
+                            "meeting_title": meeting.title,
+                            "context_partition_project_id": project_id,
+                            "context_partition_source": "shared_context_resolver",
+                        },
+                    )
+                )
+
+            candidates = self.analyze_evidence_records(
+                evidence_records=evidence_records,
+                project_id=project_id,
+                db=db,
+                meeting_id=meeting_id,
+                source_name="google_meet",
+            )
+            project_results.append({
+                "project_id": project_id,
+                "evidence_created": len(evidence_records),
+                "candidates_extracted": len(candidates),
+            })
+
+        return {
+            "meeting_id": meeting_id,
+            "resolutions": partitioned["resolutions"],
+            "projects_processed": project_results,
+            "unknown_context_project_id": UNKNOWN_CONTEXT_ID,
+        }
+
     def analyze_meeting_evidence(
         self,
         meeting_id: str,
