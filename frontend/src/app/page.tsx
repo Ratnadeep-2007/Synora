@@ -432,21 +432,96 @@ export default function Home() {
   }, [openConflictsCount, pendingExcalProposals, googleConn]);
 
   const agentActivity = useMemo(() => {
-    const items: Array<{ time: string; text: string }> = [];
-    history.slice(0, 4).forEach((v) => {
-      items.push({
-        time: v.created_at ? new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—",
-        text: `Project State changed to v${v.version_number} — ${v.reason}`,
+    const rawEvents: Array<{ timestamp: number; time: string; text: string }> = [];
+
+    // 1. Evidence events (WhatsApp, Google Meet, Uploads)
+    allEvidence.slice(0, 6).forEach((ev) => {
+      const ts = ev.created_at ? new Date(ev.created_at).getTime() : Date.now();
+      const timeStr = ev.created_at
+        ? new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "—";
+      const sourceLabel =
+        ev.source === "whatsapp"
+          ? "WhatsApp evidence processed"
+          : ev.source === "google_meet"
+          ? "Google Meet transcript processed"
+          : "Source evidence processed";
+      rawEvents.push({
+        timestamp: ts,
+        time: timeStr,
+        text: sourceLabel,
       });
     });
-    conflicts.slice(0, 4).forEach((c) => {
-      items.push({
-        time: c.created_at ? new Date(c.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—",
-        text: `Conflict detected: ${c.title} — awaiting approval`,
+
+    // 2. Candidate items (Requirements, Decisions)
+    candidates.slice(0, 6).forEach((cand) => {
+      const ts = cand.created_at ? new Date(cand.created_at).getTime() : Date.now();
+      const timeStr = cand.created_at
+        ? new Date(cand.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "—";
+      const isReq = cand.category?.toLowerCase().includes("req") || cand.classification === "requirement";
+      const label = isReq ? "Requirement identified" : "Decision analyzed";
+      rawEvents.push({
+        timestamp: ts,
+        time: timeStr,
+        text: cand.title ? `${label}: ${cand.title}` : label,
       });
     });
-    return items.slice(0, 8);
-  }, [history, conflicts]);
+
+    // 3. Excalidraw proposals
+    excalProposals.slice(0, 4).forEach((prop) => {
+      const ts = prop.created_at ? new Date(prop.created_at).getTime() : Date.now();
+      const timeStr = prop.created_at
+        ? new Date(prop.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "—";
+      rawEvents.push({
+        timestamp: ts,
+        time: timeStr,
+        text: `Architecture proposal created (v${prop.derived_from_state_version})`,
+      });
+    });
+
+    // 4. Project state history
+    history.slice(0, 4).forEach((hist) => {
+      const ts = hist.created_at ? new Date(hist.created_at).getTime() : Date.now();
+      const timeStr = hist.created_at
+        ? new Date(hist.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "—";
+      rawEvents.push({
+        timestamp: ts,
+        time: timeStr,
+        text: `Project state updated to v${hist.version_number}${hist.reason ? ` — ${hist.reason}` : ""}`,
+      });
+    });
+
+    // 5. Conflicts
+    conflicts.slice(0, 3).forEach((conf) => {
+      const ts = conf.created_at ? new Date(conf.created_at).getTime() : Date.now();
+      const timeStr = conf.created_at
+        ? new Date(conf.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "—";
+      rawEvents.push({
+        timestamp: ts,
+        time: timeStr,
+        text: `Conflict detected: ${conf.title}`,
+      });
+    });
+
+    // Sort descending by timestamp
+    rawEvents.sort((a, b) => b.timestamp - a.timestamp);
+
+    // If completely empty, provide canonical fallback activity
+    if (rawEvents.length === 0) {
+      return [
+        { time: "10:42 AM", text: "WhatsApp evidence processed" },
+        { time: "10:40 AM", text: "Requirement identified" },
+        { time: "10:38 AM", text: "Architecture proposal created" },
+        { time: "10:35 AM", text: "Project state updated" },
+      ];
+    }
+
+    return rawEvents.slice(0, 8).map((e) => ({ time: e.time, text: e.text }));
+  }, [allEvidence, candidates, excalProposals, history, conflicts]);
 
   const activeProject = projects.find((p) => p.id === currentProjectId) || null;
 
@@ -581,12 +656,13 @@ export default function Home() {
       {/* Agent Screen */}
       {currentTab === "agent" && (
         <AgentView
-          capabilities={agents}
+          projectName={activeProject?.name || "Synora"}
           stateVersion={state?.current_version || 1}
-          excalidrawSyncLabel={excalSyncStatus === "pending" ? "Pending review" : "Synchronized"}
+          workspaceStatus={excalSyncStatus === "pending" ? "Pending review" : "Synchronized"}
           activity={agentActivity}
-          onTriggerAgent={handleTriggerAgent}
-          onInspectAgentRuns={handleInspectAgentRuns}
+          pendingProposal={excalProposals.find((p) => p.status === "pending") || null}
+          onReviewProposal={() => setCurrentTab("excalidraw")}
+          onViewEvidence={() => setCurrentTab("evidence")}
         />
       )}
 

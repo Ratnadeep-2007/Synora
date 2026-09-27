@@ -65,9 +65,10 @@ class ExcalidrawService:
             .first()
         )
         if not artifact:
-            # Default baseline elements
-            baseline_nodes = ["User", "BA Agent", "Project Planner Agent", "Functional Agent", "Tech Agent", "Frappe Agent"]
-            initial_elements = self._build_flow_elements(baseline_nodes)
+            # Default baseline elements: canonical 5-tier flow
+            canonical_capabilities = ["Business Analysis", "Project Planning", "Functional Analysis", "Technical Architecture", "Frappe / ERP Analysis"]
+            initial_elements = self._build_living_workspace_elements(canonical_capabilities)
+            baseline_nodes = ["Sources / Evidence", "One Shared Synora Agent", "Capabilities", "Deterministic Guardrails", "Authoritative Project State", "Excalidraw Living Workspace"]
             artifact = ExcalidrawArtifact(
                 project_id=project_id,
                 tenant_id=tenant_id,
@@ -259,7 +260,7 @@ class ExcalidrawService:
         nodes_before = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
         nodes_after = [
             "Next.js Web Client", "Google Meet Ingestor", "WhatsApp Gateway", "Slack Events Bot",
-            "FastAPI Core Engine", "Project Agent Orchestrator", "DeepSeek AI Engine", "Specialist AI Workforce",
+            "FastAPI Core Engine", "One Shared Synora Agent", "Internal Capabilities", "Deterministic Guardrails",
             "Database System of Record", "Immutable Evidence Store", "Excalidraw Living Store"
         ]
 
@@ -280,15 +281,13 @@ class ExcalidrawService:
             "nodes_added": nodes_added,
             "nodes_removed": nodes_removed,
             "connections_before": [],
-            "connections_after": ["Ingress -> Core", "Core -> Project Agent", "Project Agent -> DeepSeek", "Core -> Persistence"],
+            "connections_after": ["Ingress -> Core", "Core -> Synora Agent", "Synora Agent -> Capabilities", "Capabilities -> Guardrails", "Guardrails -> Persistence"],
         }
 
         reason = (
-            f"AI Visual Architecture: Multi-tier system blueprint for {project_name} "
-            f"with DeepSeek AI, Living Decisions, and 3-Tier Components."
+            f"Visual Architecture: Canonical architecture blueprint for {project_name} "
+            f"with One Shared Synora Agent, Internal Capabilities, Deterministic Guardrails, and PostgreSQL System of Record."
         )
-        if focus_prompt:
-            reason += f" (Focus: {focus_prompt})"
 
         proposal = ExcalidrawProposal(
             artifact_id=artifact.id,
@@ -502,7 +501,7 @@ class ExcalidrawService:
             "textAlign": "left",
             "containerId": "banner_ai_box",
         })
-        sub_text = "ORCHESTRATED BY PROJECT AGENT • POWERED BY DEEPSEEK AI INTELLIGENCE • POSTGRESQL AUDIT SYSTEM"
+        sub_text = "ONE SHARED SYNORA AGENT • DETERMINISTIC GUARDRAILS • POSTGRESQL SYSTEM OF RECORD"
         if focus_prompt:
             sub_text += f" • FOCUS: {focus_prompt.upper()}"
         raw_elements.append({
@@ -594,7 +593,7 @@ class ExcalidrawService:
                 "containerId": cid,
             })
 
-        # 2. Tier 2: Core Processing & Autonomous AI Workforce
+        # 2. Tier 2: Synora Agent Intelligence & Deterministic Pipeline
         t2_x, t2_y, t2_w, t2_h = 80, 310, 1180, 200
         raw_elements.append({
             "id": "zone_t2_box",
@@ -618,7 +617,7 @@ class ExcalidrawService:
             "y": t2_y + 10,
             "width": 500,
             "height": 20,
-            "text": "TIER 2: APPLICATION CORE & AUTONOMOUS AI WORKFORCE",
+            "text": "TIER 2: SYNORA AGENT INTELLIGENCE & DETERMINISTIC PIPELINE",
             "fontSize": 12,
             "fontFamily": 1,
             "strokeColor": "#059669",
@@ -626,10 +625,10 @@ class ExcalidrawService:
         })
 
         t2_components = [
-            ("comp_fastapi_core", "⚙️ FastAPI Application Core\nPython 3.11 • REST / SSE\nRBAC • Concurrency & Pipeline", "#d1fae5", "#059669"),
-            ("comp_proj_agent", "🧠 Logical Project Agent\nIsolated Memory & Living Context\nCoordinates Specialist Roles", "#e0f2fe", "#0284c7"),
-            ("comp_deepseek_ai", "🤖 DeepSeek AI Engine\nNVIDIA NIM (v4.1-flash)\nStructured Candidate Extraction", "#ffedd5", "#ea580c"),
-            ("comp_specialists", "👥 Specialist AI Workforce\nBA • Planner • Tech • Functional\nFrappe Integration Specialist", "#fce7f3", "#db2777"),
+            ("comp_fastapi_core", "⚙️ FastAPI Application Core\nPython 3.11 • REST / SSE\nProject Context & RBAC Boundary", "#d1fae5", "#059669"),
+            ("comp_synora_agent", "🧠 One Shared Synora Agent\nUnified Intelligence Layer\nReasoning Across Project Context", "#e0f2fe", "#0284c7"),
+            ("comp_capabilities", "⚡ Internal Capabilities\nBA • Planning • Functional\nTech Architecture • Frappe", "#fce7f3", "#db2777"),
+            ("comp_guardrails", "🛡️ Deterministic Guardrails\nVerification & Synthesis\nConflict Detection & Safe Gating", "#ffedd5", "#ea580c"),
         ]
         card_y2 = t2_y + 40
         card_h2 = 135
@@ -721,7 +720,7 @@ class ExcalidrawService:
             "roughness": 1,
         })
         raw_elements.append({
-            "id": "arr_agent_to_ai",
+            "id": "arr_agent_to_caps",
             "type": "arrow",
             "x": start_cx + card_w + card_spacing + card_w,
             "y": card_y2 + card_h2 / 2,
@@ -729,12 +728,12 @@ class ExcalidrawService:
             "height": 0,
             "points": [[0, 0], [card_spacing, 0]],
             "endArrowhead": "arrow",
-            "strokeColor": "#ea580c",
+            "strokeColor": "#db2777",
             "strokeWidth": 2,
             "roughness": 1,
         })
         raw_elements.append({
-            "id": "arr_agent_to_specs",
+            "id": "arr_caps_to_guardrails",
             "type": "arrow",
             "x": start_cx + 2 * (card_w + card_spacing) + card_w,
             "y": card_y2 + card_h2 / 2,
@@ -742,7 +741,7 @@ class ExcalidrawService:
             "height": 0,
             "points": [[0, 0], [card_spacing, 0]],
             "endArrowhead": "arrow",
-            "strokeColor": "#db2777",
+            "strokeColor": "#ea580c",
             "strokeWidth": 2,
             "roughness": 1,
         })
@@ -985,11 +984,13 @@ class ExcalidrawService:
     ) -> List[Dict[str, Any]]:
         """
         Builds the Project's Living Visual Workspace scene elements in Excalidraw format.
-        Renders:
-        - Living Workspace Title Banner
-        - System Architecture Pipeline Flow
-        - Decision Cards (Title, Source e.g. Google Meet/Slack, Evidence references)
-        - Requirements Cards
+        Renders the canonical 5-tier architecture:
+        1. Sources / Evidence Ingestion
+        2. One Shared Synora Agent with Grouped Capabilities
+        3. Deterministic Guardrails & Pipeline Synthesis
+        4. Authoritative Project State (PostgreSQL)
+        5. Excalidraw Living Workspace (with Human Approval Gates)
+        Followed by Key Decisions and Active Requirements cards.
         """
         raw_elements: List[Dict[str, Any]] = []
 
@@ -997,54 +998,340 @@ class ExcalidrawService:
         raw_elements.append({
             "id": "banner_box",
             "type": "rectangle",
-            "x": 100,
+            "x": 80,
             "y": 40,
-            "width": 780,
-            "height": 45,
-            "backgroundColor": "#f8fafc",
-            "strokeColor": "#6366f1",
+            "width": 960,
+            "height": 50,
+            "backgroundColor": "#064e3b",
+            "strokeColor": "#059669",
             "fillStyle": "solid",
             "strokeWidth": 2,
             "roundness": {"type": 3},
             "roughness": 1,
         })
         raw_elements.append({
-            "id": "banner_text",
+            "id": "banner_title",
             "type": "text",
-            "x": 115,
-            "y": 52,
-            "width": 750,
-            "height": 22,
-            "text": "PROJECT AGENT LIVING VISUAL WORKSPACE  •  POSTGRESQL SYSTEM OF RECORD",
-            "fontSize": 13,
+            "x": 100,
+            "y": 47,
+            "width": 920,
+            "height": 20,
+            "text": "SYNORA LIVING VISUAL WORKSPACE  •  AUTHORITATIVE PROJECT STATE",
+            "fontSize": 14,
             "fontFamily": 1,
+            "strokeColor": "#ffffff",
+            "textAlign": "left",
+            "containerId": "banner_box",
+        })
+        raw_elements.append({
+            "id": "banner_sub",
+            "type": "text",
+            "x": 100,
+            "y": 68,
+            "width": 920,
+            "height": 16,
+            "text": "ONE SHARED SYNORA AGENT • INTERNAL CAPABILITIES • DETERMINISTIC GUARDRAILS • HUMAN APPROVAL GATES",
+            "fontSize": 10,
+            "fontFamily": 1,
+            "strokeColor": "#a7f3d0",
             "textAlign": "left",
             "containerId": "banner_box",
         })
 
-        # 1. System Architecture Pipeline Flow
-        flow_elements = self._build_flow_elements(node_names, start_x=100, start_y=115)
-        raw_elements.extend(flow_elements)
+        # 1. Tier 1: Sources / Evidence
+        t1_y = 105
+        raw_elements.append({
+            "id": "arch_sources_box",
+            "type": "rectangle",
+            "x": 80,
+            "y": t1_y,
+            "width": 960,
+            "height": 55,
+            "backgroundColor": "#f8fafc",
+            "strokeColor": "#94a3b8",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arch_sources_txt",
+            "type": "text",
+            "x": 100,
+            "y": t1_y + 10,
+            "width": 920,
+            "height": 35,
+            "text": "📥 SOURCES & EVIDENCE INGESTION\nGoogle Meet Transcripts • WhatsApp Communications • Document & Architecture Uploads",
+            "fontSize": 11,
+            "fontFamily": 1,
+            "strokeColor": "#1e293b",
+            "textAlign": "center",
+            "containerId": "arch_sources_box",
+        })
 
-        # 2. Key Decisions & Evidence Provenance Cards
+        # Arrow Tier 1 -> Tier 2
+        raw_elements.append({
+            "id": "arr_sources_to_agent",
+            "type": "arrow",
+            "x": 560,
+            "y": t1_y + 55,
+            "width": 0,
+            "height": 25,
+            "points": [[0, 0], [0, 25]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#64748b",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+
+        # 2. Tier 2: One Shared Synora Agent & Grouped Capabilities
+        t2_y = 185
+        t2_h = 155
+        raw_elements.append({
+            "id": "arch_agent_box",
+            "type": "rectangle",
+            "x": 80,
+            "y": t2_y,
+            "width": 960,
+            "height": t2_h,
+            "backgroundColor": "#ecfdf5",
+            "strokeColor": "#059669",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arch_agent_title",
+            "type": "text",
+            "x": 100,
+            "y": t2_y + 10,
+            "width": 920,
+            "height": 18,
+            "text": "🧠 ONE SHARED SYNORA AGENT (Active in Project Context)",
+            "fontSize": 13,
+            "fontFamily": 1,
+            "strokeColor": "#065f46",
+            "textAlign": "center",
+        })
+        raw_elements.append({
+            "id": "arch_agent_sub",
+            "type": "text",
+            "x": 100,
+            "y": t2_y + 30,
+            "width": 920,
+            "height": 14,
+            "text": "Single intelligence layer reasoning across project evidence • Internal capabilities work together in one unified model",
+            "fontSize": 10,
+            "fontFamily": 1,
+            "strokeColor": "#047857",
+            "textAlign": "center",
+        })
+
+        # Grouped Capabilities inside Synora Agent
+        capabilities = [
+            ("Business Analysis", "Requirements & User Stories"),
+            ("Project Planning", "Scope, Milestones & Timeline"),
+            ("Functional Analysis", "Workflows & Use Cases"),
+            ("Technical Architecture", "Schemas, APIs & Stack"),
+            ("Frappe / ERP Analysis", "DocTypes & Integrations"),
+        ]
+        cap_w = 175
+        cap_h = 75
+        cap_spacing = 15
+        cap_start_x = 95
+        cap_y = t2_y + 55
+
+        for idx, (cap_name, cap_desc) in enumerate(capabilities):
+            cx = cap_start_x + idx * (cap_w + cap_spacing)
+            cap_id = f"cap_box_{idx+1}"
+            raw_elements.append({
+                "id": cap_id,
+                "type": "rectangle",
+                "x": cx,
+                "y": cap_y,
+                "width": cap_w,
+                "height": cap_h,
+                "backgroundColor": "#ffffff",
+                "strokeColor": "#10b981",
+                "fillStyle": "solid",
+                "strokeWidth": 1.5,
+                "roundness": {"type": 3},
+                "roughness": 1,
+            })
+            raw_elements.append({
+                "id": f"{cap_id}_txt",
+                "type": "text",
+                "x": cx + 6,
+                "y": cap_y + 12,
+                "width": cap_w - 12,
+                "height": cap_h - 24,
+                "text": f"⚡ {cap_name}\n\n{cap_desc}",
+                "fontSize": 10,
+                "fontFamily": 1,
+                "strokeColor": "#064e3b",
+                "textAlign": "center",
+                "containerId": cap_id,
+            })
+
+        # Arrow Tier 2 -> Tier 3
+        raw_elements.append({
+            "id": "arr_agent_to_guardrails",
+            "type": "arrow",
+            "x": 560,
+            "y": t2_y + t2_h,
+            "width": 0,
+            "height": 25,
+            "points": [[0, 0], [0, 25]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#059669",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+
+        # 3. Tier 3: Deterministic Guardrails
+        t3_y = 365
+        raw_elements.append({
+            "id": "arch_guardrails_box",
+            "type": "rectangle",
+            "x": 80,
+            "y": t3_y,
+            "width": 960,
+            "height": 55,
+            "backgroundColor": "#eff6ff",
+            "strokeColor": "#3b82f6",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arch_guardrails_txt",
+            "type": "text",
+            "x": 100,
+            "y": t3_y + 10,
+            "width": 920,
+            "height": 35,
+            "text": "🛡️ DETERMINISTIC GUARDRAILS & PIPELINE SYNTHESIS\nValidation Rules • Schema Constraints • Semantic Conflict Detection • Non-Destructive Invariant Checks",
+            "fontSize": 11,
+            "fontFamily": 1,
+            "strokeColor": "#1e3a8a",
+            "textAlign": "center",
+            "containerId": "arch_guardrails_box",
+        })
+
+        # Arrow Tier 3 -> Tier 4
+        raw_elements.append({
+            "id": "arr_guardrails_to_db",
+            "type": "arrow",
+            "x": 560,
+            "y": t3_y + 55,
+            "width": 0,
+            "height": 25,
+            "points": [[0, 0], [0, 25]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#3b82f6",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+
+        # 4. Tier 4: Authoritative Project State (PostgreSQL)
+        t4_y = 445
+        raw_elements.append({
+            "id": "arch_db_box",
+            "type": "rectangle",
+            "x": 80,
+            "y": t4_y,
+            "width": 960,
+            "height": 55,
+            "backgroundColor": "#fffbeb",
+            "strokeColor": "#d97706",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arch_db_txt",
+            "type": "text",
+            "x": 100,
+            "y": t4_y + 10,
+            "width": 920,
+            "height": 35,
+            "text": "🗄️ AUTHORITATIVE PROJECT STATE (PostgreSQL)\nSingle System of Record • Immutable Version Snapshots • Canonical Source of Truth",
+            "fontSize": 11,
+            "fontFamily": 1,
+            "strokeColor": "#92400e",
+            "textAlign": "center",
+            "containerId": "arch_db_box",
+        })
+
+        # Arrow Tier 4 -> Tier 5
+        raw_elements.append({
+            "id": "arr_db_to_workspace",
+            "type": "arrow",
+            "x": 560,
+            "y": t4_y + 55,
+            "width": 0,
+            "height": 25,
+            "points": [[0, 0], [0, 25]],
+            "endArrowhead": "arrow",
+            "strokeColor": "#d97706",
+            "strokeWidth": 2,
+            "roughness": 1,
+        })
+
+        # 5. Tier 5: Excalidraw Living Workspace
+        t5_y = 525
+        raw_elements.append({
+            "id": "arch_workspace_box",
+            "type": "rectangle",
+            "x": 80,
+            "y": t5_y,
+            "width": 960,
+            "height": 55,
+            "backgroundColor": "#f5f3ff",
+            "strokeColor": "#7c3aed",
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "roundness": {"type": 3},
+            "roughness": 1,
+        })
+        raw_elements.append({
+            "id": "arch_workspace_txt",
+            "type": "text",
+            "x": 100,
+            "y": t5_y + 10,
+            "width": 920,
+            "height": 35,
+            "text": "🎨 EXCALIDRAW LIVING WORKSPACE (Visual System Model)\nInteractive Architecture Canvas • Human Review & Approval Gates for Consequential Changes",
+            "fontSize": 11,
+            "fontFamily": 1,
+            "strokeColor": "#5b21b6",
+            "textAlign": "center",
+            "containerId": "arch_workspace_box",
+        })
+
+        # 6. Key Decisions & Evidence Provenance Cards
         decisions_list = decisions or []
         if decisions_list:
-            dec_y = 230
+            dec_y = 605
             raw_elements.append({
                 "id": "lbl_decisions_header",
                 "type": "text",
-                "x": 100,
+                "x": 80,
                 "y": dec_y,
                 "width": 450,
-                "height": 26,
+                "height": 24,
                 "text": "KEY PROJECT DECISIONS & EVIDENCE PROVENANCE",
-                "fontSize": 15,
+                "fontSize": 14,
                 "fontFamily": 1,
+                "strokeColor": "#15803d",
                 "textAlign": "left",
             })
 
-            card_x = 100
-            for idx, d in enumerate(decisions_list[:5]):  # Show up to 5 recent decisions
+            card_x = 80
+            for idx, d in enumerate(decisions_list[:4]):  # Show up to 4 recent decisions
                 d_title = d.get("title") or d.get("decision") or d.get("text") or f"Decision #{idx+1}"
                 d_source = d.get("source", "Google Meet")
                 evidence_val = d.get("evidence_ref") or d.get("evidence_id")
@@ -1063,8 +1350,8 @@ class ExcalidrawService:
                     "id": card_id,
                     "type": "rectangle",
                     "x": card_x,
-                    "y": dec_y + 35,
-                    "width": 250,
+                    "y": dec_y + 30,
+                    "width": 225,
                     "height": 115,
                     "backgroundColor": "#dcfce7",
                     "strokeColor": "#16a34a",
@@ -1079,36 +1366,38 @@ class ExcalidrawService:
                 raw_elements.append({
                     "id": text_id,
                     "type": "text",
-                    "x": card_x + 12,
-                    "y": dec_y + 45,
-                    "width": 226,
+                    "x": card_x + 10,
+                    "y": dec_y + 40,
+                    "width": 205,
                     "height": 95,
                     "text": card_body,
-                    "fontSize": 11,
+                    "fontSize": 10,
                     "fontFamily": 1,
+                    "strokeColor": "#14532d",
                     "textAlign": "left",
                     "containerId": card_id,
                 })
-                card_x += 280
+                card_x += 245
 
-        # 3. Active Requirements Cards
+        # 7. Active Requirements Cards
         reqs_list = requirements or []
         if reqs_list:
-            req_y = 410
+            req_y = 770
             raw_elements.append({
                 "id": "lbl_reqs_header",
                 "type": "text",
-                "x": 100,
+                "x": 80,
                 "y": req_y,
                 "width": 350,
-                "height": 26,
+                "height": 24,
                 "text": "ACTIVE REQUIREMENTS & SCOPE",
-                "fontSize": 15,
+                "fontSize": 14,
                 "fontFamily": 1,
+                "strokeColor": "#1d4ed8",
                 "textAlign": "left",
             })
 
-            req_x = 100
+            req_x = 80
             for idx, r in enumerate(reqs_list[:4]):
                 r_title = r.get("title") or r.get("requirement") or r.get("text") or f"Requirement #{idx+1}"
                 r_id = f"req_box_{idx+1}"
@@ -1118,9 +1407,9 @@ class ExcalidrawService:
                     "id": r_id,
                     "type": "rectangle",
                     "x": req_x,
-                    "y": req_y + 35,
-                    "width": 250,
-                    "height": 90,
+                    "y": req_y + 30,
+                    "width": 225,
+                    "height": 85,
                     "backgroundColor": "#eff6ff",
                     "strokeColor": "#3b82f6",
                     "fillStyle": "solid",
@@ -1132,17 +1421,18 @@ class ExcalidrawService:
                 raw_elements.append({
                     "id": r_txt_id,
                     "type": "text",
-                    "x": req_x + 12,
-                    "y": req_y + 45,
-                    "width": 226,
-                    "height": 70,
+                    "x": req_x + 10,
+                    "y": req_y + 40,
+                    "width": 205,
+                    "height": 65,
                     "text": f"REQUIREMENT\n{r_title}",
-                    "fontSize": 11,
+                    "fontSize": 10,
                     "fontFamily": 1,
+                    "strokeColor": "#1e3a8a",
                     "textAlign": "left",
                     "containerId": r_id,
                 })
-                req_x += 280
+                req_x += 245
 
         # Normalize all elements with standard Excalidraw attributes
         return [self._normalize_element(el, idx=i) for i, el in enumerate(raw_elements, 1)]

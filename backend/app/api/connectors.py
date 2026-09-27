@@ -171,6 +171,34 @@ def get_whatsapp_status(
     }
 
 
+@router.post("/whatsapp/session-status", summary="Update WhatsApp Baileys Session Status")
+def update_whatsapp_session_status(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Endpoint called by the Baileys daemon to report real connection updates
+    (connected, disconnected, reconnecting) and active group counts.
+    """
+    connector: Optional[WhatsAppBaileysConnector] = registry.get("whatsapp")  # type: ignore
+    if not connector:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="WhatsApp connector not registered.")
+
+    session_id = payload.get("session_id", "default")
+    status_str = payload.get("status", "disconnected")
+    groups_count = payload.get("active_groups_count")
+    connected_at = payload.get("connected_at")
+    last_seen = payload.get("last_seen")
+    details = payload.get("details")
+
+    result = connector.update_session_status(
+        session_id=session_id,
+        status=status_str,
+        active_groups_count=groups_count,
+        connected_at=connected_at,
+        last_seen=last_seen,
+        details=details,
+    )
+    return {"ok": True, "session": result}
+
+
 @router.post("/whatsapp/webhook", summary="WhatsApp Baileys Webhook Receiver")
 async def whatsapp_webhook(
     request: Request,

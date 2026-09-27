@@ -2,19 +2,48 @@
 
 import React, { useState } from "react";
 
-const SECTIONS = [
-  "Workspace",
-  "Members",
-  "Permissions",
-  "Sources",
-  "Security",
-  "Data & Retention",
-  "AI Governance",
-  "Notifications",
-  "Audit",
-] as const;
+export type SettingsSection =
+  | "Workspace"
+  | "Members"
+  | "Permissions"
+  | "Security"
+  | "Notifications"
+  | "Audit";
 
-type SettingsSection = (typeof SECTIONS)[number];
+interface SettingItem {
+  id: SettingsSection;
+  label: string;
+  adminOnly?: boolean;
+}
+
+interface SettingGroup {
+  category: string;
+  items: SettingItem[];
+}
+
+const SETTING_GROUPS: SettingGroup[] = [
+  {
+    category: "Workspace",
+    items: [
+      { id: "Workspace", label: "Workspace name", adminOnly: false },
+    ],
+  },
+  {
+    category: "Access",
+    items: [
+      { id: "Members", label: "Members", adminOnly: true },
+      { id: "Permissions", label: "Permissions", adminOnly: true },
+    ],
+  },
+  {
+    category: "System",
+    items: [
+      { id: "Security", label: "Security", adminOnly: true },
+      { id: "Notifications", label: "Notifications", adminOnly: false },
+      { id: "Audit", label: "Audit", adminOnly: true },
+    ],
+  },
+];
 
 interface SettingsViewProps {
   isAdmin?: boolean;
@@ -22,7 +51,11 @@ interface SettingsViewProps {
   onSaveWorkspace?: (name: string) => Promise<void> | void;
 }
 
-export function SettingsView({ isAdmin = true, workspaceName = "Workspace", onSaveWorkspace }: SettingsViewProps) {
+export function SettingsView({
+  isAdmin = true,
+  workspaceName = "Workspace",
+  onSaveWorkspace,
+}: SettingsViewProps) {
   const [section, setSection] = useState<SettingsSection>("Workspace");
   const [name, setName] = useState(workspaceName);
   const [saved, setSaved] = useState(false);
@@ -45,30 +78,46 @@ export function SettingsView({ isAdmin = true, workspaceName = "Workspace", onSa
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-6">
         {/* Section nav */}
-        <nav className="rounded-xl bg-surface border border-border shadow-xs p-2 h-fit" aria-label="Settings sections">
-          {SECTIONS.map((s) => {
-            const adminOnly = ["Members", "Permissions", "Security", "Audit"].includes(s);
-            if (adminOnly && !isAdmin) return null;
-            const isActive = section === s;
+        <nav className="rounded-xl bg-surface border border-border shadow-xs p-3 h-fit space-y-4" aria-label="Settings sections">
+          {SETTING_GROUPS.map((group) => {
+            const visibleItems = group.items.filter((item) => !item.adminOnly || isAdmin);
+            if (visibleItems.length === 0) return null;
+
             return (
-              <button
-                key={s}
-                onClick={() => setSection(s)}
-                aria-current={isActive ? "page" : undefined}
-                className={`w-full text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${
-                  isActive ? "bg-primary-soft text-primary font-semibold" : "text-text-muted hover:text-text-main hover:bg-canvas"
-                }`}
-              >
-                {s}
-                {adminOnly && <span className="ml-1.5 text-[10px] font-mono text-text-muted">admin</span>}
-              </button>
+              <div key={group.category} className="space-y-1">
+                <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  {group.category}
+                </div>
+                {visibleItems.map((item) => {
+                  const isActive = section === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setSection(item.id)}
+                      aria-current={isActive ? "page" : undefined}
+                      className={`w-full text-left px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center justify-between ${
+                        isActive
+                          ? "bg-primary-soft text-primary font-semibold"
+                          : "text-text-muted hover:text-text-main hover:bg-canvas"
+                      }`}
+                    >
+                      <span>{item.label}</span>
+                      {item.adminOnly && (
+                        <span className="text-[9px] font-mono text-text-muted">admin</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>
 
         {/* Section panel */}
         <div className="rounded-xl bg-surface border border-border shadow-xs p-6 space-y-4">
-          <h2 className="text-sm font-semibold text-text-main uppercase tracking-wider">{section}</h2>
+          <h2 className="text-sm font-semibold text-text-main uppercase tracking-wider">
+            {section === "Workspace" ? "Workspace Configuration" : section}
+          </h2>
 
           {section === "Workspace" && (
             <form onSubmit={handleSave} className="space-y-4 max-w-md">
@@ -95,13 +144,13 @@ export function SettingsView({ isAdmin = true, workspaceName = "Workspace", onSa
           )}
 
           {section === "Members" && (
-            <div className="text-xs text-text-muted space-y-2">
-              <p>Users, memberships, and roles are managed here.</p>
+            <div className="text-xs text-text-muted space-y-3">
+              <p>Team members and human access roles for this workspace.</p>
               <div className="rounded-md border border-border divide-y divide-border/60">
-                {["Owner", "Admin", "Member", "Viewer", "Agent"].map((role) => (
-                  <div key={role} className="px-3 py-2 flex items-center justify-between">
+                {["Owner", "Admin", "Member", "Viewer"].map((role) => (
+                  <div key={role} className="px-3 py-2.5 flex items-center justify-between">
                     <span className="font-medium text-text-main">{role}</span>
-                    <span className="font-mono text-[11px]">—</span>
+                    <span className="font-mono text-[11px] text-text-muted">—</span>
                   </div>
                 ))}
               </div>
@@ -115,39 +164,21 @@ export function SettingsView({ isAdmin = true, workspaceName = "Workspace", onSa
             </div>
           )}
 
-          {section === "Sources" && (
-            <div className="text-xs text-text-muted">
-              <p>Manage source connections, retention windows, and per-source permissions from the Sources screen.</p>
-            </div>
-          )}
-
           {section === "Security" && (
             <div className="text-xs text-text-muted space-y-2">
               <p>OAuth secrets and refresh tokens are stored server-side and never exposed to the browser.</p>
-              <p>Request only the minimum OAuth scopes required for each connector.</p>
-            </div>
-          )}
-
-          {section === "Data & Retention" && (
-            <div className="text-xs text-text-muted">
-              <p>Configure evidence retention and archival policies. Rollbacks create new versions — history is never deleted.</p>
-            </div>
-          )}
-
-          {section === "AI Governance" && (
-            <div className="text-xs text-text-muted space-y-2">
-              <p>Low-impact categorizations may be automated with audit logging. High-impact architecture, scope, and decision changes require explicit human confirmation.</p>
+              <p>Source integrations request only the minimum required scopes.</p>
             </div>
           )}
 
           {section === "Notifications" && (
-            <div className="text-xs text-text-muted">
-              <p>Operational notifications only: conflicts requiring review, transcript readiness, sync failures, expired authorizations, and approval requests.</p>
+            <div className="text-xs text-text-muted space-y-2">
+              <p>Operational notifications: conflicts requiring review, sync readiness, and approval requests.</p>
             </div>
           )}
 
           {section === "Audit" && (
-            <div className="text-xs text-text-muted">
+            <div className="text-xs text-text-muted space-y-2">
               <p>Security-sensitive and state-changing actions are recorded with actor, timestamp, evidence, and resulting version.</p>
             </div>
           )}

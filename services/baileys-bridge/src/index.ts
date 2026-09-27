@@ -24,6 +24,49 @@ import http from "http";
 const BACKEND_URL = process.env.SYNORA_BACKEND_URL || "http://localhost:8000";
 const AUTH_DIR = path.join(__dirname, "../baileys_auth_info");
 
+async function reportSessionStatus(
+  status: "connected" | "disconnected" | "reconnecting",
+  activeGroupsCount: number | null = null
+) {
+  const url = `${BACKEND_URL}/connectors/whatsapp/session-status`;
+  const postData = JSON.stringify({
+    session_id: "baileys_default",
+    status,
+    active_groups_count: activeGroupsCount,
+    connected_at: status === "connected" ? new Date().toISOString() : undefined,
+    last_seen: new Date().toISOString(),
+  });
+
+  return new Promise((resolve) => {
+    try {
+      const parsedUrl = new URL(url);
+      const req = http.request(
+        {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || 80,
+          path: parsedUrl.pathname,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(postData),
+          },
+        },
+        (res) => {
+          res.resume();
+          resolve(true);
+        }
+      );
+      req.on("error", () => {
+        resolve(false);
+      });
+      req.write(postData);
+      req.end();
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 async function forwardMessageToSynora(payload: {
   message_id: string;
   sender_jid: string;
@@ -108,6 +151,7 @@ export async function connectToWhatsApp(): Promise<WASocket> {
       console.log("Scan this QR code with WhatsApp on your phone (Linked Devices):");
       qrcode.generate(qr, { small: true });
       console.log("==========================================================\n");
+      reportSessionStatus("disconnected", null);
     }
 
     if (connection === "close") {
@@ -116,6 +160,7 @@ export async function connectToWhatsApp(): Promise<WASocket> {
       console.log(
         `[Synora Bridge] Connection closed (code: ${statusCode}, reason: ${lastDisconnect?.error?.message || lastDisconnect?.error || "unknown"}), reconnecting: ${shouldReconnect}`
       );
+      reportSessionStatus(shouldReconnect ? "reconnecting" : "disconnected", null);
 
       // If logged out or unauthenticated, clean up stale credentials directory
       if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 405) {
@@ -135,6 +180,25 @@ export async function connectToWhatsApp(): Promise<WASocket> {
     } else if (connection === "open") {
       console.log("✅ [Synora Bridge] Connected successfully to WhatsApp via Baileys WebSocket!");
       console.log(`[Synora Bridge] Forwarding group chat discussions to: ${BACKEND_URL}`);
+
+      const syncGroupCountAndReport = async () => {
+        let groupCount = 0;
+        try {
+          const groups = await sock.groupFetchAllParticipating();
+          groupCount = Object.keys(groups || {}).length;
+        } catch {
+          groupCount = 0;
+        }
+        await reportSessionStatus("connected", groupCount);
+      };
+
+      syncGroupCountAndReport();
+      const heartbeat = setInterval(syncGroupCountAndReport, 30000);
+      sock.ev.on("connection.update", (nextUpdate) => {
+        if (nextUpdate.connection === "close") {
+          clearInterval(heartbeat);
+        }
+      });
     }
   });
 

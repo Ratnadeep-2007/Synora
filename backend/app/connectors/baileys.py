@@ -40,7 +40,9 @@ class WhatsAppBaileysConnector(BaseConnector):
         """
         if not credentials:
             return False
+        session_id = credentials.get("session_id", "default")
         if credentials.get("session_id") or credentials.get("auth_token") or credentials.get("pairing_code"):
+            self.update_session_status(session_id=session_id, status="connected")
             return True
         return False
 
@@ -49,28 +51,95 @@ class WhatsAppBaileysConnector(BaseConnector):
         Disconnects an active WhatsApp Baileys session.
         """
         logger.info(f"Disconnecting WhatsApp Baileys session '{connection_id}'")
-        if connection_id in self._active_sessions:
-            self._active_sessions[connection_id]["status"] = "disconnected"
+        self.update_session_status(session_id=connection_id, status="disconnected")
         return True
+
+    def update_session_status(
+        self,
+        session_id: str = "default",
+        status: str = "disconnected",
+        active_groups_count: Optional[int] = None,
+        connected_at: Optional[str] = None,
+        last_seen: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Authoritatively records session connection status directly from Baileys daemon.
+        Tracks session_id, status, connected_at, last_seen, active_groups_count.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        current = self._active_sessions.get(session_id, {})
+
+        conn_at = connected_at or current.get("connected_at")
+        if status == "connected" and not conn_at:
+            conn_at = now_iso
+        elif status in ("disconnected", "unconfigured"):
+            conn_at = None
+
+        groups = active_groups_count
+        if groups is None and status == "connected":
+            groups = current.get("active_groups_count", 0)
+
+        session_data = {
+            "session_id": session_id,
+            "status": status,
+            "active_groups_count": groups if status == "connected" else None,
+            "connected_at": conn_at,
+            "last_seen": last_seen or now_iso,
+            "details": details or {},
+            "updated_at": now_iso,
+        }
+        self._active_sessions[session_id] = session_data
+        self._active_sessions["default"] = session_data
+        logger.info(f"WhatsApp Baileys session '{session_id}' status updated to '{status}' (groups: {groups})")
+        return session_data
 
     def health_check(self, connection_id: Optional[str] = None) -> ConnectorHealth:
         """
         Checks real-time connectivity to WhatsApp Web via Baileys.
+        Does not return fake 0s when disconnected.
         """
         start = time.perf_counter()
         session = self._active_sessions.get(connection_id or "default")
-        latency = (time.perf_counter() - start) * 1000
+        if not session and self._active_sessions:
+            session = next(iter(self._active_sessions.values()))
 
-        is_connected = session and session.get("status") == "connected"
+        if not session or session.get("status") == "unconfigured":
+            return ConnectorHealth(
+                provider=self.provider_name,
+                status=ConnectorStatus.DEGRADED,
+                latency_ms=None,
+                details={
+                    "client": "Baileys (@whiskeysockets/baileys)",
+                    "protocol": "WhatsApp Web Multi-Device WebSocket",
+                    "session_id": "unconfigured",
+                    "session_status": "unconfigured",
+                    "active_groups_count": None,
+                    "connected_at": None,
+                    "last_seen": None,
+                },
+            )
+
+        status_str = session.get("status", "disconnected")
+        is_connected = status_str == "connected"
+        latency = round((time.perf_counter() - start) * 1000, 2) if is_connected else None
+
+        connector_status = ConnectorStatus.HEALTHY if is_connected else (
+            ConnectorStatus.DEGRADED if status_str == "reconnecting" else ConnectorStatus.DISCONNECTED
+        )
+
         return ConnectorHealth(
             provider=self.provider_name,
-            status=ConnectorStatus.HEALTHY if is_connected else ConnectorStatus.DEGRADED,
-            latency_ms=round(latency, 2),
+            status=connector_status,
+            latency_ms=latency,
             details={
                 "client": "Baileys (@whiskeysockets/baileys)",
                 "protocol": "WhatsApp Web Multi-Device WebSocket",
-                "active_groups_count": len(session.get("connected_groups", [])) if session else 0,
-                "session_status": session.get("status") if session else "unconfigured",
+                "session_id": session.get("session_id", connection_id or "default"),
+                "session_status": status_str,
+                "active_groups_count": session.get("active_groups_count") if is_connected else None,
+                "connected_at": session.get("connected_at"),
+                "last_seen": session.get("last_seen"),
             },
         )
 

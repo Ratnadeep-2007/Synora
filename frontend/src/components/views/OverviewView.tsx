@@ -30,15 +30,10 @@ export function OverviewView({ state, conflicts, excalidraw = null, activityItem
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-wider font-semibold text-primary">Project overview</p>
-          <h1 className="text-xl font-semibold tracking-tight text-text-main mt-1">What is true right now?</h1>
-          <p className="text-xs text-text-muted mt-1 max-w-2xl">A simple view of current state, open questions, conflicts, and the living workspace.</p>
-        </div>
-        <button onClick={() => onNavigateToTab("excalidraw")} className="px-3 py-1.5 rounded-md bg-primary text-white text-xs font-semibold inline-flex items-center gap-1.5">
-          <PenTool className="w-3.5 h-3.5" />Open workspace
-        </button>
+      <header>
+        <p className="text-[11px] uppercase tracking-wider font-semibold text-primary">Project overview</p>
+        <h1 className="text-xl font-semibold tracking-tight text-text-main mt-1">What is true right now?</h1>
+        <p className="text-xs text-text-muted mt-1 max-w-2xl">A single source of truth for current state, open questions, conflicts, and the living workspace.</p>
       </header>
 
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -104,8 +99,8 @@ export function OverviewView({ state, conflicts, excalidraw = null, activityItem
 
       <section className="p-5 rounded-xl bg-surface border border-border">
         <div className="flex items-center justify-between pb-3 border-b border-border">
-          <div className="flex items-center gap-2"><PenTool className="w-4 h-4 text-primary" /><div><h2 className="text-sm font-semibold text-text-main">Living visual workspace</h2><p className="text-[11px] text-text-muted mt-0.5">Excalidraw reflects the project state visually.</p></div></div>
-          <button onClick={() => onNavigateToTab("excalidraw")} className="text-xs text-primary">Open</button>
+          <div className="flex items-center gap-2"><PenTool className="w-4 h-4 text-primary" /><div><h2 className="text-sm font-semibold text-text-main">Living visual workspace</h2><p className="text-[11px] text-text-muted mt-0.5">Excalidraw reflects the authoritative project state visually.</p></div></div>
+          <button onClick={() => onNavigateToTab("excalidraw")} className="text-xs text-primary">Open workspace</button>
         </div>
         <div className="pt-4 flex flex-wrap items-center gap-4 text-xs">
           <span className="inline-flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${excalidraw ? "bg-success" : "bg-text-muted"}`} />{excalidraw ? "Synchronized" : "Not synced"}</span>
@@ -114,7 +109,7 @@ export function OverviewView({ state, conflicts, excalidraw = null, activityItem
       </section>
 
       <section className="p-5 rounded-xl bg-surface border border-border">
-        <div className="flex items-center gap-2 pb-3 border-b border-border"><Clock3 className="w-4 h-4 text-primary" /><div><h2 className="text-sm font-semibold text-text-main">Recent activity</h2><p className="text-[11px] text-text-muted mt-0.5">Recent changes and agent work.</p></div></div>
+        <div className="flex items-center gap-2 pb-3 border-b border-border"><Clock3 className="w-4 h-4 text-primary" /><div><h2 className="text-sm font-semibold text-text-main">Recent activity</h2><p className="text-[11px] text-text-muted mt-0.5">Recent project and workspace activity.</p></div></div>
         {activityItems.length ? <div className="divide-y divide-border">{activityItems.slice(0,6).map((item,idx)=><div key={idx} className="py-3 flex items-start gap-3 text-xs"><span className="font-mono text-text-muted shrink-0">{item.time}</span><span className="text-text-main">{item.text}</span></div>)}</div> : <p className="pt-4 text-xs text-text-muted">No recent activity.</p>}
       </section>
 

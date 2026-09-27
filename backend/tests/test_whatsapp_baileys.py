@@ -373,3 +373,110 @@ def test_whatsapp_api_endpoints(client, db_session: Session):
     assert len(hist_data) >= 2
     assert any("Healthcare Claims" in h.get("content", "") or "Core Architecture" in h.get("content", "") for h in hist_data)
 
+
+def test_whatsapp_session_status_lifecycle_and_group_count(client):
+    """
+    Validates WhatsApp session lifecycle requirements:
+    1. Unconfigured session returns degraded/disconnected with None latency and no fake 0 groups
+    2. Connected session reports healthy status, real active group count, and valid latency
+    3. Reconnecting session reports reconnecting session status and degraded health
+    4. Disconnected session clears active groups and reports disconnected status
+    5. Repeated session registration safely updates status idempotently
+    6. Verifies /connectors/whatsapp/session-status endpoint works end-to-end
+    """
+    conn = WhatsAppBaileysConnector()
+
+    # 1. Unconfigured session
+    health_unconf = conn.health_check("session_unconf_test")
+    assert health_unconf.status == ConnectorStatus.DEGRADED
+    assert health_unconf.latency_ms is None
+    assert health_unconf.details["session_status"] == "unconfigured"
+    assert health_unconf.details["active_groups_count"] is None
+
+    # 2. Connected session
+    conn.update_session_status(
+        session_id="session_test_01",
+        status="connected",
+        active_groups_count=4,
+    )
+    health_conn = conn.health_check("session_test_01")
+    assert health_conn.status == ConnectorStatus.HEALTHY
+    assert health_conn.latency_ms is not None
+    assert health_conn.details["session_status"] == "connected"
+    assert health_conn.details["active_groups_count"] == 4
+    assert health_conn.details["connected_at"] is not None
+
+    # 3. Reconnecting session
+    conn.update_session_status(
+        session_id="session_test_01",
+        status="reconnecting",
+        active_groups_count=None,
+    )
+    health_rec = conn.health_check("session_test_01")
+    assert health_rec.status == ConnectorStatus.DEGRADED
+    assert health_rec.details["session_status"] == "reconnecting"
+    assert health_rec.details["active_groups_count"] is None
+    assert health_rec.latency_ms is None
+
+    # 4. Disconnected session
+    conn.update_session_status(
+        session_id="session_test_01",
+        status="disconnected",
+        active_groups_count=None,
+    )
+    health_disc = conn.health_check("session_test_01")
+    assert health_disc.status == ConnectorStatus.DISCONNECTED
+    assert health_disc.details["session_status"] == "disconnected"
+    assert health_disc.details["active_groups_count"] is None
+    assert health_disc.latency_ms is None
+
+    # 5. Repeated session registration
+    conn.update_session_status(
+        session_id="session_test_01",
+        status="connected",
+        active_groups_count=7,
+    )
+    # Repeated update with same session ID
+    conn.update_session_status(
+        session_id="session_test_01",
+        status="connected",
+        active_groups_count=8,
+    )
+    health_rep = conn.health_check("session_test_01")
+    assert health_rep.status == ConnectorStatus.HEALTHY
+    assert health_rep.details["active_groups_count"] == 8
+
+    # 6. REST API: POST /connectors/whatsapp/session-status and GET /connectors/whatsapp/status
+    post_res = client.post(
+        "/connectors/whatsapp/session-status",
+        json={
+            "session_id": "baileys_live",
+            "status": "connected",
+            "active_groups_count": 5,
+        },
+    )
+    assert post_res.status_code == 200
+    assert post_res.json()["ok"] is True
+
+    get_res = client.get("/connectors/whatsapp/status?connection_id=baileys_live")
+    assert get_res.status_code == 200
+    body = get_res.json()
+    assert body["status"] == "healthy"
+    assert body["details"]["session_status"] == "connected"
+    assert body["details"]["active_groups_count"] == 5
+
+    # Report disconnect via API
+    client.post(
+        "/connectors/whatsapp/session-status",
+        json={
+            "session_id": "baileys_live",
+            "status": "disconnected",
+        },
+    )
+    get_res2 = client.get("/connectors/whatsapp/status?connection_id=baileys_live")
+    assert get_res2.status_code == 200
+    body2 = get_res2.json()
+    assert body2["status"] == "disconnected"
+    assert body2["details"]["session_status"] == "disconnected"
+    assert body2["details"]["active_groups_count"] is None
+

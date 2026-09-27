@@ -28,7 +28,7 @@ const Excalidraw = dynamic(
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         <div className="text-center space-y-1">
           <p className="text-sm font-semibold text-text-main">Loading Interactive Excalidraw Canvas...</p>
-          <p className="text-xs text-text-muted font-mono">Initializing Project Agent Visual Workspace</p>
+          <p className="text-xs text-text-muted font-mono">Initializing Visual Workspace</p>
         </div>
       </div>
     ),
@@ -63,7 +63,7 @@ export function ExcalidrawCanvas({
   const [elementCount, setElementCount] = useState(initialElements?.length || 0);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Update canvas scene when new elements arrive from Project Agent sync
+  // Update canvas scene when new elements arrive from workspace sync
   useEffect(() => {
     if (excalidrawAPI && initialElements && initialElements.length > 0) {
       try {

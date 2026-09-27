@@ -20,7 +20,7 @@ class ConnectorStatus(str, Enum):
 class ConnectorHealth(BaseModel):
     provider: str
     status: ConnectorStatus
-    latency_ms: float = 0.0
+    latency_ms: Optional[float] = None
     error_message: Optional[str] = None
     last_checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     details: Dict[str, Any] = Field(default_factory=dict)

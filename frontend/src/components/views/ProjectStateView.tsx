@@ -35,62 +35,97 @@ export function ProjectStateView({
 }: ProjectStateViewProps) {
   const workflow = state?.agent_workflow || ["BA", "Project", "Functional", "Tech", "Frappe"];
 
-  // Generate React Flow nodes & edges for the Agent Workflow
+  // Generate React Flow nodes & edges for "How this state is formed"
   const { nodes, edges } = useMemo(() => {
-    const nodeItems: Node[] = [];
-    const edgeItems: Edge[] = [];
+    const versionNum = state?.current_version || 1;
 
-    workflow.forEach((agentName, index) => {
-      const isFirst = index === 0;
-      const isOnboarding = agentName.toLowerCase().includes("onboarding");
+    const stages = [
+      {
+        id: "evidence",
+        step: "Stage 01",
+        title: "Ingested Evidence",
+        subtitle: "Meet • WhatsApp • Uploads",
+        bg: "#FFFFFF",
+        border: "1px solid #E7EAE5",
+        badgeColor: "text-text-muted",
+      },
+      {
+        id: "agent",
+        step: "Stage 02",
+        title: "Synora Agent",
+        subtitle: "Unified Intelligence Layer",
+        bg: "#ECFDF5",
+        border: "2px solid #059669",
+        badgeColor: "text-primary font-semibold",
+      },
+      {
+        id: "guardrails",
+        step: "Stage 03",
+        title: "Deterministic Guardrails",
+        subtitle: "Schema & Conflict Gates",
+        bg: "#EFF6FF",
+        border: "1px solid #93C5FD",
+        badgeColor: "text-blue-600 font-semibold",
+      },
+      {
+        id: "state",
+        step: "Stage 04",
+        title: "Authoritative State",
+        subtitle: `PostgreSQL Record (v${versionNum})`,
+        bg: "#FEF3C7",
+        border: "2px solid #D97706",
+        badgeColor: "text-amber-700 font-semibold",
+      },
+    ];
 
-      nodeItems.push({
-        id: `node-${agentName}`,
-        position: { x: index * 180 + 30, y: 70 },
-        data: {
-          label: (
-            <div className="text-center p-1">
-              <div className="text-[10px] uppercase font-mono tracking-wider text-text-muted">
-                Step 0{index + 1}
-              </div>
-              <div className="font-semibold text-xs text-text-main mt-0.5">
-                {agentName}
-              </div>
-              <div className="text-[9px] text-primary font-medium mt-0.5">
-                {isOnboarding ? "Pipeline Ingress" : "Workforce Agent"}
-              </div>
+    const nodeItems: Node[] = stages.map((s, index) => ({
+      id: `node-${s.id}`,
+      position: { x: index * 200 + 20, y: 50 },
+      data: {
+        label: (
+          <div className="text-center p-1.5">
+            <div className={`text-[10px] uppercase font-mono tracking-wider ${s.badgeColor}`}>
+              {s.step}
             </div>
-          ),
-        },
-        style: {
-          background: isOnboarding ? "#E8F0EC" : "#FFFFFF",
-          border: isOnboarding ? "2px solid #173F35" : "1px solid #E7EAE5",
-          borderRadius: "8px",
-          width: 140,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+            <div className="font-semibold text-xs text-text-main mt-0.5">
+              {s.title}
+            </div>
+            <div className="text-[10px] text-text-muted mt-0.5 truncate">
+              {s.subtitle}
+            </div>
+          </div>
+        ),
+      },
+      style: {
+        background: s.bg,
+        border: s.border,
+        borderRadius: "8px",
+        width: 165,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+      },
+    }));
+
+    const edgeItems: Edge[] = [];
+    for (let i = 0; i < stages.length - 1; i++) {
+      const from = stages[i].id;
+      const to = stages[i + 1].id;
+      edgeItems.push({
+        id: `edge-${from}-${to}`,
+        source: `node-${from}`,
+        target: `node-${to}`,
+        animated: true,
+        style: { stroke: "#059669", strokeWidth: 1.5 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: "#059669",
+          width: 14,
+          height: 14,
         },
       });
-
-      if (index < workflow.length - 1) {
-        const nextAgent = workflow[index + 1];
-        edgeItems.push({
-          id: `edge-${agentName}-${nextAgent}`,
-          source: `node-${agentName}`,
-          target: `node-${nextAgent}`,
-          animated: true,
-          style: { stroke: "#173F35", strokeWidth: 1.5 },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: "#173F35",
-            width: 14,
-            height: 14,
-          },
-        });
-      }
-    });
+    }
 
     return { nodes: nodeItems, edges: edgeItems };
-  }, [workflow]);
+  }, [state?.current_version]);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
@@ -128,22 +163,27 @@ export function ProjectStateView({
         </p>
       </div>
 
-      {/* React Flow Workflow Visualization */}
+      {/* State Formation Flow Visualization */}
       <div className="p-6 rounded-xl bg-surface border border-border shadow-xs space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-border">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-text-main uppercase tracking-wider">
-              Agent Workflow Pipeline Architecture
-            </h3>
+            <div>
+              <h3 className="text-sm font-semibold text-text-main uppercase tracking-wider">
+                How this state is formed
+              </h3>
+              <p className="text-[11px] text-text-muted mt-0.5">
+                Evidence is reasoned by Synora Agent, verified through deterministic guardrails, and committed to PostgreSQL.
+              </p>
+            </div>
           </div>
           <span className="text-xs text-text-muted font-mono">
-            {workflow.length} Sequential Agents
+            4 Verified Stages
           </span>
         </div>
 
         {/* React Flow Canvas */}
-        <div className="h-48 w-full bg-canvas/60 rounded-lg border border-border overflow-hidden relative">
+        <div className="h-44 w-full bg-canvas/60 rounded-lg border border-border overflow-hidden relative">
           <ReactFlow
             nodes={nodes}
             edges={edges}

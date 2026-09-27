@@ -66,7 +66,7 @@ def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
     for name, health in connector_healths.items():
         components["connectors"][name] = {
             "status": health.status.value,
-            "latency_ms": round(health.latency_ms, 2),
+            "latency_ms": round(health.latency_ms, 2) if health.latency_ms is not None else None,
             "error": health.error_message,
         }
         if health.status != ConnectorStatus.HEALTHY:

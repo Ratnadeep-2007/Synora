@@ -23,10 +23,19 @@ export function SourcesView({ connections, subscriptionsActive = false, lastMeet
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null);
   const googleConn = connections.find((c) => c.provider === "google");
 
-  useEffect(() => { api.getWhatsAppStatus().then(setWaStatus).catch(() => setWaStatus(null)); }, []);
+  useEffect(() => {
+    const fetchStatus = () => {
+      api.getWhatsAppStatus().then(setWaStatus).catch(() => setWaStatus(null));
+    };
+    fetchStatus();
+    const timer = setInterval(fetchStatus, 4000);
+    return () => clearInterval(timer);
+  }, []);
 
   const googleConnected = googleConn?.status === "active";
-  const whatsappConnected = waStatus?.details?.session_status === "connected";
+  const sessionStatus = waStatus?.details?.session_status || waStatus?.status || "unconfigured";
+  const whatsappConnected = sessionStatus === "connected";
+  const whatsappReconnecting = sessionStatus === "reconnecting";
 
   return (
     <div className="space-y-6">
@@ -56,15 +65,57 @@ export function SourcesView({ connections, subscriptionsActive = false, lastMeet
 
         <section className="p-5 rounded-xl bg-surface border border-border">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3"><div className="w-9 h-9 rounded-lg bg-canvas text-text-main flex items-center justify-center border border-border"><MessageCircle className="w-4 h-4" /></div><div><h2 className="text-sm font-semibold text-text-main">WhatsApp</h2><p className="text-[11px] text-text-muted">Group messages via Baileys</p></div></div>
-            <Status active={whatsappConnected} label={whatsappConnected ? "Connected" : "Not connected"} />
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-canvas text-text-main flex items-center justify-center border border-border">
+                <MessageCircle className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-text-main">WhatsApp</h2>
+                <p className="text-[11px] text-text-muted">Group messages via Baileys</p>
+              </div>
+            </div>
+            <Status
+              active={whatsappConnected}
+              label={whatsappConnected ? "Connected" : whatsappReconnecting ? "Reconnecting" : "Not connected"}
+            />
           </div>
           <div className="mt-4 pt-3 border-t border-border text-xs space-y-2">
-            <div className="flex justify-between"><span className="text-text-muted">Session</span><span className="text-text-main">{waStatus?.details?.session_status || waStatus?.status || "—"}</span></div>
-            <div className="flex justify-between"><span className="text-text-muted">Active groups</span><span className="text-text-main font-mono">{waStatus?.details?.active_groups_count ?? "—"}</span></div>
-            <div className="flex justify-between"><span className="text-text-muted">Latency</span><span className="text-text-main font-mono">{waStatus ? `${waStatus.latency_ms} ms` : "—"}</span></div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Session</span>
+              <span className="text-text-main font-mono">
+                {whatsappConnected
+                  ? waStatus?.details?.session_id || "connected"
+                  : sessionStatus !== "unconfigured"
+                  ? sessionStatus
+                  : "unconfigured"}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Active groups</span>
+              <span className="text-text-main font-mono">
+                {whatsappConnected && waStatus?.details?.active_groups_count != null
+                  ? waStatus.details.active_groups_count
+                  : "—"}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Latency</span>
+              <span className="text-text-main font-mono">
+                {whatsappConnected && waStatus?.latency_ms != null && waStatus.latency_ms > 0
+                  ? `${waStatus.latency_ms} ms`
+                  : "—"}
+              </span>
+            </div>
           </div>
-          <div className="mt-4 p-3 rounded-lg bg-canvas border border-border text-[11px] text-text-muted">Messages enter Synora as evidence and are matched to a project context under connector policy.</div>
+          {!whatsappConnected && (
+            <div className="mt-4 p-3 rounded-lg bg-canvas border border-border text-[11px] text-text-muted space-y-1">
+              <div className="font-semibold text-text-main">To connect WhatsApp:</div>
+              <p>Start the Baileys bridge via <code className="px-1 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">start.bat</code> and scan the QR code using WhatsApp &gt; Linked Devices.</p>
+            </div>
+          )}
+          <div className="mt-4 p-3 rounded-lg bg-canvas border border-border text-[11px] text-text-muted">
+            Messages enter Synora as evidence and are matched to a project context under connector policy.
+          </div>
         </section>
 
         <section className="p-5 rounded-xl bg-surface border border-border">

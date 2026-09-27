@@ -3,8 +3,8 @@ import "./globals.css";
 import "./excalidraw.css";
 
 export const metadata: Metadata = {
-  title: "Synesis — Project Intelligence & AI Workforce Platform",
-  description: "Maintain a reliable, continuously updated representation of what your team is building.",
+  title: "Synora — Autonomous Project Intelligence & Living Architecture",
+  description: "One shared intelligence layer maintaining an authoritative, continuously updated visual architecture.",
 };
 
 export default function RootLayout({
