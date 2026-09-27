@@ -339,6 +339,58 @@ class ContextResolverService:
             lines.append(json.dumps(record, ensure_ascii=True))
         return "\n".join(lines)
 
+    def move_unknown_evidence_to_project(
+        self,
+        evidence_id: str,
+        target_project_id: str,
+        db: Session,
+        actor_id: str,
+        tenant_id: str = "default_tenant",
+    ) -> Dict[str, Any]:
+        if target_project_id == UNKNOWN_CONTEXT_ID:
+            raise ContextResolverError("Unknown Context is a quarantine destination, not a reassignment target.")
+
+        target = db.query(Project).filter(Project.id == target_project_id).first()
+        if not target:
+            raise ContextResolverError(f"Target project '{target_project_id}' not found.")
+
+        from app.models.evidence import Evidence
+        from app.models.source_event import SourceEvent
+
+        evidence = (
+            db.query(Evidence)
+            .filter(Evidence.id == evidence_id, Evidence.project_id == UNKNOWN_CONTEXT_ID)
+            .first()
+        )
+        if not evidence:
+            raise ContextResolverError(f"Unknown Context evidence '{evidence_id}' not found.")
+
+        source_event = db.query(SourceEvent).filter(SourceEvent.event_id == evidence.source_event_id).first()
+        evidence.project_id = target_project_id
+        if source_event:
+            source_event.project_id = target_project_id
+            payload = json.loads(source_event.payload_json or "{}")
+            payload["context_status"] = "human_assigned"
+            payload["assigned_project_id"] = target_project_id
+            source_event.payload_json = json.dumps(payload)
+
+        metadata = json.loads(evidence.metadata_json or "{}")
+        metadata["context_status"] = "human_assigned"
+        metadata["assigned_project_id"] = target_project_id
+        metadata["assigned_by"] = actor_id
+        evidence.metadata_json = json.dumps(metadata)
+        db.commit()
+
+        return {
+            "evidence_id": evidence.id,
+            "source_event_id": evidence.source_event_id,
+            "project_id": target_project_id,
+            "project_name": target.name,
+            "previous_project_id": UNKNOWN_CONTEXT_ID,
+            "status": "assigned",
+            "actor_id": actor_id,
+        }
+
     def route_or_quarantine(
         self,
         result: ContextResolutionResult,
