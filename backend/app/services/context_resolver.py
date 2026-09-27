@@ -393,6 +393,25 @@ class ContextResolverService:
                     source="nim+deterministic",
                 )
 
+            # If AI is uncertain, preserve deterministic candidates for human triage.
+            if ai_result.status in ("ambiguous", "unknown"):
+                merged: List[ContextCandidate] = list(ai_result.candidates)
+                seen = {c.project_id for c in merged}
+                for candidate in deterministic_candidates[:self.MAX_CANDIDATES_FOR_LLM]:
+                    if candidate.project_id not in seen:
+                        merged.append(candidate)
+                triage_status = "ambiguous" if ai_result.status == "ambiguous" or merged else "unknown"
+                return ContextResolutionResult(
+                    status=triage_status,
+                    selected_project_id=None,
+                    confidence=max(ai_result.confidence, deterministic_result.confidence),
+                    reasoning=ai_result.reasoning or deterministic_result.reasoning,
+                    candidates=merged[:self.MAX_CANDIDATES_FOR_LLM],
+                    model=ai_result.model,
+                    prompt_version=ai_result.prompt_version,
+                    source="nim+deterministic",
+                )
+
             if ai_result.status == "ambiguous":
                 # Keep the richer candidate set but never select a project.
                 return ContextResolutionResult(
