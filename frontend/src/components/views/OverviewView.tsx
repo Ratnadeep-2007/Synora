@@ -72,7 +72,7 @@ export function OverviewView({ state, conflicts, excalidraw = null, activityItem
             <div className="grid grid-cols-2 gap-3 pt-2">
               <div className="p-3 rounded-lg bg-canvas border border-border">
                 <span className="text-[11px] text-text-muted">Latest requirement</span>
-                <p className="text-xs font-medium text-text-main mt-1 line-clamp-2">{state?.requirements?.[0]?.text || "None yet"}</p>
+                <p className="text-xs font-medium text-text-main mt-1 line-clamp-2">{(state?.requirements?.[0]?.title || state?.requirements?.[0]?.content) || "None yet"}</p>
               </div>
               <div className="p-3 rounded-lg bg-canvas border border-border">
                 <span className="text-[11px] text-text-muted">Latest decision</span>
