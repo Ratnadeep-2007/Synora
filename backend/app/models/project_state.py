@@ -48,7 +48,7 @@ class ProjectState(Base):
     """
     Authoritative Project State model.
     Maintains the single source of truth for what a project is building.
-    Supports: Vision, Requirements, Architecture, Capabilities, Decisions,
+    Supports: Vision, Requirements, Architecture, Agent Workflow, Decisions,
     Constraints, Assumptions, Open Questions.
     """
     __tablename__ = "project_states"
@@ -60,8 +60,10 @@ class ProjectState(Base):
     vision = Column(Text, default="", nullable=False)
     requirements_json = Column(Text, default="[]", nullable=False)
     architecture_json = Column(Text, default="[]", nullable=False)
-    # Legacy compatibility field; product logic no longer uses it as an agent pipeline.
-    agent_workflow_json = Column(Text, default="[]", nullable=False)
+    # DEPRECATED (compatibility only): legacy sequential-agent pipeline.
+    # Synora has ONE shared agent with capabilities; this column is retained so
+    # existing rows/proposals keep working and will be migrated, not dropped.
+    agent_workflow_json = Column(Text, default='["BA", "Project", "Functional", "Tech", "Frappe"]', nullable=False)
     decisions_json = Column(Text, default="[]", nullable=False)
     constraints_json = Column(Text, default="[]", nullable=False)
     assumptions_json = Column(Text, default="[]", nullable=False)

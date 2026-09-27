@@ -11,6 +11,7 @@ import { EvidenceView } from "@/components/views/EvidenceView";
 import { ConflictCenterView } from "@/components/views/ConflictCenterView";
 import { DecisionsView } from "@/components/views/DecisionsView";
 import { AgentView } from "@/components/views/AgentView";
+import { UnknownContextView } from "@/components/views/UnknownContextView";
 import { SourcesView } from "@/components/views/SourcesView";
 import { SettingsView } from "@/components/views/SettingsView";
 import { EvidenceDrawer } from "@/components/common/EvidenceDrawer";
@@ -49,13 +50,12 @@ export default function Home() {
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
-  const [excalRevisions, setExcalRevisions] = useState<any[]>([]);
-  const [unknownContextItems, setUnknownContextItems] = useState<any[]>([]);
 
   // Event-driven pipeline state
   const [meetSubscriptions, setMeetSubscriptions] = useState<any[]>([]);
   const [meetEvents, setMeetEvents] = useState<any[]>([]);
   const [unassignedMeetings, setUnassignedMeetings] = useState<MeetingItem[]>([]);
+  const [unknownPendingCount, setUnknownPendingCount] = useState<number>(0);
 
   // Evidence Drawer State
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -87,8 +87,6 @@ export default function Home() {
         setAgents([]);
         setExcalArtifact(null);
         setExcalProposals([]);
-        setExcalRevisions([]);
-        setUnknownContextItems([]);
         return;
       }
       if (!currentProjectId) setCurrentProjectId(activeId);
@@ -107,8 +105,7 @@ export default function Home() {
         subsData,
         eventsData,
         unassignedData,
-        revisionsData,
-        unknownContextData,
+        unknownSummaryData,
       ] = await Promise.allSettled([
         api.getProjectState(activeId),
         api.getProjectHistory(activeId),
@@ -123,10 +120,7 @@ export default function Home() {
         api.listMeetSubscriptions().catch(() => []),
         api.listMeetEvents(undefined, 20).catch(() => []),
         api.listUnassignedMeetings(20).catch(() => []),
-        api.getExcalidrawRevisions(activeId).catch(() => []),
-        activeId === "system_unknown_context"
-          ? api.listUnknownContext(activeId).catch(() => [])
-          : Promise.resolve([]),
+        api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
       ]);
 
       if (stateData.status === "fulfilled") setState(stateData.value);
@@ -142,8 +136,9 @@ export default function Home() {
       if (subsData.status === "fulfilled") setMeetSubscriptions(subsData.value);
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
       if (unassignedData.status === "fulfilled") setUnassignedMeetings(unassignedData.value);
-      if (revisionsData.status === "fulfilled") setExcalRevisions(revisionsData.value);
-      if (unknownContextData.status === "fulfilled") setUnknownContextItems(unknownContextData.value);
+      if (unknownSummaryData.status === "fulfilled") {
+        setUnknownPendingCount(unknownSummaryData.value?.pending || 0);
+      }
     } catch (err) {
       console.error("Failed to load project context:", err);
     }
@@ -284,16 +279,6 @@ export default function Home() {
     }
   };
 
-
-
-  const handleLoadExcalRevision = async (_revision: any) => {
-    // Historical previews must never replace the live latest canvas.
-    setCurrentTab("excalidraw");
-  };
-
-  const handleCompareExcalRevisions = async (fromRevision: number, toRevision: number) => {
-    return api.compareExcalidrawRevisions(currentProjectId || "", fromRevision, toRevision);
-  };
 
   const handleReviewExcalProposal = async (proposalId: string, action: "approve" | "reject", reason?: string) => {
     const projectId = requireProject();
@@ -558,6 +543,7 @@ export default function Home() {
       }}
       projectVersion={state?.current_version || 1}
       openConflictsCount={openConflictsCount}
+      unknownContextCount={unknownPendingCount}
       projects={projects}
       currentProjectId={currentProjectId || undefined}
       activeProject={activeProject}
@@ -617,9 +603,6 @@ export default function Home() {
           onIngestScene={handleIngestScene}
           onSyncLivingWorkspace={handleSyncLivingWorkspace}
           onAiGenerateVisuals={handleAiGenerateVisuals}
-          revisions={excalRevisions}
-          onLoadRevision={handleLoadExcalRevision}
-          onCompareRevisions={handleCompareExcalRevisions}
         />
       )}
 
@@ -651,15 +634,6 @@ export default function Home() {
       {currentTab === "evidence" && (
         <EvidenceView
           evidence={allEvidence}
-          contextReviewItems={unknownContextItems}
-          onAssignContext={async (evidenceId, targetProjectId) => {
-            try {
-              await api.assignUnknownContext("system_unknown_context", evidenceId, targetProjectId);
-              await refreshAll();
-            } catch (err: any) {
-              alert(`Context assignment failed: ${err.message}`);
-            }
-          }}
           onOpenEvidenceDetail={(item) =>
             handleOpenEvidence(item.content.slice(0, 80), "Evidence", [item.id])
           }
@@ -685,6 +659,11 @@ export default function Home() {
           onReviewConflict={handleReviewConflict}
           onOpenEvidence={handleOpenEvidence}
         />
+      )}
+
+      {/* Unknown Context triage */}
+      {currentTab === "unknown-context" && (
+        <UnknownContextView projects={projects} onChanged={refreshAll} />
       )}
 
       {/* Agent Screen */}

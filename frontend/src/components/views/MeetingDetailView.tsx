@@ -63,7 +63,7 @@ export function MeetingDetailView({
               <span className="text-xs font-mono text-text-muted">ID: {meetingId}</span>
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-text-main">
-              {meeting.title || "Sync Meeting: AI Workforce MVP Architecture"}
+              {meeting.title || "Project Architecture Sync"}
             </h1>
           </div>
 

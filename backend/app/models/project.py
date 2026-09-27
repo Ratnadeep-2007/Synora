@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 import uuid
 from typing import Any, Dict, List, Optional
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -55,11 +55,11 @@ class Workspace(Base):
 
 
 class WorkspaceAgent(Base):
-    """
-    Central Workspace Super-Agent.
-    Handles and oversees all projects across the organizational workspace.
-    Provides portfolio-level context, cross-project coordination, and delegates
-    to specialist execution capabilities.
+    """DEPRECATED compatibility record (legacy multi-agent era).
+
+    Synora has exactly ONE shared agent; a project is a context boundary, not an
+    agent. This table is retained only so existing rows and endpoints keep
+    working, and is excluded from the product model and UI.
     """
     __tablename__ = "workspace_agents"
 
@@ -138,17 +138,27 @@ class WorkspaceAgent(Base):
         return f"<WorkspaceAgent id={self.id} workspace_id={self.workspace_id} name='{self.name}'>"
 
 
+#: Canonical ID of the reserved system project that holds unresolved source
+#: evidence. It is never a candidate during project matching and is never
+#: listed as an ordinary user project.
+SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID = "proj_unknown_context"
+
+
 class Project(Base):
     """
     Project entity.
-    Strictly adheres to: ONE PROJECT = ONE LOGICAL PROJECT AGENT.
+
+    A project is a context, security, and state boundary. It is NOT an agent:
+    Synora has exactly one shared agent that operates inside a project context.
     """
     __tablename__ = "projects"
 
     id = Column(String(64), primary_key=True, default=generate_project_id)
     workspace_id = Column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False, default="ws_default")
-    name = Column(String(255), default="Synesis Project", nullable=False)
+    name = Column(String(255), default="Synora Project", nullable=False)
     description = Column(Text, default="", nullable=False)
+    # System projects (e.g. Unknown Context) are infrastructure, not user projects.
+    is_system = Column(Boolean, default=False, index=True, nullable=False)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -170,11 +180,12 @@ class Project(Base):
 
 
 class ProjectAgent(Base):
-    """
-    Logical Project Agent.
-    Legacy compatibility record. The product architecture uses one shared Synora Agent;
-    project records are context/security boundaries. Capability data may remain here for
-    compatibility with older execution records, but projects do not instantiate agents.
+    """DEPRECATED compatibility record (legacy multi-agent era).
+
+    Historically one Project Agent per project. Synora now has a single shared
+    agent that operates inside a project's context; the BA/Planning/Functional/
+    Technical/Frappe modules are capabilities, not agents. Retained only so
+    existing rows and endpoints keep working.
     """
     __tablename__ = "project_agents"
 

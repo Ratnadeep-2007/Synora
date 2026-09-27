@@ -329,16 +329,32 @@ class ProjectAgentService:
         tenant_id: str = "default_tenant",
     ) -> ExcalidrawArtifact:
         """
-        Maintains compatibility with older callers without rebuilding the canvas
-        from the removed agent_workflow model. Visual regeneration is delegated to
-        the Excalidraw service's canonical project-state renderer.
+        Continuously maintains the project's living Excalidraw visual workspace.
+        Renders decisions, evidence references, requirements, and architecture pipeline nodes.
         """
-        self.state_service.get_or_create_state(project_id, db)
-        return self.excal_service.get_or_create_artifact(
-            project_id=project_id,
-            db=db,
-            tenant_id=tenant_id,
+        agent = self.get_or_provision_project_agent(project_id, db)
+        state = self.state_service.get_or_create_state(project_id, db)
+        artifact = self.excal_service.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
+
+        workflow = json.loads(state.agent_workflow_json) if state.agent_workflow_json else ["User", "BA", "Project", "Functional", "Tech", "Frappe"]
+        decisions = json.loads(state.decisions_json) if state.decisions_json else []
+        requirements = json.loads(state.requirements_json) if state.requirements_json else []
+
+        new_elements = self.excal_service._build_living_workspace_elements(
+            node_names=workflow,
+            decisions=decisions,
+            requirements=requirements,
         )
+
+        artifact.elements_json = json.dumps(new_elements)
+        artifact.extracted_nodes_json = json.dumps(workflow)
+        artifact.version += 1
+        artifact.updated_at = datetime.now(timezone.utc)
+
+        db.commit()
+        db.refresh(artifact)
+        logger.info(f"Project Agent synced living Excalidraw workspace for '{project_id}' to v{artifact.version}")
+        return artifact
 
     def format_project_agent_read(self, agent: ProjectAgent, db: Session) -> ProjectAgentRead:
         """Formats the ProjectAgent domain model into a typed read DTO."""

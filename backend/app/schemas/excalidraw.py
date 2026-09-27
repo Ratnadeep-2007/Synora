@@ -63,37 +63,3 @@ class AiGenerateDiagramRequest(BaseModel):
     focus_prompt: Optional[str] = Field(None, description="Optional focus or instructions for the AI visual generator")
     direct_apply: bool = Field(False, description="If True, directly updates the active canvas; if False, creates a reviewable proposal")
 
-
-
-class ExcalidrawRevisionRead(BaseModel):
-    id: str
-    artifact_id: str
-    project_id: str
-    tenant_id: str
-    revision_number: int
-    parent_revision_id: Optional[str] = None
-    derived_from_state_version: Optional[int] = None
-    snapshot: Dict[str, Any]
-    change_summary: Dict[str, Any]
-    source_event_ids: List[str] = []
-    proposal_id: Optional[str] = None
-    actor_id: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class ExcalidrawRevisionDiffRead(BaseModel):
-    project_id: str
-    artifact_id: str
-    from_revision: int
-    to_revision: int
-    added_elements: List[Dict[str, Any]] = []
-    removed_elements: List[Dict[str, Any]] = []
-    changed_elements: List[Dict[str, Any]] = []
-    unchanged_count: int = 0
-    overlay_elements: List[Dict[str, Any]] = []
-    added_count: int = 0
-    removed_count: int = 0
-    changed_count: int = 0

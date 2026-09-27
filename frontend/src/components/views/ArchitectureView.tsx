@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   PenTool,
   CheckCircle2,
@@ -18,39 +18,14 @@ import {
   Plus,
 } from "lucide-react";
 import { ExcalidrawArtifact, ExcalidrawProposal } from "@/lib/types";
-
-interface VisualRevision {
-  id: string;
-  artifact_id: string;
-  project_id: string;
-  tenant_id: string;
-  revision_number: number;
-  parent_revision_id?: string | null;
-  derived_from_state_version?: number | null;
-  snapshot: { elements: any[]; app_state?: any; extracted_nodes?: string[] };
-  change_summary: Record<string, any>;
-  source_event_ids: string[];
-  proposal_id?: string | null;
-  actor_id: string;
-  created_at: string;
-}
-
-interface VisualRevisionDiff {
-  project_id: string;
-  artifact_id: string;
-  from_revision: number;
-  to_revision: number;
-  added_elements: any[];
-  removed_elements: any[];
-  changed_elements: any[];
-  unchanged_count: number;
-  overlay_elements?: any[];
-  added_count?: number;
-  removed_count?: number;
-  changed_count?: number;
-}
+import { api } from "@/lib/api";
 import { ExcalidrawCanvas } from "@/components/canvas/ExcalidrawCanvas";
 import { ExcalidrawSyncBar } from "@/components/common/ExcalidrawSyncBar";
+import {
+  VisualRevisionDiff,
+  VisualRevisionPanel,
+  VisualRevisionSummary,
+} from "@/components/common/VisualRevisionPanel";
 
 interface ArchitectureViewProps {
   artifact: ExcalidrawArtifact | null;
@@ -65,9 +40,6 @@ interface ArchitectureViewProps {
   onIngestScene: (scene: { name: string; elements: any[]; app_state?: any }) => Promise<void>;
   onSyncLivingWorkspace?: () => Promise<void>;
   onAiGenerateVisuals?: (focusPrompt?: string, directApply?: boolean) => Promise<void>;
-  revisions?: VisualRevision[];
-  onLoadRevision?: (revision: VisualRevision) => Promise<void>;
-  onCompareRevisions?: (fromRevision: number, toRevision: number) => Promise<VisualRevisionDiff>;
 }
 
 export function ArchitectureView({
@@ -83,20 +55,74 @@ export function ArchitectureView({
   onIngestScene,
   onSyncLivingWorkspace,
   onAiGenerateVisuals,
-  revisions = [],
-  onLoadRevision,
-  onCompareRevisions,
 }: ArchitectureViewProps) {
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [isSyncingWorkspace, setIsSyncingWorkspace] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [processingProposalId, setProcessingProposalId] = useState<string | null>(null);
-  const [selectedRevision, setSelectedRevision] = useState<number | null>(null);
-  const [revisionDiff, setRevisionDiff] = useState<VisualRevisionDiff | null>(null);
-  const [isComparing, setIsComparing] = useState(false);
-  const [previewRevision, setPreviewRevision] = useState<VisualRevision | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Immutable visual revision history
+  const [revisions, setRevisions] = useState<VisualRevisionSummary[]>([]);
+  const [currentRevisionNumber, setCurrentRevisionNumber] = useState<number | null>(null);
+  const [compareFrom, setCompareFrom] = useState<number | null>(null);
+  const [revisionDiff, setRevisionDiff] = useState<VisualRevisionDiff | null>(null);
+  const [isRevisionBusy, setIsRevisionBusy] = useState(false);
+
+  const projectId = artifact?.project_id;
+
+  const loadRevisions = async () => {
+    if (!projectId) return;
+    try {
+      const data = await api.getVisualRevisions(projectId);
+      setRevisions(data?.revisions || []);
+      setCurrentRevisionNumber(data?.current_revision_number ?? null);
+    } catch {
+      setRevisions([]);
+    }
+  };
+
+  useEffect(() => {
+    loadRevisions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, artifact?.version]);
+
+  const handleSelectCompare = async (revisionNumber: number) => {
+    if (!projectId || currentRevisionNumber === null) return;
+    try {
+      setIsRevisionBusy(true);
+      setCompareFrom(revisionNumber);
+      const diff = await api.compareVisualRevisions(projectId, revisionNumber, currentRevisionNumber);
+      setRevisionDiff(diff);
+    } catch (err: any) {
+      alert(`Compare failed: ${err.message}`);
+    } finally {
+      setIsRevisionBusy(false);
+    }
+  };
+
+  const handleRestoreRevision = async (revisionNumber: number) => {
+    if (!projectId) return;
+    if (!window.confirm(`Restore revision ${revisionNumber}? This creates a NEW revision and never overwrites history.`)) {
+      return;
+    }
+    try {
+      setIsRevisionBusy(true);
+      await api.restoreVisualRevision(
+        projectId,
+        revisionNumber,
+        `Restored from revision ${revisionNumber} via Excalidraw workspace`
+      );
+      setRevisionDiff(null);
+      setCompareFrom(null);
+      await loadRevisions();
+    } catch (err: any) {
+      alert(`Restore failed: ${err.message}`);
+    } finally {
+      setIsRevisionBusy(false);
+    }
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -246,16 +272,17 @@ export function ArchitectureView({
               onClick={async () => {
                 try {
                   setIsAiGenerating(true);
+                  // Always proposal-first: visual changes never auto-apply.
                   await onAiGenerateVisuals(undefined, false);
                 } finally {
                   setIsAiGenerating(false);
                 }
               }}
               disabled={isAiGenerating}
-              className="px-3.5 py-1.5 text-xs font-medium text-primary bg-primary-soft hover:bg-primary/20 border border-primary/20 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
-              title="Create a reviewable visual architecture proposal"
+              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg flex items-center gap-1.5 transition-colors shadow-xs disabled:opacity-50"
+              title="Ask the Synora Agent to plan a diagram change for review"
             >
-              <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? "animate-spin" : ""}`} />
+              <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? "animate-spin text-amber-300" : "text-amber-300"}`} />
               <span>{isAiGenerating ? "Designing Scene..." : "Generate visual proposal"}</span>
             </button>
           )}
@@ -334,143 +361,6 @@ export function ArchitectureView({
         </div>
 
       </div>
-
-
-      {/* Immutable visual revision history */}
-      {revisions.length > 0 && (
-        <div className="p-5 rounded-xl bg-surface border border-border shadow-xs space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-sm font-semibold text-text-main">Visual history</h2>
-              <p className="text-xs text-text-muted mt-0.5">
-                The canvas always shows the latest revision. Older revisions remain available for inspection and comparison.
-              </p>
-            </div>
-            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-primary-soft text-primary border border-primary/20">
-              {revisions.length} revisions
-            </span>
-          </div>
-
-          <div className="space-y-2">
-            {revisions.slice(0, 8).map((revision) => {
-              const isCurrent = revision.revision_number === artifact?.version;
-              return (
-                <div key={revision.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-lg bg-canvas border border-border">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-semibold text-text-main">v{revision.revision_number}</span>
-                      {isCurrent && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-success/10 text-success border border-success/20">Latest</span>
-                      )}
-                      {revision.derived_from_state_version && (
-                        <span className="text-[10px] text-text-muted">State v{revision.derived_from_state_version}</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-text-muted mt-1">
-                      {revision.change_summary?.action || "Visual revision"} · {revision.actor_id} ·{" "}
-                      {new Date(revision.created_at).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {onLoadRevision && (
-                      <button
-                        className="px-2.5 py-1.5 text-xs font-medium bg-surface border border-border rounded-md hover:bg-surface/80"
-                        onClick={() => setPreviewRevision(revision)}
-                      >
-                        Preview
-                      </button>
-                    )}
-                    {onCompareRevisions && !isCurrent && (
-                      <button
-                        className="px-2.5 py-1.5 text-xs font-medium text-primary bg-primary-soft border border-primary/20 rounded-md hover:bg-primary/20 disabled:opacity-50"
-                        disabled={isComparing}
-                        onClick={async () => {
-                          try {
-                            setIsComparing(true);
-                            setSelectedRevision(revision.revision_number);
-                            setRevisionDiff(await onCompareRevisions(revision.revision_number, artifact?.version || 1));
-                          } finally {
-                            setIsComparing(false);
-                          }
-                        }}
-                      >
-                        Compare with latest
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {revisionDiff && (
-            <div className="p-4 rounded-lg border border-border bg-canvas">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs font-semibold text-text-main">
-                  v{revisionDiff.from_revision} → v{revisionDiff.to_revision}
-                </span>
-                <button
-                  className="text-xs text-text-muted hover:text-text-main"
-                  onClick={() => setRevisionDiff(null)}
-                >
-                  Close
-                </button>
-              </div>
-              <div className="grid grid-cols-3 gap-2 mt-3 text-center">
-                <div className="p-2 rounded bg-surface border border-border">
-                  <div className="text-sm font-semibold text-success">{revisionDiff.added_count ?? revisionDiff.added_elements.length}</div>
-                  <div className="text-[10px] text-text-muted">Added</div>
-                </div>
-                <div className="p-2 rounded bg-surface border border-border">
-                  <div className="text-sm font-semibold text-danger">{revisionDiff.removed_count ?? revisionDiff.removed_elements.length}</div>
-                  <div className="text-[10px] text-text-muted">Removed</div>
-                </div>
-                <div className="p-2 rounded bg-surface border border-border">
-                  <div className="text-sm font-semibold text-primary">{revisionDiff.changed_count ?? revisionDiff.changed_elements.length}</div>
-                  <div className="text-[10px] text-text-muted">Changed</div>
-                </div>
-              </div>
-              <div className="mt-3 p-3 rounded-lg bg-surface border border-border text-xs text-text-muted">
-                Comparison is non-destructive. The main canvas stays on the latest revision; history is shown only for comparison.
-                {revisionDiff.overlay_elements?.length
-                  ? ` ${revisionDiff.overlay_elements.length} overlay elements are prepared for visual comparison.`
-                  : ""}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {previewRevision && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6">
-          <div className="w-full max-w-6xl h-[86vh] bg-surface border border-border rounded-xl shadow-xl flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <div>
-                <div className="text-sm font-semibold text-text-main">
-                  Historical revision v{previewRevision.revision_number}
-                </div>
-                <div className="text-xs text-text-muted">
-                  Read-only preview. The live canvas remains on the latest revision.
-                </div>
-              </div>
-              <button
-                className="px-3 py-1.5 text-xs font-medium border border-border rounded-md hover:bg-canvas"
-                onClick={() => setPreviewRevision(null)}
-              >
-                Close
-              </button>
-            </div>
-            <div className="flex-1 min-h-0">
-              <ExcalidrawCanvas
-                projectName={`${artifact?.name || "Architecture"} · v${previewRevision.revision_number}`}
-                version={previewRevision.revision_number}
-                initialElements={previewRevision.snapshot?.elements || []}
-                initialAppState={previewRevision.snapshot?.app_state}
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Pending Diagram Proposals */}
       <div className="space-y-4">
@@ -620,6 +510,17 @@ export function ArchitectureView({
           </div>
         )}
       </div>
+
+      {/* Immutable visual revision history (current view stays clean) */}
+      <VisualRevisionPanel
+        revisions={revisions}
+        currentRevisionNumber={currentRevisionNumber}
+        compareFrom={compareFrom}
+        diff={revisionDiff}
+        busy={isRevisionBusy}
+        onSelectCompare={handleSelectCompare}
+        onRestore={handleRestoreRevision}
+      />
 
       {/* Historical Proposals */}
       {reviewedProposals.length > 0 && (

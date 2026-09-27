@@ -10,11 +10,7 @@ class ProjectStateRead(BaseModel):
     vision: str
     requirements: List[Dict[str, Any]] = []
     architecture: List[Dict[str, Any]] = []
-    agent_workflow: List[str] = []  # legacy compatibility; shared-agent architecture does not use a workflow chain
-    capabilities: List[str] = Field(default_factory=lambda: [
-        "Business Analysis", "Project Planning", "Functional Analysis",
-        "Technical Architecture", "Frappe / ERP Analysis",
-    ])
+    agent_workflow: List[str] = []
     decisions: List[Dict[str, Any]] = []
     constraints: List[str] = []
     assumptions: List[str] = []

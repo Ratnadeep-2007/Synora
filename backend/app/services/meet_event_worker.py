@@ -22,14 +22,16 @@ from app.core.exceptions import (
 from app.models.meet_event_record import MeetEventRecord
 from app.models.meet_subscription import MeetSubscription, MeetSubscriptionStatus
 from app.models.meeting import Meeting, Participant, Transcript, TranscriptEntry
-from app.models.project import Project
+from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID, Project
 from app.models.source_connection import ConnectionStatus, SourceConnection
 from app.models.source_event import SourceEvent
 from app.schemas.source_event import SourceEventCreate
+from app.services.context_intelligence import ContextIntelligenceService
 from app.services.google_meet import GoogleMeetService, _parse_iso_datetime
 from app.services.google_oauth import GoogleOAuthService
 from app.services.ingestion_service import IngestionService
 from app.services.metrics import metrics
+from app.services.unknown_context_service import UnknownContextService
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +144,17 @@ class MeetEventWorker:
         meet_service: Optional[GoogleMeetService] = None,
         oauth_service: Optional[GoogleOAuthService] = None,
         ingestion_service: Optional[IngestionService] = None,
+        context_service: Optional[ContextIntelligenceService] = None,
+        unknown_service: Optional[UnknownContextService] = None,
     ):
         self.meet_service = meet_service or GoogleMeetService()
         self.oauth_service = oauth_service or GoogleOAuthService()
         self.ingestion = ingestion_service or IngestionService()
+        # Meet uses the SAME Context Intelligence engine as every other source.
+        self.context_service = context_service or ContextIntelligenceService()
+        self.unknown_service = unknown_service or UnknownContextService(
+            context_service=self.context_service
+        )
 
     # ------------------------------------------------------------------
     # Stage 1: Pub/Sub intake (lightweight, durable)
@@ -270,13 +279,25 @@ class MeetEventWorker:
         user_id: str,
         subscription: Optional[MeetSubscription],
         conference_record_id: str,
-        source_connection_id: str,
-    ) -> str:
-        """Map a transcript notification to a Synesis project. Never guesses."""
+    ) -> tuple[Optional[str], str]:
+        """Deterministic trusted mapping for a transcript notification.
+
+        Honours explicit connector bindings (a subscription pinned to a project,
+        or an already-owned meeting). Never guesses: when no trusted mapping
+        exists the caller falls back to segment-level Context Intelligence and,
+        if that is inconclusive, to Unknown Context.
+
+        Returns (project_id | None, reason).
+        """
         if subscription and subscription.project_id:
             project = db.query(Project).filter(Project.id == subscription.project_id).first()
-            if project:
-                return project.id
+            if project and not project.is_system:
+                return project.id, "trusted_subscription_mapping"
+            logger.warning(
+                "meet_subscription_project_unavailable: subscription=%s project_id=%s",
+                subscription.id,
+                subscription.project_id,
+            )
         owned = (
             db.query(Meeting)
             .filter(
@@ -286,14 +307,192 @@ class MeetEventWorker:
             )
             .first()
         )
-        if owned and owned.project_id:
-            return owned.project_id
-        logger.warning(
-            "meet_project_unassigned: conference=%s user_id=%s",
-            conference_record_id,
-            user_id,
+        if owned and owned.project_id and owned.project_id not in (
+            UNASSIGNED_PROJECT_ID,
+            SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID,
+        ):
+            return owned.project_id, "existing_meeting_mapping"
+        return None, "unmapped"
+
+    # ------------------------------------------------------------------
+    # Segment-level context routing (one meeting may span projects)
+    # ------------------------------------------------------------------
+    def _segment_entries(
+        self, entries: List[TranscriptEntry], window_size: int = 12, gap_seconds: int = 240
+    ) -> List[List[TranscriptEntry]]:
+        """Group transcript entries into context windows.
+
+        A single meeting often discusses several projects, so evidence is routed
+        per segment rather than per meeting.
+        """
+        ordered = sorted(entries, key=lambda e: e.start_time or _now())
+        windows: List[List[TranscriptEntry]] = []
+        current: List[TranscriptEntry] = []
+        for entry in ordered:
+            if current:
+                prev = current[-1].start_time
+                cur = entry.start_time
+                gap_exceeded = (
+                    prev is not None
+                    and cur is not None
+                    and (cur - prev).total_seconds() > gap_seconds
+                )
+                if gap_exceeded or len(current) >= window_size:
+                    windows.append(current)
+                    current = []
+            current.append(entry)
+        if current:
+            windows.append(current)
+        return windows
+
+    def _route_transcript_segments(
+        self,
+        meeting: Meeting,
+        transcript: Transcript,
+        db: Session,
+        trusted_project_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """Route each transcript segment to a project or Unknown Context.
+
+        The single Meeting row and its association are preserved; only the
+        evidence boundary differs per segment.
+        """
+        entries = (
+            db.query(TranscriptEntry)
+            .filter(TranscriptEntry.transcript_id == transcript.id)
+            .order_by(TranscriptEntry.start_time.asc())
+            .all()
         )
-        return UNASSIGNED_PROJECT_ID
+        windows = self._segment_entries(entries)
+        routed: Dict[str, int] = {}
+        unknown_segments = 0
+        events_created = 0
+
+        for index, window in enumerate(windows):
+            text = " ".join(e.text for e in window if e.text)
+            if not text.strip():
+                continue
+
+            if trusted_project_id:
+                target_project_id: Optional[str] = trusted_project_id
+                reason = "trusted_subscription_mapping"
+            else:
+                neighbour_text = self._neighbouring_text(windows, index)
+                resolution = self.context_service.resolve(
+                    source="google_meet",
+                    payload={"text": text, "meeting_id": meeting.id},
+                    db=db,
+                    trusted_project_id=None,
+                    continuity_context=neighbour_text,
+                    source_event_id=f"{transcript.id}:seg{index}",
+                    record=True,
+                )
+                target_project_id = resolution.project_id
+                reason = resolution.reason
+
+            if target_project_id:
+                routed[target_project_id] = routed.get(target_project_id, 0) + len(window)
+            else:
+                target_project_id = SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+                unknown_segments += 1
+
+            for entry in window:
+                events_created += self._emit_entry_evidence(
+                    entry=entry,
+                    meeting=meeting,
+                    transcript=transcript,
+                    project_id=target_project_id,
+                    db=db,
+                    metadata={"segment_index": index, "routing_reason": reason},
+                )
+
+            if target_project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
+                self.unknown_service.create_item(
+                    source="google_meet",
+                    payload={
+                        "text": text,
+                        "meeting_id": meeting.id,
+                        "conference_record_id": meeting.provider_conference_id,
+                        "transcript_id": transcript.id,
+                    },
+                    db=db,
+                    source_event_id=f"{transcript.id}:seg{index}",
+                    meeting_id=meeting.id,
+                    actor_id="google_meet",
+                    content=text,
+                    occurred_at=window[0].start_time if window else None,
+                )
+
+        logger.info(
+            "meet_segments_routed: meeting=%s windows=%d projects=%s unknown_segments=%d",
+            meeting.id,
+            len(windows),
+            list(routed.keys()),
+            unknown_segments,
+        )
+        return {
+            "segments": len(windows),
+            "routed_projects": routed,
+            "unknown_segments": unknown_segments,
+            "events_created": events_created,
+        }
+
+    @staticmethod
+    def _neighbouring_text(
+        windows: List[List[TranscriptEntry]], index: int, limit: int = 2
+    ) -> str:
+        """Neighbouring transcript segments, used as a continuity signal."""
+        parts: List[str] = []
+        for offset in range(1, limit + 1):
+            for neighbour in (index - offset, index + offset):
+                if 0 <= neighbour < len(windows):
+                    parts.extend(e.text for e in windows[neighbour] if e.text)
+        return " ".join(parts)[:1500]
+
+    def _emit_entry_evidence(
+        self,
+        entry: TranscriptEntry,
+        meeting: Meeting,
+        transcript: Transcript,
+        project_id: str,
+        db: Session,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Idempotently emit a SourceEvent + Evidence row for one transcript entry."""
+        speaker_name = entry.participant.display_name if entry.participant else None
+        event_in = SourceEventCreate(
+            tenant_id="tenant_default",
+            project_id=project_id,
+            source="google_meet",
+            source_event_id=entry.provider_entry_id,
+            event_type="transcript_entry",
+            actor_id=speaker_name or "Unknown Speaker",
+            occurred_at=entry.start_time,
+            payload={
+                "text": entry.text,
+                "language_code": entry.language_code,
+                "start_time": entry.start_time.isoformat() if entry.start_time else None,
+                "speaker_name": speaker_name,
+                "meeting_id": meeting.id,
+                "transcript_id": transcript.id,
+                "conference_id": meeting.provider_conference_id,
+            },
+            status="received",
+        )
+        event = self.ingestion.ingest_event(event_in, db, commit=False)
+        db.flush()  # populate the generated event_id before linking evidence
+        self.ingestion.create_evidence_from_event(
+            event=event,
+            db=db,
+            meeting_id=meeting.id,
+            transcript_id=transcript.id,
+            transcript_entry_id=entry.id,
+            content=entry.text,
+            metadata={"speaker_display_name": speaker_name, **(metadata or {})},
+            commit=False,
+        )
+        db.flush()
+        return 1
 
     def process_event_record(
         self,
@@ -403,16 +602,20 @@ class MeetEventWorker:
             subscription = (
                 db.query(MeetSubscription).filter(MeetSubscription.id == record.subscription_id).first()
             )
-        project_id = self._resolve_project(
-            db, record.user_id, subscription, record.conference_record_id, connection.id
+        trusted_project_id, mapping_reason = self._resolve_project(
+            db, record.user_id, subscription, record.conference_record_id
         )
+        # The meeting itself is anchored to the trusted mapping when present,
+        # otherwise to Unknown Context until segment routing resolves it.
+        project_id = trusted_project_id or SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
         record.project_id = project_id
 
         logger.info(
-            "meet_transcript_fetch_started: transcript=%s conference=%s project_id=%s",
+            "meet_transcript_fetch_started: transcript=%s conference=%s project_id=%s mapping=%s",
             record.transcript_resource,
             record.conference_record_id,
             project_id,
+            mapping_reason,
         )
 
         transcript_meta = asyncio.run(
@@ -471,6 +674,15 @@ class MeetEventWorker:
             entries_synced,
         )
 
+        # Segment-level routing: one meeting may produce evidence for several
+        # projects, with inconclusive segments preserved in Unknown Context.
+        routing = self._route_transcript_segments(
+            meeting=meeting,
+            transcript=transcript,
+            db=db,
+            trusted_project_id=trusted_project_id,
+        )
+
         events_created = self._create_transcript_ready_event(
             db=db,
             record=record,
@@ -485,6 +697,8 @@ class MeetEventWorker:
             "entries_synced": entries_synced,
             "events_created": events_created,
             "project_id": project_id,
+            "trusted_project_id": trusted_project_id,
+            "routing": routing,
             "source_event_id": None,
         }
 

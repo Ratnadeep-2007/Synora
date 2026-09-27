@@ -50,7 +50,7 @@ class ContextBuilder:
         }
 
         # Selectively expose sections
-        sections_to_include = section_filter or ["requirements", "decisions", "architecture", "constraints", "assumptions", "open_questions"]
+        sections_to_include = section_filter or ["requirements", "decisions", "architecture", "agent_workflow", "constraints"]
         for sec in sections_to_include:
             if sec in state_dict:
                 filtered_state[sec] = state_dict[sec]
@@ -105,10 +105,6 @@ class ContextBuilder:
             "project_state": filtered_state,
             "evidence": formatted_evidence,
             "prior_agent_outputs": formatted_prior_runs,
-            "capabilities": [
-                "Business Analysis", "Project Planning", "Functional Analysis",
-                "Technical Architecture", "Frappe / ERP Analysis",
-            ],
-            "assembled_for_agent": "synora_shared_agent",
+            "assembled_for_agent": agent_id,
         }
         return context

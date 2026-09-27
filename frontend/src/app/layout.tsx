@@ -3,8 +3,8 @@ import "./globals.css";
 import "./excalidraw.css";
 
 export const metadata: Metadata = {
-  title: "Synora — Autonomous Project Intelligence & Living Architecture",
-  description: "One shared intelligence layer maintaining an authoritative, continuously updated visual architecture.",
+  title: "Synora — Project Intelligence & Living Architecture",
+  description: "One shared Synora Agent maintaining an evidence-backed, versioned project state and living visual workspace.",
 };
 
 export default function RootLayout({

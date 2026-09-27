@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     NVIDIA_MODEL: str = "deepseek-ai/deepseek-v4.1-flash"
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
 
+    # Context Intelligence routing gate thresholds.
+    # A candidate must clear MIN_CONFIDENCE and beat the runner-up by
+    # MIN_MARGIN to be auto-resolved; otherwise the event is ambiguous/unknown
+    # and goes to Unknown Context for human review.
+    CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.62)
+    CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.12)
+    CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
+    CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
+
     model_config = SettingsConfigDict(env_file=(".env", "../.env"), env_file_encoding="utf-8", extra="ignore")
 
     @property

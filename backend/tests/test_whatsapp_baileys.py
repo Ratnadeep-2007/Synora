@@ -5,10 +5,11 @@ from sqlalchemy.orm import Session
 from app.connectors.baileys import WhatsAppBaileysConnector
 from app.connectors.base import ConnectorStatus
 from app.connectors.registry import ConnectorRegistry, registry
+from app.models.context_resolution import UnknownContextItem, UnknownItemStatus
 from app.models.evidence import Evidence
-from app.models.excalidraw import ExcalidrawArtifact, ExcalidrawProposal
-from app.models.project import Project
-from app.models.source_event import SourceEvent
+from app.models.excalidraw import ExcalidrawProposal
+from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+from app.services.context_intelligence import ContextIntelligenceService
 from app.services.project_agent_service import ProjectAgentService
 from app.services.whatsapp_service import WhatsAppIntelligenceService
 
@@ -27,11 +28,13 @@ def test_whatsapp_baileys_connector_registration():
     assert "Baileys" in health.details.get("client", "")
 
 
-def test_whatsapp_shared_context_resolution(db_session: Session):
-    """Shared context resolver routes clear messages and quarantines unresolved ones."""
-    agent_service = ProjectAgentService()
-    service = WhatsAppIntelligenceService()
+def test_whatsapp_uses_shared_context_intelligence(db_session: Session):
+    """WhatsApp must resolve projects through the SHARED Context Intelligence engine.
 
+    Deterministic signals resolve exactly. Free text without a deterministic
+    signal is never silently attached to a project.
+    """
+    agent_service = ProjectAgentService()
     claims_proj = agent_service.get_or_create_project(
         project_id="proj_claims_test",
         name="Healthcare Claims Engine",
@@ -41,50 +44,56 @@ def test_whatsapp_shared_context_resolution(db_session: Session):
     )
     core_proj = agent_service.get_or_create_project(
         project_id="proj_core_test",
-        name="Synora Core Architecture",
-        description="Core platform identity, routing, Redis, JWT and database pipeline",
+        name="Synesis Core Architecture",
+        description="Core platform identity, routing, and database pipeline",
         workspace_id="ws_default",
         db=db_session,
     )
 
-    claims = service.context_resolver.resolve(
-        "For Healthcare Claims Engine, we decided to integrate KYC for claimant verification.",
-        db_session,
-        workspace_id="ws_default",
-        metadata={"source_name": "whatsapp", "group_name": "claims"},
-    )
-    assert claims.status == "resolved"
-    assert claims.selected_project_id == claims_proj.id
+    ctx = ContextIntelligenceService()
 
-    core = service.context_resolver.resolve(
-        "For Core Architecture, let's switch session storage to Redis with JWT validation.",
-        db_session,
-        workspace_id="ws_default",
-        metadata={"source_name": "whatsapp", "group_name": "core"},
+    # 1. Explicit project ID -> exact deterministic resolution
+    res_id = ctx.resolve(
+        source="whatsapp",
+        payload={"text": f"Regarding {claims_proj.id}: add Fraud Detection Engine."},
+        db=db_session,
     )
-    assert core.status == "resolved"
-    assert core.selected_project_id == core_proj.id
+    assert res_id.decision == "resolved"
+    assert res_id.project_id == claims_proj.id
+    assert res_id.requires_human_review is False
 
-    unresolved = service.context_resolver.resolve(
-        "The team discussed a new initiative and deployment approach.",
-        db_session,
-        workspace_id="ws_default",
-        metadata={"source_name": "whatsapp", "group_name": "general"},
+    # 2. Explicit project tag -> deterministic resolution
+    res_tag = ctx.resolve(
+        source="whatsapp",
+        payload={"text": "[core] we decided to use Redis Session Cache for persistence."},
+        db=db_session,
     )
-    project, routed = service.context_resolver.route_or_quarantine(
-        unresolved, db_session, workspace_id="ws_default", tenant_id="default_tenant"
+    assert res_tag.decision == "resolved"
+    assert res_tag.project_id == core_proj.id
+
+    # 3. Free text without a deterministic signal is NOT silently attached
+    res_free = ctx.resolve(
+        source="whatsapp",
+        payload={"text": "we should probably revisit the session storage approach."},
+        db=db_session,
     )
-    assert project.id == "system_unknown_context"
-    assert routed.selected_project_id is None
-    assert routed.status in {"unknown", "ambiguous"}
+    assert res_free.decision == "unknown"
+    assert res_free.project_id is None
+    assert res_free.requires_human_review is True
+
+    # 4. Unknown Context is never a candidate project
+    assert all(
+        c.project_id != SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+        for c in res_free.candidate_projects
+    )
 
 
-def test_whatsapp_message_processing_and_excalidraw_updates(db_session: Session):
+def test_whatsapp_message_routes_and_proposes_without_auto_apply(db_session: Session):
     """
-    Verify that an incoming WhatsApp group chat message:
-    1. Understands target project
-    2. Ingests Evidence
-    3. Accurately mutates and updates the target project's Excalidraw whiteboard
+    A deterministically-resolved WhatsApp message:
+    1. Resolves the target project through the shared engine
+    2. Persists Evidence with provenance
+    3. Creates a PENDING visual proposal WITHOUT mutating the living workspace
     """
     agent_service = ProjectAgentService()
     service = WhatsAppIntelligenceService()
@@ -103,49 +112,44 @@ def test_whatsapp_message_processing_and_excalidraw_updates(db_session: Session)
     )
     initial_version = initial_artifact.version
 
-    # Incoming WhatsApp message discussing an architectural component
     payload = {
         "message_id": "wamid.HBgTEST12345",
         "sender_jid": "919876543210@s.whatsapp.net",
         "sender_name": "Dr. Arvind (Lead Architect)",
         "group_jid": "120363025812345678@g.us",
         "group_name": "Synora Architecture & Engineering",
-        "text": "Team, regarding the Healthcare Claims project, we have decided to integrate Digilocker KYC API for automatic claimant identity verification. Add Digilocker KYC component to the pipeline.",
+        "text": (
+            f"Team, regarding {claims_proj.id}: we have decided to integrate "
+            "Digilocker KYC API for automatic claimant identity verification."
+        ),
     }
 
     result = service.process_incoming_message(payload, db_session)
 
     assert result["ok"] is True
+    assert result["processed"] is True
     assert result["matched_project"]["id"] == claims_proj.id
-    assert result["confidence"] >= 0.80
-    assert result["excalidraw_updated"] is True
-    assert result["artifact_version"] == initial_version + 1
-    assert result["context_status"] == "resolved"
-    assert "Digilocker KYC Service" in result["nodes_added"]
 
-    # Verify Evidence was persisted
+    # Consequential visual changes are proposal-first: never auto-applied.
+    assert result["excalidraw_updated"] is False
+    assert result["visual_proposal_pending"] is True
+    proposal = (
+        db_session.query(ExcalidrawProposal)
+        .filter(ExcalidrawProposal.id == result["proposal_id"])
+        .first()
+    )
+    assert proposal is not None
+    assert proposal.status == "pending"
+
+    # The living workspace is unchanged until a human approves.
+    db_session.refresh(initial_artifact)
+    assert initial_artifact.version == initial_version
+
+    # Evidence was persisted with provenance against the resolved project.
     ev = db_session.query(Evidence).filter(Evidence.id == result["evidence_id"]).first()
     assert ev is not None
     assert ev.project_id == claims_proj.id
-    assert "WhatsApp [Synora Architecture & Engineering]" in ev.content
     assert "Digilocker KYC" in ev.content
-
-    # Verify Excalidraw artifact was actually updated with the new node
-    db_session.refresh(initial_artifact)
-    extracted_nodes = json.loads(initial_artifact.extracted_nodes_json)
-    assert "Digilocker KYC Service" in extracted_nodes
-
-    # Verify Decision Card was rendered in the scene elements
-    elements = json.loads(initial_artifact.elements_json)
-    element_texts = [el.get("text", "") for el in elements if el.get("type") == "text"]
-    decision_texts = [t for t in element_texts if "DECISION" in t and "Digilocker KYC" in t]
-    assert len(decision_texts) > 0
-
-    # Verify ExcalidrawProposal was recorded with diff
-    proposal = db_session.query(ExcalidrawProposal).filter(ExcalidrawProposal.id == result["proposal_id"]).first()
-    assert proposal is not None
-    assert proposal.status == "pending"
-    assert "Digilocker KYC Service" in proposal.reason
 
 
 def test_whatsapp_isolation_between_two_projects(db_session: Session):
@@ -171,44 +175,33 @@ def test_whatsapp_isolation_between_two_projects(db_session: Session):
         db=db_session,
     )
 
-    art_a = service.excal_service.get_or_create_artifact(proj_a.id, db_session)
-    art_b = service.excal_service.get_or_create_artifact(proj_b.id, db_session)
-    v_a_initial = art_a.version
-    v_b_initial = art_b.version
-
     # Message about Project A
     res_a = service.process_incoming_message(
         {
             "message_id": "wa_msg_a_1",
             "sender_name": "Alice",
-            "text": "In Healthcare Claims, let's add Fraud Detection Engine to verify claim submissions.",
+            "text": f"In {proj_a.id}, let's add Fraud Detection Engine to verify claim submissions.",
         },
         db_session,
     )
     assert res_a["matched_project"]["id"] == proj_a.id
-
-    db_session.refresh(art_a)
-    db_session.refresh(art_b)
-    # Project A whiteboard updated, Project B whiteboard untouched!
-    assert art_a.version == v_a_initial + 1
-    assert art_b.version == v_b_initial
 
     # Message about Project B
     res_b = service.process_incoming_message(
         {
             "message_id": "wa_msg_b_1",
             "sender_name": "Bob",
-            "text": "For Core Architecture, we decided to use Redis Session Cache for state persistence.",
+            "text": f"For {proj_b.id}, we decided to use Redis Session Cache for state persistence.",
         },
         db_session,
     )
     assert res_b["matched_project"]["id"] == proj_b.id
 
-    db_session.refresh(art_a)
-    db_session.refresh(art_b)
-    # Project B whiteboard updated to v2, Project A remains at v2
-    assert art_a.version == v_a_initial + 1
-    assert art_b.version == v_b_initial + 1
+    # Evidence for each message is scoped to exactly one project: no cross-pollution.
+    ev_a = db_session.query(Evidence).filter(Evidence.id == res_a["evidence_id"]).first()
+    ev_b = db_session.query(Evidence).filter(Evidence.id == res_b["evidence_id"]).first()
+    assert ev_a.project_id == proj_a.id
+    assert ev_b.project_id == proj_b.id
 
 
 def test_whatsapp_ignores_casual_chitchat(db_session: Session):
@@ -259,11 +252,15 @@ def test_whatsapp_ignores_casual_chitchat(db_session: Session):
     assert art.version == v_initial
 
 
-def test_whatsapp_quarantines_unknown_project_context(db_session: Session):
-    """Unknown project discussions are retained under Unknown Context."""
+def test_whatsapp_leaves_uncreated_project_alone(db_session: Session):
+    """
+    Verify that conversation about a project that is NOT created in the workspace
+    is completely ignored (leave it), and DOES NOT pollute or mutate any existing project's whiteboard.
+    """
     agent_service = ProjectAgentService()
     service = WhatsAppIntelligenceService()
 
+    # Workspace only has Claims and Core
     claims_proj = agent_service.get_or_create_project(
         project_id="proj_claims_leaveit",
         name="Healthcare Claims Engine",
@@ -284,23 +281,41 @@ def test_whatsapp_quarantines_unknown_project_context(db_session: Session):
     v_claims_init = art_claims.version
     v_core_init = art_core.version
 
+    # Conversation about an uncreated, unrelated project (e.g. Solana Crypto Wallet)
+    uncreated_proj_message = (
+        "For the Solana Crypto Arbitrage Bot, let's deploy Uniswap v3 flash loans and integrate Phantom Wallet API."
+    )
+
     res = service.process_incoming_message(
         {
             "message_id": "wa_msg_uncreated_1",
             "sender_name": "Crypto Dev",
-            "group_jid": "120363099999999999@g.us",
-            "group_name": "general",
-            "text": "For the Solana Crypto Arbitrage Bot, let's deploy Uniswap v3 flash loans and integrate Phantom Wallet API.",
+            "text": uncreated_proj_message,
         },
         db_session,
     )
 
+    # Must be preserved in Unknown Context for human triage, never attached
+    # to an existing project and never silently discarded.
     assert res["ok"] is True
-    assert res["processed"] is True
-    assert res["matched_project"]["id"] == "system_unknown_context"
-    assert res["context_status"] in {"unknown", "ambiguous"}
+    assert res["status"] == "unknown_context"
+    assert res["matched_project"] is None
     assert res["excalidraw_updated"] is False
+    assert res["unknown_item_id"] is not None
 
+    item = (
+        db_session.query(UnknownContextItem)
+        .filter(UnknownContextItem.id == res["unknown_item_id"])
+        .first()
+    )
+    assert item is not None
+    assert item.status == UnknownItemStatus.PENDING.value
+    assert item.project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+    # Original provenance preserved
+    assert item.source_event_id == "wa_msg_uncreated_1"
+    assert item.evidence_id == res["evidence_id"]
+
+    # Verify BOTH existing project whiteboards remained untouched!
     db_session.refresh(art_claims)
     db_session.refresh(art_core)
     assert art_claims.version == v_claims_init
@@ -333,11 +348,12 @@ def test_whatsapp_api_endpoints(client, db_session: Session):
     assert status_data["status"] == "degraded"
     assert "Baileys" in status_data["details"]["client"]
 
-    # 2. Simulate group chat message
+    # 2. Simulate group chat message with no deterministic project signal:
+    #    it must be preserved in Unknown Context rather than guessed.
     sim_payload = {
         "sender_name": "Chief Architect",
         "group_name": "Synora Product Council",
-        "text": "For Healthcare Claims Engine: requirement is that all claims above $5000 must trigger AML Verification Engine.",
+        "text": "requirement is that all claims above $5000 must trigger AML Verification Engine.",
     }
     res_sim = client.post(
         "/connectors/whatsapp/simulate",
@@ -347,29 +363,27 @@ def test_whatsapp_api_endpoints(client, db_session: Session):
     assert res_sim.status_code == 200
     sim_data = res_sim.json()
     assert sim_data["ok"] is True
-    assert "Healthcare Claims" in sim_data["matched_project"]["name"]
-    assert sim_data["excalidraw_updated"] is True
+    assert sim_data["status"] == "unknown_context"
     assert sim_data["evidence_id"] is not None
 
-    # 3. Webhook endpoint from Baileys daemon
+    # 3. Webhook endpoint from Baileys daemon with an explicit project reference
     webhook_payload = {
         "message_id": "wamid_webhook_test_999",
         "sender_name": "DevOps Engineer",
         "group_name": "Synora Engineering",
-        "text": "In Core Architecture: we decided to deploy Celery Task Queue for asynchronous event delivery.",
+        "text": "For proj_claims_api_test: we decided to deploy Celery Task Queue.",
     }
     res_hook = client.post("/connectors/whatsapp/webhook", json=webhook_payload)
     assert res_hook.status_code == 200
     hook_data = res_hook.json()
     assert hook_data["ok"] is True
-    assert "Core Architecture" in hook_data["matched_project"]["name"]
+    assert hook_data["matched_project"]["id"] == "proj_claims_api_test"
 
     # 4. History endpoint
     res_hist = client.get("/connectors/whatsapp/history")
     assert res_hist.status_code == 200
     hist_data = res_hist.json()
     assert len(hist_data) >= 2
-    assert any("Healthcare Claims" in h.get("content", "") or "Core Architecture" in h.get("content", "") for h in hist_data)
 
 
 def test_whatsapp_session_status_lifecycle_and_group_count(client):

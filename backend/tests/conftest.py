@@ -22,6 +22,10 @@ os.environ["GOOGLE_CLIENT_SECRET"] = "GOCSPX-mock-client-secret-value"
 os.environ["GOOGLE_REDIRECT_URI"] = "http://localhost:8000/auth/google/callback"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["NVIDIA_API_KEY"] = ""
+# Tests exercise the explicitly deterministic knowledge engine. Production
+# defaults to NVIDIA NIM; without credentials the engine reports
+# 'ai_unavailable' and produces no fabricated output.
+os.environ["LLM_PROVIDER"] = "deterministic"
 
 from app.core.config import settings
 from app.core.database import Base, get_db

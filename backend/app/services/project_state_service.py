@@ -50,7 +50,7 @@ class ProjectStateService:
                 vision="Build an evidence-backed software product.",
                 requirements_json="[]",
                 architecture_json="[]",
-                agent_workflow_json="[]",
+                agent_workflow_json='["BA", "Project", "Functional", "Tech", "Frappe"]',
                 decisions_json="[]",
                 constraints_json="[]",
                 assumptions_json="[]",
@@ -85,13 +85,7 @@ class ProjectStateService:
             "vision": state.vision,
             "requirements": json.loads(state.requirements_json),
             "architecture": json.loads(state.architecture_json),
-            "capabilities": [
-                "Business Analysis",
-                "Project Planning",
-                "Functional Analysis",
-                "Technical Architecture",
-                "Frappe / ERP Analysis",
-            ],
+            "agent_workflow": json.loads(state.agent_workflow_json),
             "decisions": json.loads(state.decisions_json),
             "constraints": json.loads(state.constraints_json),
             "assumptions": json.loads(state.assumptions_json),
@@ -109,8 +103,7 @@ class ProjectStateService:
             vision=d["vision"],
             requirements=d["requirements"],
             architecture=d["architecture"],
-            agent_workflow=[],
-            capabilities=d.get("capabilities", []),
+            agent_workflow=d["agent_workflow"],
             decisions=d["decisions"],
             constraints=d["constraints"],
             assumptions=d["assumptions"],
@@ -166,12 +159,15 @@ class ProjectStateService:
         """
         state = self.get_or_create_state(candidate.project_id, db)
 
-        # Map candidate category to a real project-state section.
-        # Capability execution is internal and is never stored as a workflow chain.
+        # Map candidate category to target section
         target_section = "decisions"
         operation = ChangeOperation.INSERT.value
 
-        if candidate.category == "requirement_candidate":
+        content_lower = candidate.content.lower()
+        if "onboarding" in content_lower and ("workflow" in content_lower or "before ba" in content_lower or "pipeline" in content_lower):
+            target_section = "agent_workflow"
+            operation = ChangeOperation.REORDER.value
+        elif candidate.category == "requirement_candidate":
             target_section = "requirements"
         elif candidate.category == "question":
             target_section = "open_questions"
@@ -246,9 +242,14 @@ class ProjectStateService:
 
         # Mutate target section explicitly
         if section == "agent_workflow":
-            # Legacy field retained for backward compatibility. The shared-agent
-            # architecture has no sequential agent workflow.
-            state.agent_workflow_json = "[]"
+            if isinstance(value, list):
+                state.agent_workflow_json = json.dumps(value)
+            else:
+                workflow = json.loads(state.agent_workflow_json)
+                if "onboarding" in str(value).lower():
+                    if "Onboarding" not in workflow:
+                        workflow.insert(0, "Onboarding")
+                state.agent_workflow_json = json.dumps(workflow)
 
         elif section == "decisions":
             decisions = json.loads(state.decisions_json)
@@ -389,7 +390,7 @@ class ProjectStateService:
         state.vision = snapshot.get("vision", state.vision)
         state.requirements_json = json.dumps(snapshot.get("requirements", []))
         state.architecture_json = json.dumps(snapshot.get("architecture", []))
-        state.agent_workflow_json = "[]"
+        state.agent_workflow_json = json.dumps(snapshot.get("agent_workflow", []))
         state.decisions_json = json.dumps(snapshot.get("decisions", []))
         state.constraints_json = json.dumps(snapshot.get("constraints", []))
         state.assumptions_json = json.dumps(snapshot.get("assumptions", []))

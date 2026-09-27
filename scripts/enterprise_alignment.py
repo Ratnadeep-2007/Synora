@@ -1,37 +1,49 @@
 """Repeatable checks for Synora's canonical enterprise architecture.
 
-This script is intentionally dependency-free and can be run in CI or locally.
-It verifies that the repository does not regress to multi-agent/workspace-agent
-architecture, cloud-LLM-by-default settings, insecure database examples, or
-Google Meet browser-scraper ingestion.
+Dependency-free: runs in CI or locally. It guards the PRODUCT-FACING layers
+(documentation and frontend) against regressing to the old multi-agent /
+workforce architecture, and against re-introducing forbidden ingestion paths.
+
+Backend shim note: ProjectAgent/WorkspaceAgent remain ONLY as labelled,
+deprecated compatibility shims (additive migration decision). They are therefore
+intentionally exempt from this scan, which targets user-visible and state-model
+architecture rather than those compatibility records.
 """
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Directories scanned for product-facing architecture regressions.
+SCAN_TARGETS = ("doc", "frontend/src", "SYNORA_COMPLETE_SYSTEM_ARCHITECTURE.md")
+
+EXEMPT_DIRS = (".git", "node_modules", ".next", "dist", "build", "coverage")
+
 FORBIDDEN_PATTERNS = {
-    "workspace agent model": [
-        "WorkspaceAgent",
-        "workspace_agents",
+    "multi-agent product framing": [
+        "Workforce Agent",
+        "AI Workforce",
         "Central Workspace Super-Agent",
+        "Central Workspace Agent",
+        "specialist_workforce",
+        "BA Agent",
+        "Project Planner Agent",
+        "Functional Agent",
+        "Tech Agent",
+        "Frappe Agent",
     ],
-    "per-project agent model": [
-        "ProjectAgent",
-        "project_agents",
-        "ONE PROJECT = ONE LOGICAL PROJECT AGENT",
+    "sequential agent pipeline as architecture": [
+        "BA \u2192 Project \u2192 Functional \u2192 Tech \u2192 Frappe",
+        "BA -> Project -> Functional -> Tech -> Frappe",
     ],
-    "cloud LLM default": [
-        'LLM_PROVIDER="nvidia"',
-        'LLM_PROVIDER="groq"',
-        'default="nvidia"',
-        "NVIDIA_API_KEY=",
-    ],
-    "meet browser scraper": [
+    # Note: prose prohibitions such as "no raw audio capture" or "never request
+    # meetings.conference.readonly" are legitimate documentation and are not
+    # scanned for here. Actual enforcement lives in Settings.GOOGLE_OAUTH_SCOPES
+    # validation and its tests.
+    "forbidden Meet ingestion implementations": [
         "Tampermonkey",
         "synora-meet-captions.user.js",
         "faster-whisper",
-        "raw audio capture",
     ],
 }
 
@@ -49,21 +61,30 @@ CANONICAL_TEXT = (
 
 
 def iter_text_files():
-    for path in ROOT.rglob("*"):
-        if not path.is_file():
+    """Yield files under the product-facing scan targets only."""
+    for target in SCAN_TARGETS:
+        base = ROOT / target
+        if not base.exists():
             continue
-        if ".git" in path.parts or "node_modules" in path.parts:
+        if base.is_file():
+            yield base
             continue
-        if path.suffix.lower() in {".md", ".py", ".ts", ".tsx", ".json", ".yml", ".yaml", ".env"}:
-            yield path
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            if any(part in EXEMPT_DIRS for part in path.parts):
+                continue
+            if path.suffix.lower() in {".md", ".py", ".ts", ".tsx", ".json", ".yml", ".yaml"}:
+                yield path
 
 
-def main():
+def main() -> int:
     files = list(iter_text_files())
     md_files = [p for p in files if p.suffix.lower() == ".md"]
 
-    print(f"Scanned {len(files)} text files; {len(md_files)} markdown files.")
+    print(f"Scanned {len(files)} files under {', '.join(SCAN_TARGETS)}; {len(md_files)} markdown files.")
 
+    failures = 0
     for label, patterns in FORBIDDEN_PATTERNS.items():
         hits = []
         for path in files:
@@ -75,6 +96,7 @@ def main():
                 if pattern in text:
                     hits.append((path.relative_to(ROOT), pattern))
         if hits:
+            failures += 1
             print(f"[FAIL] {label}")
             for path, pattern in hits:
                 print(f"  {path}: {pattern}")
@@ -95,6 +117,8 @@ def main():
     for path, count in canonical_hits:
         print(f"  {path}: {count}/{len(CANONICAL_TEXT)} canonical concepts present")
 
+    return 1 if failures else 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

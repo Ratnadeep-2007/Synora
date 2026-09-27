@@ -20,7 +20,7 @@ from app.models.agent_workforce import AgentExecution
 from app.models.project import Project, ProjectAgent, Workspace
 from app.models.conflict import Conflict
 from app.models.evidence import Evidence
-from app.models.excalidraw import ExcalidrawArtifact, ExcalidrawProposal, ExcalidrawRevision
+from app.models.excalidraw import ExcalidrawArtifact, ExcalidrawProposal
 from app.models.intelligence import AgentRun, CandidateKnowledge
 from app.models.project_state import (
     ApprovalStatus,
@@ -42,11 +42,8 @@ from app.schemas.excalidraw import (
     ExcalidrawIngestRequest,
     ExcalidrawProposalRead,
     ExcalidrawProposalReviewRequest,
-    ExcalidrawRevisionRead,
-    ExcalidrawRevisionDiffRead,
 )
 from app.schemas.intelligence import AgentRunRead, CandidateKnowledgeRead
-from app.services.context_resolver import ContextResolverService, UNKNOWN_CONTEXT_ID
 from app.schemas.project_state import (
     ProjectStateRead,
     ProjectStateVersionRead,
@@ -80,6 +77,7 @@ from app.services.excalidraw_service import ExcalidrawError, ExcalidrawService
 from app.services.pipeline_coordinator import PipelineCoordinator, PipelineExecutionResult
 from app.services.project_agent_service import ProjectAgentException, ProjectAgentService
 from app.services.project_state_service import ConcurrencyError, ProjectStateService, StateTransitionError
+from app.services.visual_revision_service import VisualRevisionError, VisualRevisionService
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +150,12 @@ async def list_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    projects = db.query(Project).filter(Project.workspace_id == workspace_id).order_by(Project.created_at.desc()).all()
+    projects = (
+        db.query(Project)
+        .filter(Project.workspace_id == workspace_id, Project.is_system.is_(False))
+        .order_by(Project.created_at.desc())
+        .all()
+    )
     results = []
     for p in projects:
         agent = db.query(ProjectAgent).filter(ProjectAgent.project_id == p.id).first()
@@ -821,38 +824,6 @@ async def get_meeting_intelligence(
 # Pipeline Trigger Endpoint
 # ==============================================================================
 
-
-@router.post(
-    "/{project_id}/meetings/{meeting_id}/process-with-context",
-    summary="Process Meeting with Automatic Project Context",
-)
-async def process_meeting_with_context(
-    project_id: str,
-    meeting_id: str,
-    pipeline_coordinator: PipelineCoordinator = Depends(get_pipeline_coordinator),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Resolve transcript context per conversation window, then extract knowledge into the resolved projects."""
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    workspace_id = "ws_default"
-    try:
-        from app.services.meeting_intelligence import MeetingIntelligenceService
-        result = MeetingIntelligenceService().process_meeting_with_auto_context(
-            meeting_id=meeting_id,
-            db=db,
-            workspace_id=workspace_id,
-            tenant_id=tenant_id,
-        )
-        return result
-    except Exception as exc:
-        logger.error("Context-aware meeting processing failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Context-aware meeting processing failed: {exc}",
-        )
-
-
 @router.post(
     "/{project_id}/meetings/{meeting_id}/process",
     response_model=PipelineExecutionResult,
@@ -991,66 +962,6 @@ async def get_coordinator_briefing(
 # Excalidraw Visual Architecture Endpoints
 # ==============================================================================
 
-
-
-@router.post(
-    "/context/resolve",
-    summary="Resolve Source Context Before Project Routing",
-)
-async def resolve_source_context(
-    body: Dict[str, Any],
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Shared context resolver for Meet, WhatsApp, and Excalidraw tooling."""
-    resolver = ContextResolverService()
-    result = resolver.resolve(
-        text=str(body.get("text") or ""),
-        db=db,
-        workspace_id=str(body.get("workspace_id") or "ws_default"),
-        metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else {},
-    )
-    project, result = resolver.route_or_quarantine(
-        result=result,
-        db=db,
-        workspace_id=str(body.get("workspace_id") or "ws_default"),
-        tenant_id=getattr(current_user, "tenant_id", "default_tenant"),
-    )
-    return {
-        "project": {"id": project.id, "name": project.name},
-        "context_status": result.status,
-        "confidence": result.confidence,
-        "reasoning": result.reasoning,
-        "candidates": [candidate.model_dump() for candidate in result.candidates],
-    }
-
-
-@router.get(
-    "/{project_id}/context",
-    summary="Resolve current project context model",
-)
-async def get_project_context(
-    project_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Return project context summary used by the shared context resolver."""
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
-    resolver = ContextResolverService()
-    records = resolver._project_context_records(
-        db,
-        workspace_id=project.workspace_id,
-        exclude_unknown=False,
-    )
-    return {
-        "project_id": project.id,
-        "project_name": project.name,
-        "context": next((r for r in records if r["project_id"] == project.id), None),
-    }
-
-
 @router.get(
     "/{project_id}/excalidraw",
     response_model=ExcalidrawArtifactRead,
@@ -1180,126 +1091,6 @@ async def ai_generate_excalidraw_diagram(
 
 
 
-
-@router.get(
-    "/{project_id}/excalidraw/revisions",
-    response_model=List[ExcalidrawRevisionRead],
-    summary="List Excalidraw Visual Revisions",
-)
-async def list_excalidraw_revisions(
-    project_id: str,
-    limit: int = Query(50, ge=1, le=100),
-    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    revisions = excal_service.list_revisions(project_id, db, tenant_id=tenant_id, limit=limit)
-    return [excal_service.format_revision_read(r) for r in revisions]
-
-
-@router.get(
-    "/{project_id}/excalidraw/revisions/{revision_number}",
-    response_model=ExcalidrawRevisionRead,
-    summary="Get Excalidraw Visual Revision",
-)
-async def get_excalidraw_revision(
-    project_id: str,
-    revision_number: int,
-    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    revision = excal_service.get_revision(project_id, revision_number, db, tenant_id=tenant_id)
-    return excal_service.format_revision_read(revision)
-
-
-@router.get(
-    "/{project_id}/excalidraw/compare",
-    response_model=ExcalidrawRevisionDiffRead,
-    summary="Compare Excalidraw Visual Revisions",
-)
-async def compare_excalidraw_revisions(
-    project_id: str,
-    from_revision: int = Query(..., ge=1),
-    to_revision: int = Query(..., ge=1),
-    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    return excal_service.compare_revisions(
-        project_id,
-        from_revision,
-        to_revision,
-        db,
-        tenant_id=tenant_id,
-    )
-
-
-@router.get(
-    "/{project_id}/unknown-context",
-    summary="List Unknown Context Items",
-)
-async def list_unknown_context(
-    project_id: str,
-    limit: int = Query(50, ge=1, le=100),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    if project_id != UNKNOWN_CONTEXT_ID:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown Context is a system-managed project.")
-    records = (
-        db.query(Evidence)
-        .filter(Evidence.project_id == UNKNOWN_CONTEXT_ID)
-        .order_by(Evidence.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-    results = []
-    for ev in records:
-        metadata = json.loads(ev.metadata_json or "{}")
-        results.append({
-            "evidence_id": ev.id,
-            "source": ev.source,
-            "content": ev.content,
-            "created_at": ev.created_at.isoformat() if ev.created_at else None,
-            "context_status": metadata.get("context_status", "unknown"),
-            "context_candidates": metadata.get("context_candidates", []),
-            "reasoning": metadata.get("reasoning"),
-        })
-    return results
-
-
-@router.post(
-    "/{project_id}/unknown-context/{evidence_id}/assign",
-    summary="Assign Unknown Context Evidence to Project",
-)
-async def assign_unknown_context_evidence(
-    project_id: str,
-    evidence_id: str,
-    target_project_id: str = Query(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    if project_id != UNKNOWN_CONTEXT_ID:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown Context is a system-managed project.")
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    service = ContextResolverService()
-    try:
-        return service.move_unknown_evidence_to_project(
-            evidence_id=evidence_id,
-            target_project_id=target_project_id,
-            db=db,
-            actor_id=current_user.id,
-            tenant_id=tenant_id,
-            trigger_reprocessing=True,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-
 @router.post(
     "/{project_id}/excalidraw/proposals/{proposal_id}/review",
     summary="Review Excalidraw Proposal (Human Gate)",
@@ -1333,6 +1124,122 @@ async def review_excalidraw_proposal(
     except Exception as exc:
         logger.error(f"Proposal review failed: {exc}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Review failed: {str(exc)}")
+
+
+# ==============================================================================
+# Visual Revision History (immutable living workspace revisions)
+# ==============================================================================
+
+@router.get(
+    "/{project_id}/visual/revisions",
+    summary="List visual revisions",
+    description="Lists immutable visual revisions for a project's living workspace, newest first.",
+)
+async def list_visual_revisions(
+    project_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = VisualRevisionService()
+    revisions = service.list_revisions(project_id, db, limit=limit)
+    return {
+        "project_id": project_id,
+        "current_revision_number": (
+            service.current_revision(project_id, db).revision_number
+            if service.current_revision(project_id, db)
+            else None
+        ),
+        "revisions": [service.format_revision_read(r) for r in revisions],
+    }
+
+
+@router.get(
+    "/{project_id}/visual/current",
+    summary="Get the current visual revision",
+    description="Returns the latest revision, which IS the current visual workspace.",
+)
+async def get_current_visual_revision(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = VisualRevisionService()
+    revision = service.current_revision(project_id, db)
+    if not revision:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No visual revisions exist for project '{project_id}'.",
+        )
+    return service.format_revision_read(revision)
+
+
+@router.get(
+    "/{project_id}/visual/revisions/compare",
+    summary="Compare two visual revisions",
+    description="Structured diff: added, removed, changed elements and relationship changes.",
+)
+async def compare_visual_revisions(
+    project_id: str,
+    from_revision: int = Query(..., description="Baseline revision number"),
+    to_revision: int = Query(..., description="Target revision number"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return VisualRevisionService().compare(project_id, from_revision, to_revision, db)
+    except VisualRevisionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get(
+    "/{project_id}/visual/revisions/{revision_number}",
+    summary="Get a visual revision",
+    description="Returns one immutable historical revision, including its elements and provenance.",
+)
+async def get_visual_revision(
+    project_id: str,
+    revision_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        revision = VisualRevisionService().get_revision(project_id, revision_number, db)
+    except VisualRevisionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return VisualRevisionService().format_revision_read(revision)
+
+
+@router.post(
+    "/{project_id}/visual/revisions/{revision_number}/restore",
+    summary="Restore a previous visual revision",
+    description="Restores a historical revision by creating a NEW revision. Never destructive.",
+)
+async def restore_visual_revision(
+    project_id: str,
+    revision_number: int,
+    reason: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    service = VisualRevisionService()
+    try:
+        revision = service.restore_as_new_revision(
+            project_id=project_id,
+            target_revision_number=revision_number,
+            db=db,
+            actor_id=current_user.id,
+            tenant_id=tenant_id,
+            reason=reason,
+        )
+    except VisualRevisionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {
+        "success": True,
+        "message": f"Created revision {revision.revision_number} from revision {revision_number}.",
+        "revision": service.format_revision_read(revision),
+    }
 
 
 # ==============================================================================

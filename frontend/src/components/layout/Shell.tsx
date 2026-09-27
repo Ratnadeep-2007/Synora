@@ -9,6 +9,7 @@ import {
   FileText,
   CheckCircle2,
   AlertTriangle,
+  Inbox,
   Bot,
   Plug,
   Settings as SettingsIcon,
@@ -32,6 +33,7 @@ export type NavTab =
   | "evidence"
   | "decisions"
   | "conflicts"
+  | "unknown-context"
   | "agent"
   | "sources"
   | "settings";
@@ -53,6 +55,7 @@ interface ShellProps {
   onTabChange: (tab: NavTab) => void;
   projectVersion: number;
   openConflictsCount: number;
+  unknownContextCount?: number;
   projects?: Project[];
   currentProjectId?: string;
   activeProject?: ActiveProject | null;
@@ -77,6 +80,7 @@ const NAV_ITEMS: Array<{
   { id: "evidence", label: "Evidence", icon: FileText },
   { id: "decisions", label: "Decisions", icon: CheckCircle2 },
   { id: "conflicts", label: "Conflicts", icon: AlertTriangle },
+  { id: "unknown-context", label: "Unknown Context", icon: Inbox },
   { id: "agent", label: "Agent", icon: Bot },
   { id: "sources", label: "Sources", icon: Plug },
   { id: "settings", label: "Settings", icon: SettingsIcon },
@@ -87,6 +91,7 @@ export function Shell({
   onTabChange,
   projectVersion,
   openConflictsCount,
+  unknownContextCount = 0,
   projects = [],
   currentProjectId,
   activeProject,
@@ -179,7 +184,7 @@ export function Shell({
           </div>
           <div>
             <span className="font-semibold text-base tracking-tight text-text-main">
-              Synesis
+              Synora
             </span>
             <span className="ml-1 text-[10px] text-text-muted font-mono uppercase tracking-widest block -mt-0.5">
               Intel OS
@@ -214,6 +219,11 @@ export function Shell({
                   {item.id === "conflicts" && openConflictsCount > 0 && (
                     <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-warning/10 text-warning border-warning/20">
                       {openConflictsCount}
+                    </span>
+                  )}
+                  {item.id === "unknown-context" && unknownContextCount > 0 && (
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-warning/10 text-warning border-warning/20">
+                      {unknownContextCount}
                     </span>
                   )}
                   {item.id === "state" && (

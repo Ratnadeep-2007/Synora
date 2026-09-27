@@ -23,7 +23,6 @@ from app.models.agent_workforce import (
 )
 from app.models.task_job import TaskJob, JobStatus
 from app.models.audit_log import AuditLog
-from app.models.context import ContextResolution
 from app.models.project import (
     Workspace,
     Project,
@@ -31,7 +30,6 @@ from app.models.project import (
 )
 from app.models.excalidraw import (
     ExcalidrawArtifact,
-    ExcalidrawRevision,
     ExcalidrawProposal,
     ExcalidrawProposalStatus,
 )
@@ -41,6 +39,18 @@ from app.models.meet_subscription import (
     MeetSubscriptionTarget,
 )
 from app.models.meet_event_record import MeetEventRecord
+from app.models.context_resolution import (
+    ContextResolution,
+    ContextDecision,
+    UnknownContextItem,
+    UnknownItemStatus,
+    PossibleProjectMatch,
+)
+from app.models.visual_revision import (
+    VisualWorkspace,
+    VisualRevision,
+    VisualOperation,
+)
 
 __all__ = [
     "Workspace",
@@ -72,13 +82,20 @@ __all__ = [
     "TaskJob",
     "JobStatus",
     "AuditLog",
-    "ContextResolution",
     "ExcalidrawArtifact",
-    "ExcalidrawRevision",
     "ExcalidrawProposal",
     "ExcalidrawProposalStatus",
     "MeetSubscription",
     "MeetSubscriptionStatus",
     "MeetSubscriptionTarget",
     "MeetEventRecord",
+    "ContextResolution",
+    "ContextDecision",
+    "UnknownContextItem",
+    "UnknownItemStatus",
+    "PossibleProjectMatch",
+    "VisualWorkspace",
+    "VisualRevision",
+    "VisualOperation",
 ]
+

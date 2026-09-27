@@ -104,6 +104,16 @@ def get_project_agent_service(
     )
 
 
+def get_context_intelligence_service() -> "ContextIntelligenceService":
+    from app.services.context_intelligence import ContextIntelligenceService
+    return ContextIntelligenceService()
+
+
+def get_unknown_context_service() -> "UnknownContextService":
+    from app.services.unknown_context_service import UnknownContextService
+    return UnknownContextService()
+
+
 def get_workspace_events_service() -> "WorkspaceEventsService":
     from app.services.workspace_events_service import WorkspaceEventsService
     return WorkspaceEventsService()

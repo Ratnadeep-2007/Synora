@@ -10,6 +10,7 @@ from app.models.meet_event_record import MeetEventRecord
 from app.models.meeting import Meeting, Transcript, TranscriptEntry
 from app.models.source_connection import ConnectionStatus, SourceConnection
 from app.services.encryption_service import EncryptionService
+from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.services.meet_event_worker import MeetEventWorker, UNASSIGNED_PROJECT_ID
 
 
@@ -135,8 +136,8 @@ def test_worker_rerun_is_idempotent(
     assert db_session.query(TranscriptEntry).count() == before_entries
 
 
-# 11. Project mapping: explicit subscription project wins; else unassigned ----
-def test_unmapped_transcript_goes_to_unassigned(
+# 11. Project mapping: unresolved transcripts are preserved in Unknown Context
+def test_unmapped_transcript_goes_to_unknown_context(
     db_session: Session, test_user, encryption_service: EncryptionService
 ):
     _connection(db_session, encryption_service, test_user.id)
@@ -155,7 +156,9 @@ def test_unmapped_transcript_goes_to_unassigned(
         entries_mock.return_value = []
         result = worker.process_event_record(event_record_id=rec.id, db=db_session)
 
-    assert result["project_id"] == UNASSIGNED_PROJECT_ID
+    # No trusted mapping and no resolvable content -> Unknown Context, never a guess.
+    assert result["project_id"] == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+    assert result["trusted_project_id"] is None
 
 
 def test_assign_unmapped_meeting(client: TestClient, test_user, db_session: Session):

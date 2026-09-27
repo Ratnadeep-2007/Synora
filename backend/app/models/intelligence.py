@@ -1,15 +1,27 @@
 from datetime import datetime, timezone
 from enum import Enum
 import uuid
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, String, Text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+)
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
+
 
 def generate_candidate_id() -> str:
     return f"cand_{uuid.uuid4().hex[:12]}"
 
+
 def generate_agent_run_id() -> str:
     return f"run_{uuid.uuid4().hex[:12]}"
+
 
 class ClassificationEnum(str, Enum):
     IDEA = "Idea"
@@ -23,32 +35,39 @@ class ClassificationEnum(str, Enum):
     ASSUMPTION = "Assumption"
     ACTION_ITEM = "ActionItem"
 
+
 class CandidateKnowledge(Base):
     """
     Extracted candidate knowledge produced by LLM intelligence.
-    Candidate knowledge is not authoritative Project State.
+    IMPORTANT: Candidate knowledge is NOT authoritative Project State.
+    Every candidate item MUST reference one or more Evidence records.
     """
     __tablename__ = "candidate_knowledge"
 
     id = Column(String(64), primary_key=True, default=generate_candidate_id)
     project_id = Column(String(64), index=True, nullable=False)
     meeting_id = Column(String(64), ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True, index=True)
-    category = Column(String(64), nullable=False)
+    category = Column(String(64), nullable=False)  # proposal, decision_candidate, requirement_candidate, etc.
     classification = Column(String(64), default=ClassificationEnum.PROPOSAL.value, nullable=False)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
     confidence = Column(Float, default=0.85, nullable=False)
-    evidence_ids_json = Column(Text, nullable=False)
-    status = Column(String(32), default="candidate", nullable=False)
+    evidence_ids_json = Column(Text, nullable=False)  # JSON array of evidence IDs (provenance required)
+    status = Column(String(32), default="candidate", nullable=False)  # candidate, proposed, approved, rejected, superseded
     agent_run_id = Column(String(64), ForeignKey("agent_runs.agent_run_id", ondelete="SET NULL"), nullable=True, index=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
-    context_status = Column(String(32), default="resolved", nullable=False)
-    context_confidence = Column(Float, default=1.0, nullable=False)
-    context_model = Column(String(128), nullable=True)
-    context_candidates_json = Column(Text, default="[]", nullable=False)
-
+    # Relationships
     meeting = relationship("Meeting")
     agent_run = relationship("AgentRun", back_populates="candidates")
 
@@ -60,26 +79,31 @@ class CandidateKnowledge(Base):
     def __repr__(self) -> str:
         return f"<CandidateKnowledge id={self.id} category={self.category} status={self.status}>"
 
+
 class AgentRun(Base):
     """
-    AI processing record with model and context provenance.
+    AI Processing Record capturing intelligence run metadata, model provenance,
+    prompt version, latency, and status for observability.
     """
     __tablename__ = "agent_runs"
 
     agent_run_id = Column(String(64), primary_key=True, default=generate_agent_run_id)
     project_id = Column(String(64), index=True, nullable=False)
     meeting_id = Column(String(64), ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True, index=True)
-    input_evidence_ids_json = Column(Text, nullable=False)
+    input_evidence_ids_json = Column(Text, nullable=False)  # JSON list of evidence IDs supplied as input
     model = Column(String(64), default="synesis-intelligence-v1", nullable=False)
     prompt_version = Column(String(32), default="v1.0", nullable=False)
-    output_reference_json = Column(Text, nullable=True)
-    status = Column(String(32), default="completed", nullable=False)
+    output_reference_json = Column(Text, nullable=True)  # JSON summary of extracted items
+    status = Column(String(32), default="completed", nullable=False)  # running, completed, failed
     latency_ms = Column(Float, default=0.0, nullable=False)
     error = Column(Text, nullable=True)
-    source = Column(String(64), nullable=True)
-    context_status = Column(String(32), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
+    # Relationships
     meeting = relationship("Meeting")
     candidates = relationship("CandidateKnowledge", back_populates="agent_run")
 
