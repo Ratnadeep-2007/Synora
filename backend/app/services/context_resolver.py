@@ -200,6 +200,10 @@ class ContextResolverService:
         lower = text.lower()
         combined = f"{lower} {self._metadata_text(metadata).lower()}".strip()
         text_tokens = set(self._tokenize(combined))
+        explicit_tag = None
+        tag_match = re.search(r"\[([^\]]+)\]|#([a-zA-Z0-9_-]+)|@([a-zA-Z0-9_-]+)", text)
+        if tag_match:
+            explicit_tag = (tag_match.group(1) or tag_match.group(2) or tag_match.group(3) or "").lower()
 
         stop_words = {
             "the", "and", "for", "with", "from", "that", "this", "will", "into",
@@ -220,6 +224,10 @@ class ContextResolverService:
                 score += 110.0
                 reasons.append("explicit project ID")
 
+            if explicit_tag and (explicit_tag == project["project_id"].lower() or explicit_tag in name):
+                score += 100.0
+                reasons.append("explicit project tag")
+
             if name and name in lower:
                 score += 48.0
                 reasons.append("full project name")
@@ -239,7 +247,7 @@ class ContextResolverService:
             overlap = len(name_tokens & text_tokens)
             desc_overlap = len(desc_tokens & text_tokens)
             if desc_overlap:
-                score += min(10.0, desc_overlap * 2.5)
+                score += min(16.0, desc_overlap * 2.5)
                 if len(reasons) < 6:
                     reasons.append(f"description_overlap:{desc_overlap}")
 
