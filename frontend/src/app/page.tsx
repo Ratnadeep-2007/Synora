@@ -185,9 +185,9 @@ export default function Home() {
     setDrawerOpen(true);
   };
 
-  const handleCreateProject = async (name: string, description?: string) => {
+  const handleCreateProject = async (name: string, description?: string, sources?: string[]) => {
     try {
-      const newProj = await api.createProject(name, description);
+      const newProj = await api.createProject(name, description, undefined, sources);
       setCurrentProjectId(newProj.id);
       setCurrentTab("excalidraw");
       await refreshAll();

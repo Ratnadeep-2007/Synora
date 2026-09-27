@@ -47,10 +47,20 @@ class ProjectAgentMemoryUpdate(BaseModel):
     memory_updates: Optional[Dict[str, Any]] = None
 
 
+#: Canonical source/provider IDs selectable during project creation.
+#: google_meet and excalidraw are platform sources; whatsapp maps to the
+#: existing WhatsApp/Baileys connector (provider_name "whatsapp").
+PROJECT_SOURCE_IDS = ("google_meet", "whatsapp", "excalidraw")
+
+
 class ProjectCreateRequest(BaseModel):
     name: str = Field(..., description="Project name")
     description: Optional[str] = Field("", description="Project description")
     workspace_id: Optional[str] = Field("ws_default", description="Workspace ID")
+    sources: Optional[List[str]] = Field(
+        default=None,
+        description="Source/provider IDs to enable for the project (google_meet, whatsapp, excalidraw)",
+    )
 
 
 class ProjectRead(BaseModel):

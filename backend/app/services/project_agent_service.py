@@ -44,9 +44,14 @@ class ProjectAgentService:
         "frappe_agent",
     ]
 
+    #: Canonical source/provider IDs selectable during project creation.
+    #: google_meet and excalidraw are platform sources; whatsapp maps to the
+    #: existing WhatsApp/Baileys connector (provider_name "whatsapp").
+    PROJECT_SOURCE_IDS = ("google_meet", "whatsapp", "excalidraw")
+
     DEFAULT_TOOLS = [
         "google_meet",
-        "slack",
+        "whatsapp",
         "excalidraw",
     ]
 
@@ -87,6 +92,7 @@ class ProjectAgentService:
         workspace_id: str = "ws_default",
         name: Optional[str] = None,
         description: str = "",
+        sources: Optional[List[str]] = None,
     ) -> Project:
         """Retrieves or creates a Project, guaranteeing Project Agent provisioning."""
         self.get_or_create_workspace(workspace_id, db)
@@ -106,8 +112,34 @@ class ProjectAgentService:
             logger.info(f"Created Project '{project_id}' in workspace '{workspace_id}'")
 
         # Auto-provision Project Agent if missing
-        self.get_or_provision_project_agent(project_id=project_id, db=db, workspace_id=workspace_id)
+        self.get_or_provision_project_agent(
+            project_id=project_id, db=db, workspace_id=workspace_id, sources=sources
+        )
         return proj
+
+    @classmethod
+    def validate_sources(cls, sources: Optional[List[str]]) -> List[str]:
+        """Validate and normalize project source selections.
+
+        Unknown provider IDs raise ValueError; duplicates are removed while
+        preserving order. ``whatsapp`` is the canonical ID for the existing
+        WhatsApp/Baileys connector — no new connector is created here.
+        """
+        if sources is None:
+            return list(cls.DEFAULT_TOOLS)
+        validated: List[str] = []
+        for source in sources:
+            normalized = (source or "").strip().lower()
+            if not normalized:
+                continue
+            if normalized not in cls.PROJECT_SOURCE_IDS:
+                raise ValueError(
+                    f"Unknown project source '{source}'. "
+                    f"Allowed sources: {', '.join(cls.PROJECT_SOURCE_IDS)}."
+                )
+            if normalized not in validated:
+                validated.append(normalized)
+        return validated
 
     def get_or_provision_project_agent(
         self,
@@ -115,12 +147,21 @@ class ProjectAgentService:
         db: Session,
         workspace_id: str = "ws_default",
         name: Optional[str] = None,
+        sources: Optional[List[str]] = None,
     ) -> ProjectAgent:
         """
         Auto-provisions the dedicated logical Project Agent for a project.
         Enforces 1:1 relationship between Project and Project Agent.
         """
         agent = db.query(ProjectAgent).filter(ProjectAgent.project_id == project_id).first()
+        connected_tools = self.validate_sources(sources) if sources is not None else list(self.DEFAULT_TOOLS)
+        if agent:
+            # Keep the stored tool set aligned with the validated selection so
+            # the creation selector is honored even on re-provisioning paths.
+            agent.connected_tools_json = json.dumps(connected_tools)
+            db.commit()
+            db.refresh(agent)
+            return agent
         if not agent:
             # 1. Ensure Project record exists
             proj = db.query(Project).filter(Project.id == project_id).first()
@@ -163,7 +204,7 @@ class ProjectAgentService:
                     "context_notes": f"Initialized isolated context boundary for project '{project_id}'.",
                 }),
                 capabilities_json=json.dumps(self.DEFAULT_CAPABILITIES),
-                connected_tools_json=json.dumps(self.DEFAULT_TOOLS),
+                connected_tools_json=json.dumps(connected_tools),
                 excalidraw_workspace_id=excal_artifact.id,
                 status="active",
             )

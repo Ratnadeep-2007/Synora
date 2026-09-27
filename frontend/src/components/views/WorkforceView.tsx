@@ -264,7 +264,7 @@ export function WorkforceView({
               <Database className="w-3.5 h-3.5 text-primary" />
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
-              {(workspaceAgent?.connected_tools || ["google_meet", "slack", "excalidraw"]).map((tool) => (
+              {(workspaceAgent?.connected_tools || ["google_meet", "whatsapp", "excalidraw"]).map((tool) => (
                 <span key={tool} className="px-1.5 py-0.5 rounded bg-surface-soft border border-border text-[10px] font-mono text-text-main">
                   {tool.replace("_", " ")}
                 </span>

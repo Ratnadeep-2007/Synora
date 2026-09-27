@@ -35,8 +35,9 @@ def test_auto_provisioning_on_project_creation(db_session: Session, client: Test
     # Verify connected tools and capabilities
     tools = json.loads(project_agent.connected_tools_json)
     assert "google_meet" in tools
-    assert "slack" in tools
+    assert "whatsapp" in tools
     assert "excalidraw" in tools
+    assert "slack" not in tools
 
     capabilities = json.loads(project_agent.capabilities_json)
     assert "ba_agent" in capabilities
@@ -204,6 +205,38 @@ def test_project_and_agent_api_endpoints(db_session: Session, client: TestClient
     proj_data = create_resp.json()
     project_id = proj_data["id"]
     assert proj_data["project_agent_id"] is not None
+
+    # 1b. Create project with explicit source selection incl. canonical whatsapp ID
+    create_sources_resp = client.post(
+        "/projects",
+        json={
+            "name": "WhatsApp Source Project",
+            "description": "Project with whatsapp source",
+            "sources": ["google_meet", "whatsapp", "excalidraw"],
+        },
+        headers={"X-User-ID": "usr_test_lead"},
+    )
+    assert create_sources_resp.status_code == 200, create_sources_resp.text
+    sources_project_id = create_sources_resp.json()["id"]
+    sources_agent_resp = client.get(
+        f"/projects/{sources_project_id}/agent",
+        headers={"X-User-ID": "usr_test_lead"},
+    )
+    assert sources_agent_resp.status_code == 200
+    assert sources_agent_resp.json()["connected_tools"] == [
+        "google_meet",
+        "whatsapp",
+        "excalidraw",
+    ]
+
+    # 1c. Unknown source IDs are rejected deterministically
+    bad_sources_resp = client.post(
+        "/projects",
+        json={"name": "Bad Source Project", "sources": ["slack"]},
+        headers={"X-User-ID": "usr_test_lead"},
+    )
+    assert bad_sources_resp.status_code == 400
+    assert bad_sources_resp.json()["detail"]["error"] == "invalid_source"
 
     # 2. Get Project Agent
     agent_resp = client.get(

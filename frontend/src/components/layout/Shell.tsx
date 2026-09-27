@@ -63,7 +63,7 @@ interface ShellProps {
   workspaceAgent?: WorkspaceAgent | null;
   notifications?: NotificationItem[];
   onSelectProject?: (projectId: string) => void;
-  onCreateProject?: (name: string, description?: string) => Promise<void>;
+  onCreateProject?: (name: string, description?: string, sources?: string[]) => Promise<void>;
   onOpenCommandPalette?: () => void;
   children: React.ReactNode;
 }
@@ -110,7 +110,7 @@ export function Shell({
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectUse, setNewProjectUse] = useState("");
   const [newProjectContext, setNewProjectContext] = useState("");
-  const [newProjectTools, setNewProjectTools] = useState<string[]>(["google_meet", "excalidraw"]);
+  const [newProjectTools, setNewProjectTools] = useState<string[]>(["google_meet", "whatsapp", "excalidraw"]);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -157,7 +157,7 @@ export function Shell({
     setNewProjectName("");
     setNewProjectUse("");
     setNewProjectContext("");
-    setNewProjectTools(["google_meet", "excalidraw"]);
+    setNewProjectTools(["google_meet", "whatsapp", "excalidraw"]);
     setIsNewProjectModalOpen(false);
   };
 
@@ -167,7 +167,7 @@ export function Shell({
     try {
       setIsCreatingProject(true);
       const description = [newProjectUse, newProjectContext].filter(Boolean).join("\n\n");
-      await onCreateProject(newProjectName.trim(), description || undefined);
+      await onCreateProject(newProjectName.trim(), description || undefined, newProjectTools);
       resetCreateModal();
       setIsProjectDropdownOpen(false);
     } catch (err: any) {
@@ -620,7 +620,7 @@ export function Shell({
                   <span className="text-xs font-semibold text-text-main block">4. Connect tools</span>
                   {[
                     { id: "google_meet", label: "Google Meet — meeting transcripts" },
-                    { id: "slack", label: "Slack — channel messages" },
+                    { id: "whatsapp", label: "WhatsApp — group chat via Baileys" },
                     { id: "excalidraw", label: "Excalidraw — living visual workspace" },
                   ].map((tool) => (
                     <label

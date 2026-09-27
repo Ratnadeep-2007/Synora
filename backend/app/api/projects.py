@@ -100,6 +100,22 @@ async def create_project(
     current_user: User = Depends(get_current_user),
 ):
     import uuid
+    from app.schemas.project_agent import PROJECT_SOURCE_IDS
+    from app.services.project_agent_service import ProjectAgentService as _PAS
+
+    sources = body.sources
+    if sources is not None:
+        try:
+            sources = _PAS.validate_sources(sources)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "invalid_source",
+                    "message": str(exc),
+                    "allowed_sources": list(PROJECT_SOURCE_IDS),
+                },
+            )
     project_id = f"proj_{uuid.uuid4().hex[:8]}"
     proj = project_agent_service.get_or_create_project(
         project_id=project_id,
@@ -107,6 +123,7 @@ async def create_project(
         workspace_id=body.workspace_id or "ws_default",
         name=body.name,
         description=body.description or "",
+        sources=sources,
     )
     agent = project_agent_service.get_or_provision_project_agent(project_id, db)
     return ProjectRead(
