@@ -821,6 +821,38 @@ async def get_meeting_intelligence(
 # Pipeline Trigger Endpoint
 # ==============================================================================
 
+
+@router.post(
+    "/{project_id}/meetings/{meeting_id}/process-with-context",
+    summary="Process Meeting with Automatic Project Context",
+)
+async def process_meeting_with_context(
+    project_id: str,
+    meeting_id: str,
+    pipeline_coordinator: PipelineCoordinator = Depends(get_pipeline_coordinator),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Resolve transcript context per conversation window, then extract knowledge into the resolved projects."""
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    workspace_id = "ws_default"
+    try:
+        from app.services.meeting_intelligence import MeetingIntelligenceService
+        result = MeetingIntelligenceService().process_meeting_with_auto_context(
+            meeting_id=meeting_id,
+            db=db,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+        )
+        return result
+    except Exception as exc:
+        logger.error("Context-aware meeting processing failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Context-aware meeting processing failed: {exc}",
+        )
+
+
 @router.post(
     "/{project_id}/meetings/{meeting_id}/process",
     response_model=PipelineExecutionResult,
