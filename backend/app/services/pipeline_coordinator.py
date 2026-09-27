@@ -12,6 +12,7 @@ from app.services.ingestion_service import IngestionService
 from app.services.meeting_intelligence import MeetingIntelligenceService
 from app.services.project_state_service import ProjectStateService
 from app.services.conflict_service import ConflictService
+from app.services.context_resolver import ContextResolverService
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +52,13 @@ class PipelineCoordinator:
         intelligence_service: Optional[MeetingIntelligenceService] = None,
         state_service: Optional[ProjectStateService] = None,
         conflict_service: Optional[ConflictService] = None,
+        context_resolver: Optional[ContextResolverService] = None,
     ):
         self.ingestion_service = ingestion_service or IngestionService()
         self.intelligence_service = intelligence_service or MeetingIntelligenceService()
         self.state_service = state_service or ProjectStateService()
         self.conflict_service = conflict_service or ConflictService(self.state_service)
+        self.context_resolver = context_resolver or ContextResolverService()
 
     def process_meeting(
         self,
@@ -207,6 +210,102 @@ class PipelineCoordinator:
                 for conf in conflicts_created
             ],
         )
+
+
+    def resolve_source_context(
+        self,
+        text: str,
+        db: Session,
+        workspace_id: str = "ws_default",
+        source_name: str = "generic",
+        metadata: Optional[Dict[str, Any]] = None,
+        tenant_id: str = "default_tenant",
+    ) -> Dict[str, Any]:
+        """Resolve a source fragment with the shared context engine and route unknowns to quarantine."""
+        result = self.context_resolver.resolve(
+            text=text,
+            db=db,
+            workspace_id=workspace_id,
+            metadata={**(metadata or {}), "source_name": source_name},
+        )
+        project, result = self.context_resolver.route_or_quarantine(
+            result=result,
+            db=db,
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+        )
+        return {
+            "project": project,
+            "status": result.status,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+            "candidates": [candidate.model_dump() for candidate in result.candidates],
+        }
+
+    def process_source_events_with_context(
+        self,
+        events: List[Any],
+        db: Session,
+        actor_id: str = "pipeline_worker",
+        workspace_id: str = "ws_default",
+        tenant_id: str = "default_tenant",
+        source_name: str = "generic_source",
+    ) -> Dict[str, Any]:
+        """
+        Routes normalized source events by shared context before knowledge processing.
+        Events that cannot be assigned safely are persisted to Unknown Context.
+        """
+        if not events:
+            return {"success": True, "routed": [], "groups": {}}
+
+        routed: List[Dict[str, Any]] = []
+        grouped: Dict[str, List[Any]] = {}
+        for event in events:
+            payload = getattr(event, "payload", None) or {}
+            text = payload.get("text") or payload.get("content") or str(payload)
+            metadata = {
+                "meeting_title": payload.get("meeting_title"),
+                "group_name": payload.get("group_name"),
+                "participants": payload.get("participants"),
+            }
+            resolution = self.resolve_source_context(
+                text=text,
+                db=db,
+                workspace_id=workspace_id,
+                source_name=source_name,
+                metadata=metadata,
+                tenant_id=tenant_id,
+            )
+            project = resolution["project"]
+            event.project_id = project.id
+            event_payload = dict(payload) if isinstance(payload, dict) else {"content": str(payload)}
+            event_payload["context_status"] = resolution["status"]
+            event_payload["context_candidates"] = resolution["candidates"]
+            event_payload["context_confidence"] = resolution["confidence"]
+            event_payload["context_reasoning"] = resolution["reasoning"]
+            event.payload = event_payload
+            grouped.setdefault(project.id, []).append(event)
+            routed.append({
+                "event_id": getattr(event, "event_id", None),
+                "project_id": project.id,
+                "project_name": project.name,
+                "context_status": resolution["status"],
+                "confidence": resolution["confidence"],
+                "candidates": resolution["candidates"],
+            })
+
+        for project_id, project_events in grouped.items():
+            # Reuse the deterministic common pipeline once routing is established.
+            self.process_source_events(
+                events=project_events,
+                project_id=project_id,
+                db=db,
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                source_name=source_name,
+            )
+
+        return {"success": True, "routed": routed, "groups": {k: len(v) for k, v in grouped.items()}}
 
     def process_source_events(
         self,
