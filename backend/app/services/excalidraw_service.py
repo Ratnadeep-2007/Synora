@@ -736,7 +736,7 @@ class ExcalidrawService:
     def _build_ai_architecture_scene(
         self,
         project_name: str,
-        workflow_nodes: List[str],
+        workflow_nodes: Optional[List[str]] = None,
         decisions: Optional[List[Dict[str, Any]]] = None,
         requirements: Optional[List[Dict[str, Any]]] = None,
         focus_prompt: Optional[str] = None,
@@ -764,7 +764,7 @@ class ExcalidrawService:
             "roundness": {"type": 3},
             "roughness": 1,
         })
-        title_text = f"📐 {project_name.upper()} SYSTEM ARCHITECTURE • LIVING EXCALIDRAW BLUEPRINT"
+        title_text = f"📐 {project_name.upper()} • LIVING EXCALIDRAW BLUEPRINT"
         raw_elements.append({
             "id": "banner_ai_title",
             "type": "text",
