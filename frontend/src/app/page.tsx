@@ -50,6 +50,7 @@ export default function Home() {
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
   const [excalRevisions, setExcalRevisions] = useState<any[]>([]);
+  const [unknownContextItems, setUnknownContextItems] = useState<any[]>([]);
 
   // Event-driven pipeline state
   const [meetSubscriptions, setMeetSubscriptions] = useState<any[]>([]);
@@ -87,6 +88,7 @@ export default function Home() {
         setExcalArtifact(null);
         setExcalProposals([]);
         setExcalRevisions([]);
+        setUnknownContextItems([]);
         return;
       }
       if (!currentProjectId) setCurrentProjectId(activeId);
@@ -106,6 +108,7 @@ export default function Home() {
         eventsData,
         unassignedData,
         revisionsData,
+        unknownContextData,
       ] = await Promise.allSettled([
         api.getProjectState(activeId),
         api.getProjectHistory(activeId),
@@ -121,6 +124,9 @@ export default function Home() {
         api.listMeetEvents(undefined, 20).catch(() => []),
         api.listUnassignedMeetings(20).catch(() => []),
         api.getExcalidrawRevisions(activeId).catch(() => []),
+        activeId === "system_unknown_context"
+          ? api.listUnknownContext(activeId).catch(() => [])
+          : Promise.resolve([]),
       ]);
 
       if (stateData.status === "fulfilled") setState(stateData.value);
@@ -137,6 +143,7 @@ export default function Home() {
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
       if (unassignedData.status === "fulfilled") setUnassignedMeetings(unassignedData.value);
       if (revisionsData.status === "fulfilled") setExcalRevisions(revisionsData.value);
+      if (unknownContextData.status === "fulfilled") setUnknownContextItems(unknownContextData.value);
     } catch (err) {
       console.error("Failed to load project context:", err);
     }
@@ -279,22 +286,9 @@ export default function Home() {
 
 
 
-  const handleLoadExcalRevision = async (revision: any) => {
-    try {
-      const snapshot = revision?.snapshot;
-      if (!snapshot?.elements) return;
-      setExcalArtifact((prev) => prev ? {
-        ...prev,
-        version: revision.revision_number,
-        elements: snapshot.elements,
-        app_state: snapshot.app_state || prev.app_state,
-        extracted_nodes: snapshot.extracted_nodes || prev.extracted_nodes,
-        updated_at: revision.created_at || prev.updated_at,
-      } : prev);
-      setCurrentTab("excalidraw");
-    } catch (err) {
-      console.error("Failed to load visual revision:", err);
-    }
+  const handleLoadExcalRevision = async (_revision: any) => {
+    // Historical previews must never replace the live latest canvas.
+    setCurrentTab("excalidraw");
   };
 
   const handleCompareExcalRevisions = async (fromRevision: number, toRevision: number) => {
