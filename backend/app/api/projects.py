@@ -992,6 +992,39 @@ async def get_coordinator_briefing(
 # ==============================================================================
 
 
+
+@router.post(
+    "/context/resolve",
+    summary="Resolve Source Context Before Project Routing",
+)
+async def resolve_source_context(
+    body: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Shared context resolver for Meet, WhatsApp, and Excalidraw tooling."""
+    resolver = ContextResolverService()
+    result = resolver.resolve(
+        text=str(body.get("text") or ""),
+        db=db,
+        workspace_id=str(body.get("workspace_id") or "ws_default"),
+        metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else {},
+    )
+    project, result = resolver.route_or_quarantine(
+        result=result,
+        db=db,
+        workspace_id=str(body.get("workspace_id") or "ws_default"),
+        tenant_id=getattr(current_user, "tenant_id", "default_tenant"),
+    )
+    return {
+        "project": {"id": project.id, "name": project.name},
+        "context_status": result.status,
+        "confidence": result.confidence,
+        "reasoning": result.reasoning,
+        "candidates": [candidate.model_dump() for candidate in result.candidates],
+    }
+
+
 @router.get(
     "/{project_id}/context",
     summary="Resolve current project context model",
