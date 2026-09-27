@@ -353,10 +353,15 @@ class MeetingIntelligenceService:
         db: Session,
         meeting_id: Optional[str] = None,
         source_name: str = "generic",
+        context_status: str = "resolved",
+        context_confidence: float = 1.0,
+        context_model: Optional[str] = None,
     ) -> List[CandidateKnowledge]:
         """
         Provider-agnostic intelligence extraction directly on Evidence records.
-        Processes evidence from Google Meet, Slack, or any source identically.
+        Context routing is completed independently; this method only interprets
+        the supplied evidence. This allows Meet and WhatsApp to use the same
+        intelligence path and permits parallel context/knowledge processing.
         """
         if not evidence_records:
             logger.warning(f"No evidence provided for project '{project_id}'. Intelligence extraction skipped.")
@@ -367,27 +372,31 @@ class MeetingIntelligenceService:
 
         prompt = self._build_evidence_prompt(
             evidence_records,
-            f"Extract all candidate proposals, decisions, requirements, questions, and action items with evidence IDs from {source_name} source.",
+            f"Extract all candidate proposals, decisions, requirements, questions, and action items with evidence IDs from {source_name} source. Preserve uncertainty and do not invent facts.",
         )
         batch_result = self.llm_client.generate_structured(prompt, ExtractionBatchResult)
         latency_ms = (time.time() - t0) * 1000.0
 
+        run_model = batch_result.model or self.llm_client.__class__.__name__
+        run_prompt = batch_result.prompt_version or "unknown"
         agent_run = AgentRun(
             project_id=project_id,
             meeting_id=meeting_id,
             input_evidence_ids_json=json.dumps(input_evidence_ids),
-            model="synesis-intelligence-v1",
-            prompt_version="v1.0",
+            model=run_model,
+            prompt_version=run_prompt,
             output_reference_json=json.dumps([{"title": item.title, "category": item.category} for item in batch_result.items]),
             status="completed",
             latency_ms=latency_ms,
+            source=source_name,
+            context_status=context_status,
         )
         db.add(agent_run)
         db.flush()
 
         persisted_candidates: List[CandidateKnowledge] = []
         for item in batch_result.items:
-            if not item.evidence_ids or len(item.evidence_ids) == 0:
+            if not item.evidence_ids:
                 continue
 
             valid_evidence_ids = [ev_id for ev_id in item.evidence_ids if ev_id in input_evidence_ids]
@@ -418,6 +427,9 @@ class MeetingIntelligenceService:
                 evidence_ids_json=json.dumps(valid_evidence_ids),
                 status="candidate",
                 agent_run_id=agent_run.agent_run_id,
+                context_status=context_status,
+                context_confidence=context_confidence,
+                context_model=context_model,
             )
             db.add(candidate)
             persisted_candidates.append(candidate)
@@ -428,7 +440,6 @@ class MeetingIntelligenceService:
 
         logger.info(
             f"Evidence intelligence completed for project '{project_id}' ({source_name}): "
-            f"{len(persisted_candidates)} candidates extracted in {latency_ms:.1f}ms."
+            f"{len(persisted_candidates)} candidates extracted in {latency_ms:.1f}ms. "
+            f"context={context_status} confidence={context_confidence:.2f}"
         )
-        return persisted_candidates
-
