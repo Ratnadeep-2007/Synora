@@ -9,10 +9,13 @@
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  Browsers,
   proto,
   WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
+import pino from "pino";
 import qrcode from "qrcode-terminal";
 import path from "path";
 import fs from "fs";
@@ -76,11 +79,25 @@ export async function connectToWhatsApp(): Promise<WASocket> {
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  let waVersion: [number, number, number] | undefined = undefined;
+
+  try {
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    waVersion = version;
+    console.log(`[Synora Bridge] WhatsApp Web protocol: v${version.join(".")} (isLatest: ${isLatest})`);
+  } catch (err: any) {
+    console.warn("[Synora Bridge] Could not fetch remote WhatsApp Web version, using default:", err.message);
+  }
 
   const sock = makeWASocket({
+    version: waVersion,
     auth: state,
+    logger: pino({ level: "error" }),
+    browser: Browsers.ubuntu("Chrome"),
     printQRInTerminal: false,
     syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
+    defaultQueryTimeoutMs: undefined,
   });
 
   sock.ev.on("connection.update", (update) => {
@@ -94,16 +111,26 @@ export async function connectToWhatsApp(): Promise<WASocket> {
     }
 
     if (connection === "close") {
-      const shouldReconnect =
-        (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log(
-        "[Synora Bridge] Connection closed due to",
-        lastDisconnect?.error,
-        ", reconnecting:",
-        shouldReconnect
+        `[Synora Bridge] Connection closed (code: ${statusCode}, reason: ${lastDisconnect?.error?.message || lastDisconnect?.error || "unknown"}), reconnecting: ${shouldReconnect}`
       );
+
+      // If logged out or unauthenticated, clean up stale credentials directory
+      if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 405) {
+        console.log("[Synora Bridge] Authentication rejected or logged out. Resetting local auth keys...");
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        } catch (e) {
+          console.error("Failed to clean auth dir:", e);
+        }
+      }
+
       if (shouldReconnect) {
-        connectToWhatsApp();
+        setTimeout(() => {
+          connectToWhatsApp();
+        }, 3000);
       }
     } else if (connection === "open") {
       console.log("✅ [Synora Bridge] Connected successfully to WhatsApp via Baileys WebSocket!");
