@@ -33,14 +33,6 @@ export function ProjectStateView({
   onRollback,
   onOpenEvidence,
 }: ProjectStateViewProps) {
-  const capabilities = state?.capabilities || [
-    "Business Analysis",
-    "Project Planning",
-    "Functional Analysis",
-    "Technical Architecture",
-    "Frappe / ERP Analysis",
-  ];
-
   // Generate React Flow nodes & edges for "How this state is formed"
   const { nodes, edges } = useMemo(() => {
     const versionNum = state?.current_version || 1;
