@@ -49,6 +49,7 @@ export default function Home() {
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
+  const [excalRevisions, setExcalRevisions] = useState<any[]>([]);
 
   // Event-driven pipeline state
   const [meetSubscriptions, setMeetSubscriptions] = useState<any[]>([]);
@@ -85,6 +86,7 @@ export default function Home() {
         setAgents([]);
         setExcalArtifact(null);
         setExcalProposals([]);
+        setExcalRevisions([]);
         return;
       }
       if (!currentProjectId) setCurrentProjectId(activeId);
@@ -103,6 +105,7 @@ export default function Home() {
         subsData,
         eventsData,
         unassignedData,
+        revisionsData,
       ] = await Promise.allSettled([
         api.getProjectState(activeId),
         api.getProjectHistory(activeId),
@@ -117,6 +120,7 @@ export default function Home() {
         api.listMeetSubscriptions().catch(() => []),
         api.listMeetEvents(undefined, 20).catch(() => []),
         api.listUnassignedMeetings(20).catch(() => []),
+        api.getExcalidrawRevisions(activeId).catch(() => []),
       ]);
 
       if (stateData.status === "fulfilled") setState(stateData.value);
@@ -132,6 +136,7 @@ export default function Home() {
       if (subsData.status === "fulfilled") setMeetSubscriptions(subsData.value);
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
       if (unassignedData.status === "fulfilled") setUnassignedMeetings(unassignedData.value);
+      if (revisionsData.status === "fulfilled") setExcalRevisions(revisionsData.value);
     } catch (err) {
       console.error("Failed to load project context:", err);
     }
@@ -272,6 +277,29 @@ export default function Home() {
     }
   };
 
+
+
+  const handleLoadExcalRevision = async (revision: any) => {
+    try {
+      const snapshot = revision?.snapshot;
+      if (!snapshot?.elements) return;
+      setExcalArtifact((prev) => prev ? {
+        ...prev,
+        version: revision.revision_number,
+        elements: snapshot.elements,
+        app_state: snapshot.app_state || prev.app_state,
+        extracted_nodes: snapshot.extracted_nodes || prev.extracted_nodes,
+        updated_at: revision.created_at || prev.updated_at,
+      } : prev);
+      setCurrentTab("excalidraw");
+    } catch (err) {
+      console.error("Failed to load visual revision:", err);
+    }
+  };
+
+  const handleCompareExcalRevisions = async (fromRevision: number, toRevision: number) => {
+    return api.compareExcalidrawRevisions(currentProjectId || "", fromRevision, toRevision);
+  };
 
   const handleReviewExcalProposal = async (proposalId: string, action: "approve" | "reject", reason?: string) => {
     const projectId = requireProject();
@@ -595,6 +623,9 @@ export default function Home() {
           onIngestScene={handleIngestScene}
           onSyncLivingWorkspace={handleSyncLivingWorkspace}
           onAiGenerateVisuals={handleAiGenerateVisuals}
+          revisions={excalRevisions}
+          onLoadRevision={handleLoadExcalRevision}
+          onCompareRevisions={handleCompareExcalRevisions}
         />
       )}
 
