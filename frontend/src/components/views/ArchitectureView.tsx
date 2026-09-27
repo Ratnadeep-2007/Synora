@@ -241,16 +241,16 @@ export function ArchitectureView({
               onClick={async () => {
                 try {
                   setIsAiGenerating(true);
-                  await onAiGenerateVisuals(undefined, true);
+                  await onAiGenerateVisuals(undefined, false);
                 } finally {
                   setIsAiGenerating(false);
                 }
               }}
               disabled={isAiGenerating}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-violet-600 via-indigo-600 to-primary hover:opacity-90 rounded-lg flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
-              title="Ask AI to design and render the complete multi-tier visual architecture on Excalidraw"
+              className="px-3.5 py-1.5 text-xs font-medium text-primary bg-primary-soft hover:bg-primary/20 border border-primary/20 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
+              title="Create a reviewable visual architecture proposal"
             >
-              <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? "animate-spin text-amber-300" : "text-amber-300"}`} />
+              <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? "animate-spin" : ""}`} />
               <span>{isAiGenerating ? "Designing Scene..." : "Generate visual proposal"}</span>
             </button>
           )}
