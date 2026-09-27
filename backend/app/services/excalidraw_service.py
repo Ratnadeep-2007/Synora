@@ -1033,8 +1033,8 @@ class ExcalidrawService:
             "y": t3_y,
             "width": t3_w,
             "height": t3_h,
-            "backgroundColor": "#fffbeb",
-            "strokeColor": "#f59e0b",
+            "backgroundColor": "#ffffff",
+            "strokeColor": "#d1d5db",
             "fillStyle": "solid",
             "strokeWidth": 2,
             "strokeStyle": "dashed",
@@ -1051,7 +1051,7 @@ class ExcalidrawService:
             "text": "TIER 3: PERSISTENCE, EVIDENCE PROVENANCE & AUDIT TRAIL",
             "fontSize": 12,
             "fontFamily": 1,
-            "strokeColor": "#b45309",
+            "strokeColor": "#173f35",
             "textAlign": "left",
         })
 
@@ -1091,7 +1091,7 @@ class ExcalidrawService:
                 "text": ctext,
                 "fontSize": 12,
                 "fontFamily": 1,
-                "strokeColor": "#0f172a",
+                "strokeColor": "#173f35",
                 "textAlign": "left",
                 "containerId": cid,
             })
@@ -1522,7 +1522,7 @@ class ExcalidrawService:
             "y": t4_y,
             "width": 960,
             "height": 55,
-            "backgroundColor": "#fffbeb",
+            "backgroundColor": "#ffffff",
             "strokeColor": "#d97706",
             "fillStyle": "solid",
             "strokeWidth": 2,
