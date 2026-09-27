@@ -176,6 +176,8 @@ class WhatsAppIntelligenceService:
                 "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
                 "reasoning": reasoning,
                 "conversation_context": recent_context,
+                "context_model": context_result.model,
+                "context_source": context_result.source,
             },
         )
 
