@@ -38,13 +38,11 @@ class MeetingIntelligenceService:
 
     def _build_evidence_prompt(self, evidence_list: List[Evidence], task_instruction: str) -> str:
         """Formats evidence snippets into a structured prompt with explicit evidence IDs."""
-        lines = [task_instruction, "
---- EVIDENCE LIST ---"]
+        lines = [task_instruction, "\n--- EVIDENCE LIST ---"]
         for ev in evidence_list:
             speaker = ev.actor_id or "Unknown"
             lines.append(f"[EVIDENCE: {ev.id}] {speaker}: {ev.content}")
-        return "
-".join(lines)
+        return "\n".join(lines)
 
 
     def resolve_and_partition_meeting_evidence(
@@ -77,8 +75,7 @@ class MeetingIntelligenceService:
 
         for start in range(0, len(entries), max(1, window_size)):
             window = entries[start:start + max(1, window_size)]
-            window_text = "
-".join(
+            window_text = "\n".join(
                 f"{entry.participant.display_name if entry.participant else 'Unknown Speaker'}: {entry.text}"
                 for entry in window if entry.text and entry.text.strip()
             )
