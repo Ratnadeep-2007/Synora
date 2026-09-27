@@ -181,6 +181,8 @@ class WhatsAppIntelligenceService:
 
         # 5. Consequential visual changes are proposal-first.
         if context_result.status != "resolved":
+            # Unknown/ambiguous context is intentionally quarantined. Its Evidence remains
+            # available in the Unknown Context project for later human assignment.
             whiteboard_result = {
                 "updated": False,
                 "artifact_version": None,
@@ -238,8 +240,12 @@ class WhatsAppIntelligenceService:
             "nodes_added": whiteboard_result.get("nodes_added", []),
             "proposal_id": whiteboard_result.get("proposal_id"),
             "message": (
-                f"Successfully identified project '{matched_project.name}' ({confidence*100:.0f}% confidence) "
-                f"and updated Excalidraw whiteboard v{whiteboard_result.get('artifact_version')}."
+                f"Context {context_result.status} for '{matched_project.name}' ({confidence*100:.0f}% confidence). "
+                + (
+                    f"Created a reviewable Excalidraw proposal (artifact v{whiteboard_result.get('artifact_version')})."
+                    if context_result.status == "resolved"
+                    else "Stored in Unknown Context for human review."
+                )
             ),
         }
 
