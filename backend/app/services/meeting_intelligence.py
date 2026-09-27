@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import time
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import SynesisException
@@ -10,6 +10,7 @@ from app.models.evidence import Evidence
 from app.models.intelligence import AgentRun, CandidateKnowledge
 from app.schemas.intelligence import CandidateItemDTO, ExtractionBatchResult
 from app.services.llm import DeterministicRuleLLMClient, LLMClient, get_default_llm_client
+from app.services.context_resolver import ContextResolverService, UNKNOWN_CONTEXT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,9 @@ class MeetingIntelligenceService:
     CandidateKnowledge does NOT modify authoritative Project State.
     """
 
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(self, llm_client: Optional[LLMClient] = None, context_resolver: Optional[ContextResolverService] = None):
         self.llm_client = llm_client or get_default_llm_client()
+        self.context_resolver = context_resolver or ContextResolverService(llm_client=self.llm_client)
 
     def _build_evidence_prompt(self, evidence_list: List[Evidence], task_instruction: str) -> str:
         """Formats evidence snippets into a structured prompt with explicit evidence IDs."""
@@ -41,6 +43,86 @@ class MeetingIntelligenceService:
             speaker = ev.actor_id or "Unknown"
             lines.append(f"[EVIDENCE: {ev.id}] {speaker}: {ev.content}")
         return "\n".join(lines)
+
+
+    def resolve_and_partition_meeting_evidence(
+        self,
+        meeting_id: str,
+        db: Session,
+        workspace_id: str = "ws_default",
+        tenant_id: str = "default_tenant",
+        window_size: int = 6,
+    ) -> Dict[str, Any]:
+        """
+        Resolve transcript context per small conversation window.
+        This lets one Meet contain multiple project contexts without forcing
+        the entire meeting into one project.
+        """
+        from app.models.meeting import Meeting, TranscriptEntry
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            raise IntelligenceError(f"Meeting '{meeting_id}' not found.")
+
+        entries = (
+            db.query(TranscriptEntry)
+            .join(TranscriptEntry.transcript)
+            .filter(TranscriptEntry.transcript.has(meeting_id=meeting_id))
+            .order_by(TranscriptEntry.start_time.asc())
+            .all()
+        )
+        partitions: Dict[str, List[Any]] = {}
+        resolutions: List[Dict[str, Any]] = []
+
+        for start in range(0, len(entries), max(1, window_size)):
+            window = entries[start:start + max(1, window_size)]
+            window_text = "\n".join(
+                f"{entry.participant.display_name if entry.participant else 'Unknown Speaker'}: {entry.text}"
+                for entry in window if entry.text and entry.text.strip()
+            )
+            if not window_text.strip():
+                continue
+
+            result = self.context_resolver.resolve(
+                text=window_text,
+                db=db,
+                workspace_id=workspace_id,
+                metadata={
+                    "meeting_title": meeting.title,
+                    "meeting_id": meeting_id,
+                    "source_name": "google_meet",
+                    "participants": [
+                        entry.participant.display_name
+                        for entry in window
+                        if entry.participant and entry.participant.display_name
+                    ],
+                },
+            )
+            project, result = self.context_resolver.route_or_quarantine(
+                result=result,
+                db=db,
+                workspace_id=workspace_id,
+                tenant_id=tenant_id,
+            )
+
+            for entry in window:
+                partitions.setdefault(project.id, []).append(entry)
+
+            resolutions.append({
+                "entry_ids": [entry.id for entry in window],
+                "project_id": project.id,
+                "project_name": project.name,
+                "context_status": result.status,
+                "confidence": result.confidence,
+                "reasoning": result.reasoning,
+                "candidates": [candidate.model_dump() for candidate in result.candidates],
+            })
+
+        return {
+            "meeting_id": meeting_id,
+            "partitions": partitions,
+            "resolutions": resolutions,
+            "unknown_context_project_id": UNKNOWN_CONTEXT_ID,
+        }
 
     def extract_proposals(self, evidence_list: List[Evidence]) -> List[CandidateItemDTO]:
         """Narrow intelligence capability: Extract proposals and ideas."""
