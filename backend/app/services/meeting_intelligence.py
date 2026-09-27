@@ -104,16 +104,19 @@ class MeetingIntelligenceService:
                 tenant_id=tenant_id,
             )
 
+            window_id = f"{meeting_id}:window:{start // max(1, window_size) + 1}"
             for entry in window:
                 partitions.setdefault(project.id, []).append(entry)
 
             resolutions.append({
+                "context_window_id": window_id,
                 "entry_ids": [entry.id for entry in window],
                 "project_id": project.id,
                 "project_name": project.name,
                 "context_status": result.status,
                 "confidence": result.confidence,
                 "reasoning": result.reasoning,
+                "model": result.model,
                 "candidates": [candidate.model_dump() for candidate in result.candidates],
             })
 
@@ -225,12 +228,23 @@ class MeetingIntelligenceService:
                     )
                 )
 
+            resolution = next(
+                (
+                    r for r in partitioned["resolutions"]
+                    if r["project_id"] == project_id
+                    and any(entry.id in r["entry_ids"] for entry in entries)
+                ),
+                {},
+            )
             candidates = self.analyze_evidence_records(
                 evidence_records=evidence_records,
                 project_id=project_id,
                 db=db,
                 meeting_id=meeting_id,
                 source_name="google_meet",
+                context_status=resolution.get("context_status", "unknown"),
+                context_confidence=float(resolution.get("confidence", 0.0)),
+                context_model=resolution.get("model"),
             )
             project_results.append({
                 "project_id": project_id,
