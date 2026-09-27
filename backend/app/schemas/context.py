@@ -7,6 +7,7 @@ class ContextCandidate(BaseModel):
     project_name: str
     confidence: float = Field(..., ge=0.0, le=1.0)
     reasons: List[str] = Field(default_factory=list)
+    basis: List[str] = Field(default_factory=list)
 
 
 class ContextResolutionResult(BaseModel):
@@ -17,3 +18,5 @@ class ContextResolutionResult(BaseModel):
     candidates: List[ContextCandidate] = Field(default_factory=list)
     model: str = "deterministic-context-v1"
     prompt_version: str = "context-v1"
+    source: str = "unknown"
+    context_window_id: Optional[str] = None
