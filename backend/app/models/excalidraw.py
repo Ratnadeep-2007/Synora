@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -64,6 +65,7 @@ class ExcalidrawArtifact(Base):
 
     # Relationships
     proposals = relationship("ExcalidrawProposal", back_populates="artifact", cascade="all, delete-orphan")
+    revisions = relationship("ExcalidrawRevision", back_populates="artifact", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_excalidraw_project_tenant", "tenant_id", "project_id"),
@@ -115,3 +117,30 @@ class ExcalidrawProposal(Base):
 
     def __repr__(self) -> str:
         return f"<ExcalidrawProposal id={self.id} artifact={self.artifact_id} status={self.status}>"
+\n\nclass ExcalidrawRevision(Base):
+    """Immutable visual snapshot for a project workspace revision."""
+    __tablename__ = "excalidraw_revisions"
+
+    id = Column(String(64), primary_key=True, default=lambda: f"exrev_{uuid.uuid4().hex[:12]}")
+    artifact_id = Column(String(64), ForeignKey("excalidraw_artifacts.id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id = Column(String(64), index=True, nullable=False)
+    tenant_id = Column(String(64), default="default_tenant", index=True, nullable=False)
+    revision_number = Column(Integer, nullable=False)
+    parent_revision_id = Column(String(64), nullable=True)
+    derived_from_state_version = Column(Integer, nullable=True)
+    snapshot_json = Column(Text, nullable=False)
+    change_summary_json = Column(Text, default="{}", nullable=False)
+    source_event_ids_json = Column(Text, default="[]", nullable=False)
+    proposal_id = Column(String(64), nullable=True)
+    actor_id = Column(String(255), default="system", nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    artifact = relationship("ExcalidrawArtifact", back_populates="revisions")
+
+    __table_args__ = (
+        UniqueConstraint("artifact_id", "revision_number", name="uq_excalidraw_revision"),
+        Index("ix_excalidraw_revision_project_order", "project_id", "revision_number"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ExcalidrawRevision id={self.id} artifact={self.artifact_id} v={self.revision_number}>"
