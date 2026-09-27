@@ -172,9 +172,9 @@ class Project(Base):
 class ProjectAgent(Base):
     """
     Logical Project Agent.
-    Each Project has exactly ONE dedicated Project Agent representing its
-    central intelligence coordinator. Specialist capabilities (BA, Planning,
-    Functional, Tech, Frappe) are organized as modules under this agent.
+    Legacy compatibility record. The product architecture uses one shared Synora Agent;
+    project records are context/security boundaries. Capability data may remain here for
+    compatibility with older execution records, but projects do not instantiate agents.
     """
     __tablename__ = "project_agents"
 
