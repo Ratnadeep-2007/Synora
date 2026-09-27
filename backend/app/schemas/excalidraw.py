@@ -93,3 +93,7 @@ class ExcalidrawRevisionDiffRead(BaseModel):
     removed_elements: List[Dict[str, Any]] = []
     changed_elements: List[Dict[str, Any]] = []
     unchanged_count: int = 0
+    overlay_elements: List[Dict[str, Any]] = []
+    added_count: int = 0
+    removed_count: int = 0
+    changed_count: int = 0
