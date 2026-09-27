@@ -274,7 +274,7 @@ export default function Home() {
     }
   };
 
-  const handleAiGenerateVisuals = async (focusPrompt?: string, directApply: boolean = true) => {
+  const handleAiGenerateVisuals = async (focusPrompt?: string, directApply: boolean = false) => {
     const projectId = requireProject();
     if (!projectId) return;
     try {
