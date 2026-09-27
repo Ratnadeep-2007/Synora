@@ -377,7 +377,7 @@ export function ArchitectureView({
                         className="px-2.5 py-1.5 text-xs font-medium bg-surface border border-border rounded-md hover:bg-surface/80"
                         onClick={() => setPreviewRevision(revision)}
                       >
-                        View
+                        Preview
                       </button>
                     )}
                     {onCompareRevisions && !isCurrent && (
