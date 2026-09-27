@@ -287,32 +287,15 @@ class NvidiaNimLLMClient(LLMClient):
             return self._fallback_client.generate_structured(prompt, schema)
 
 
-class OllamaLLMClient(LLMClient):
-    """Local Ollama semantic inference client; no recurring external API bill required."""
-    def __init__(self, base_url: str, model_name: str, timeout_seconds: float = 120.0):
-        self.base_url = base_url.rstrip("/")
-        self.model_name = model_name
-        self.timeout_seconds = timeout_seconds
-    def generate_structured(self, prompt: str, schema: Type[T]) -> T:
-        import httpx
-        payload = {"model": self.model_name, "messages": [
-            {"role": "system", "content": "You are Synora, an evidence-first enterprise project intelligence agent. Return only JSON matching the requested schema. Never invent evidence."},
-            {"role": "user", "content": prompt}], "stream": False, "format": "json",
-            "options": {"temperature": 0.1}}
-        try:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
-                response = client.post(f"{self.base_url}/api/chat", json=payload)
-                response.raise_for_status()
-                return schema.model_validate(json.loads(response.json()["message"]["content"]))
-        except Exception as exc:
-            logger.warning("Ollama semantic inference unavailable: %s", exc)
-            return DeterministicRuleLLMClient().generate_structured(prompt, schema)
-
 def get_default_llm_client() -> LLMClient:
-    """Return the configured semantic provider. Ollama is the default."""
+    """Return the configured semantic provider. NVIDIA NIM is the product default."""
     from app.core.config import settings
-    if settings.LLM_PROVIDER.lower() == "ollama":
-        return OllamaLLMClient(settings.OLLAMA_BASE_URL, settings.OLLAMA_MODEL)
+
     if settings.LLM_PROVIDER.lower() == "nvidia" and settings.is_nvidia_nim_configured:
-        return NvidiaNimLLMClient(api_key=settings.NVIDIA_API_KEY, model_name=settings.NVIDIA_MODEL, base_url=settings.NVIDIA_BASE_URL)
+        logger.info("Initializing NVIDIA NIM LLM client with model '%s'", settings.NVIDIA_MODEL)
+        return NvidiaNimLLMClient(
+            api_key=settings.NVIDIA_API_KEY,
+            model_name=settings.NVIDIA_MODEL,
+            base_url=settings.NVIDIA_BASE_URL,
+        )
     return DeterministicRuleLLMClient()
