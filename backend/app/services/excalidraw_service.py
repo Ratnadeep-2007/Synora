@@ -424,6 +424,8 @@ class ExcalidrawService:
             diff_preview_json=json.dumps(diff_preview),
             evidence_ids_json="[]",
         )
+        # Consequential visual changes stay proposal-first. direct_apply remains an explicit
+        # escape hatch for trusted callers only.
         if direct_apply:
             now = datetime.now(timezone.utc)
             proposal.approved_at = now
