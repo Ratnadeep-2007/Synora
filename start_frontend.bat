@@ -1,12 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
-title Synesis Frontend Next.js Dev Server (:3000)
+title Synora Frontend Next.js Dev Server (:3000)
 
 :: Always ensure working directory is frontend directory
 cd /d "%~dp0frontend"
 
 echo ==============================================================================
-echo                         SYNESIS FRONTEND SERVER                               
+echo                         SYNORA FRONTEND SERVER                               
 echo                Next.js 14 + Tailwind CSS + Flow (Port 3000)                   
 echo ==============================================================================
 echo.

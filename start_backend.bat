@@ -1,12 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
-title Synesis Backend API Server (:8000)
+title Synora Backend API Server (:8000)
 
 :: Always ensure working directory is repo root
 cd /d "%~dp0"
 
 echo ==============================================================================
-echo                         SYNESIS BACKEND SERVER                                
+echo                         SYNORA BACKEND SERVER                                
 echo                FastAPI + SQLite + Event Pipeline (Port 8000)                  
 echo ==============================================================================
 echo.

@@ -1,23 +1,25 @@
 @echo off
 setlocal enabledelayedexpansion
-title Synesis Platform Launcher (Wave B)
+title Synora Platform Launcher
 
 :: Ensure working directory is script directory
 cd /d "%~dp0"
 
-:: Handle CLI arguments if provided (e.g. start.bat backend, start.bat test)
+:: Handle CLI arguments if provided (e.g. start.bat backend, start.bat test, start.bat baileys)
 if /i "%~1"=="backend" goto opt_backend
 if /i "%~1"=="frontend" goto opt_frontend
+if /i "%~1"=="baileys" goto opt_baileys
+if /i "%~1"=="whatsapp" goto opt_baileys
 if /i "%~1"=="test" goto opt_tests
 if /i "%~1"=="tests" goto opt_tests
-if /i "%~1"=="all" goto opt_both
-if /i "%~1"=="both" goto opt_both
+if /i "%~1"=="all" goto opt_all
+if /i "%~1"=="both" goto opt_all
 
 :menu
 cls
 echo ==============================================================================
-echo                         SYNESIS PLATFORM LAUNCHER                            
-echo          Project Intelligence and AI Workforce Platform (Wave B)            
+echo                         SYNORA PLATFORM LAUNCHER                              
+echo       Project Intelligence and Living Architecture Platform (Excalidraw)      
 echo ==============================================================================
 echo.
 echo  Checking system environment:
@@ -85,47 +87,52 @@ echo.
 echo ==============================================================================
 echo  Please select an option:
 echo.
-echo    [1] Start Both Services (Backend + Frontend in separate windows) [DEFAULT]
+echo    [1] Start All Services (Backend + Frontend + WhatsApp Baileys) [DEFAULT]
 echo    [2] Start Backend API Only (:8000)
 echo    [3] Start Frontend UI Only (:3000)
-echo    [4] Run Full Test Suite (pytest - 138 tests)
-echo    [5] Refresh Health and Port Status
+echo    [4] Start WhatsApp Baileys Bridge Only
+echo    [5] Run Full Test Suite (pytest)
+echo    [6] Refresh Health and Port Status
 echo    [0] Exit
 echo ==============================================================================
 echo.
 
-choice /t 5 /d 1 /c 123450 /m "Enter choice (auto-starts [1] in 5 seconds): "
+choice /t 5 /d 1 /c 1234560 /m "Enter choice (auto-starts [1] in 5 seconds): "
 set "SEL=%errorlevel%"
 
-if "%SEL%"=="1" goto opt_both
+if "%SEL%"=="1" goto opt_all
 if "%SEL%"=="2" goto opt_backend
 if "%SEL%"=="3" goto opt_frontend
-if "%SEL%"=="4" goto opt_tests
-if "%SEL%"=="5" goto menu
-if "%SEL%"=="6" goto opt_exit
-goto opt_both
+if "%SEL%"=="4" goto opt_baileys
+if "%SEL%"=="5" goto opt_tests
+if "%SEL%"=="6" goto menu
+if "%SEL%"=="7" goto opt_exit
+goto opt_all
 
-:opt_both
+:opt_all
 echo.
 echo ==============================================================================
-echo [1/2] Launching Backend API in new window (http://localhost:8000)...
-start "Synesis Backend (API :8000)" cmd /k call "%~dp0start_backend.bat"
+echo [1/3] Launching Backend API in new window (http://localhost:8000)...
+start "Synora Backend (API :8000)" cmd /k call "%~dp0start_backend.bat"
 
-echo [2/2] Launching Frontend UI in new window (http://localhost:3000)...
-start "Synesis Frontend (UI :3000)" cmd /k call "%~dp0start_frontend.bat"
+echo [2/3] Launching Frontend UI in new window (http://localhost:3000)...
+start "Synora Frontend (UI :3000)" cmd /k call "%~dp0start_frontend.bat"
+
+echo [3/3] Launching WhatsApp Baileys Bridge in new window...
+start "Synora WhatsApp Baileys Bridge" cmd /k call "%~dp0start_baileys.bat"
 
 echo.
 echo ==============================================================================
 echo                        SERVICES LAUNCHED SUCCESSFULLY                        
 echo ==============================================================================
-echo  - Frontend Web UI:       http://localhost:3000
-echo  - Backend API and Docs:  http://localhost:8000/docs
-echo  - System Health:         http://localhost:8000/health
-echo  - Operational Metrics:   http://localhost:8000/metrics
+echo  - Frontend Web UI:          http://localhost:3000
+echo  - Backend API and Docs:     http://localhost:8000/docs
+echo  - System Health:            http://localhost:8000/health
+echo  - WhatsApp Baileys Bridge:  Running in dedicated window (QR code prompt)
 echo ==============================================================================
 echo.
-echo Dedicated terminal windows have been opened for Backend and Frontend.
-echo You can inspect logs, errors, and live requests in those windows.
+echo Dedicated terminal windows have been opened for Backend, Frontend, and Baileys.
+echo To link WhatsApp, scan the QR code in the Baileys window with your phone.
 echo To terminate a service, press CTRL+C in its dedicated window.
 echo.
 pause
@@ -143,6 +150,12 @@ echo Launching Frontend server in this console...
 call "%~dp0start_frontend.bat"
 goto menu
 
+:opt_baileys
+echo.
+echo Launching WhatsApp Baileys Bridge in this console...
+call "%~dp0start_baileys.bat"
+goto menu
+
 :opt_tests
 echo.
 echo Launching test suite in this console...
@@ -150,5 +163,5 @@ call "%~dp0test.bat"
 goto menu
 
 :opt_exit
-echo Exiting Synesis Launcher.
+echo Exiting Synora Launcher.
 exit /b 0

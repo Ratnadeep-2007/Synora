@@ -24,7 +24,7 @@ FORBIDDEN_PATTERNS = {
     "cloud LLM default": [
         'LLM_PROVIDER="nvidia"',
         'LLM_PROVIDER="groq"',
-        "default="nvidia"",
+        'default="nvidia"',
         "NVIDIA_API_KEY=",
     ],
     "meet browser scraper": [
