@@ -65,7 +65,7 @@ class CandidateKnowledge(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
-    )
+    )\n    # Context/provenance of the semantic candidate. Kept separate from the candidate's project_id for auditability.\n    context_status = Column(String(32), default="resolved", nullable=False)\n    context_confidence = Column(Float, default=1.0, nullable=False)\n    context_model = Column(String(128), nullable=True)
 
     # Relationships
     meeting = relationship("Meeting")
@@ -96,7 +96,7 @@ class AgentRun(Base):
     output_reference_json = Column(Text, nullable=True)  # JSON summary of extracted items
     status = Column(String(32), default="completed", nullable=False)  # running, completed, failed
     latency_ms = Column(Float, default=0.0, nullable=False)
-    error = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)\n    source = Column(String(64), nullable=True)\n    context_status = Column(String(32), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
