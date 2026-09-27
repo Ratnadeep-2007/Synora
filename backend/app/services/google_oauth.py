@@ -59,6 +59,67 @@ class GoogleOAuthService:
                 "GOOGLE_REDIRECT_URI is not set. Please specify the authorized redirect URI."
             )
 
+    def ensure_env_connection(
+        self, db: Session, user_id: str = "usr_default"
+    ) -> Optional[SourceConnection]:
+        """
+        Zero-touch automated connection bootstrapping from .env credentials.
+        If GOOGLE_REFRESH_TOKEN is configured in environment/.env, automatically
+        seeds an active SourceConnection record in the database without requiring
+        a manual user login in the browser UI.
+        """
+        if not getattr(self.settings, "GOOGLE_REFRESH_TOKEN", None):
+            return None
+
+        # Check if an active connection already exists
+        existing = (
+            db.query(SourceConnection)
+            .filter(
+                SourceConnection.provider == "google",
+                SourceConnection.status == ConnectionStatus.ACTIVE.value,
+            )
+            .first()
+        )
+        if existing:
+            return existing
+
+        # Ensure associated user exists
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(
+                id=user_id,
+                email="service@synora.internal",
+                name="Google Service Account",
+            )
+            db.add(user)
+            db.flush()
+
+        credentials_payload = {
+            "access_token": "pending_refresh",
+            "refresh_token": self.settings.GOOGLE_REFRESH_TOKEN,
+            "token_type": "Bearer",
+            "scope": " ".join(self.settings.GOOGLE_OAUTH_SCOPES),
+            "obtained_at": int(datetime.now(timezone.utc).timestamp()),
+        }
+        encrypted_creds = self.encryption.encrypt_dict(credentials_payload)
+
+        conn = SourceConnection(
+            user_id=user_id,
+            provider="google",
+            provider_account_id="google_env_account",
+            provider_account_email="service@synora.internal",
+            status=ConnectionStatus.ACTIVE.value,
+            encrypted_credentials=encrypted_creds,
+            scopes=" ".join(self.settings.GOOGLE_OAUTH_SCOPES),
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+        )
+        db.add(conn)
+        db.commit()
+        db.refresh(conn)
+        logger.info("Successfully bootstrapped zero-touch Google Meet connection from .env")
+        return conn
+
+
     def get_authorization_url(
         self,
         user_id: str,

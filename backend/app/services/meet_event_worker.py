@@ -265,13 +265,29 @@ class MeetEventWorker:
             .first()
         )
         if not connection:
+            # Zero-touch bootstrap from .env if configured
+            connection = self.oauth_service.ensure_env_connection(db, user_id=user_id or "usr_default")
+
+        if not connection:
+            # Fallback to any active google connection across the workspace
+            connection = (
+                db.query(SourceConnection)
+                .filter(
+                    SourceConnection.provider == "google",
+                    SourceConnection.status == ConnectionStatus.ACTIVE.value,
+                )
+                .first()
+            )
+
+        if not connection:
             metrics.increment("meet_sync_failed_total", labels={"reason": "no_connection"})
             logger.warning("meet_sync_failed: reason=no_connection user_id=%s", user_id)
             raise CredentialsExpiredError(
                 f"No active Google connection found for user '{user_id}'. "
-                "Connect via /auth/google first."
+                "Configure GOOGLE_REFRESH_TOKEN in .env or connect via /auth/google."
             )
         return connection
+
 
     def _resolve_project(
         self,

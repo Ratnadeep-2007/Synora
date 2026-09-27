@@ -13,6 +13,7 @@ import makeWASocket, {
   Browsers,
   proto,
   WASocket,
+  downloadMediaMessage,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
@@ -20,6 +21,7 @@ import qrcode from "qrcode-terminal";
 import path from "path";
 import fs from "fs";
 import http from "http";
+
 
 const BACKEND_URL = process.env.SYNORA_BACKEND_URL || "http://localhost:8000";
 const AUTH_DIR = path.join(__dirname, "../baileys_auth_info");
@@ -74,8 +76,13 @@ async function forwardMessageToSynora(payload: {
   group_jid: string;
   group_name?: string;
   text: string;
+  audio_base64?: string;
+  image_base64?: string;
+  media_type?: "audio" | "image";
+  mimetype?: string;
   timestamp?: number;
 }) {
+
   const url = `${BACKEND_URL}/connectors/whatsapp/webhook`;
   const postData = JSON.stringify(payload);
 
@@ -214,13 +221,61 @@ export async function connectToWhatsApp(): Promise<WASocket> {
       const isGroup = remoteJid.endsWith("@g.us");
 
       // Extract text content
-      const text =
+      let text =
         msg.message.conversation ||
         msg.message.extendedTextMessage?.text ||
         msg.message.imageMessage?.caption ||
         "";
 
-      if (!text.trim()) continue;
+      let audioBase64: string | undefined = undefined;
+      let imageBase64: string | undefined = undefined;
+      let mediaType: "audio" | "image" | undefined = undefined;
+
+      // Handle WhatsApp Voice Notes / Audio messages
+      if (msg.message.audioMessage) {
+        try {
+          const buffer = (await downloadMediaMessage(
+            msg,
+            "buffer",
+            {},
+            {
+              logger: pino({ level: "silent" }),
+              reuploadRequest: sock.updateMediaMessage,
+            }
+          )) as Buffer;
+          if (buffer && buffer.length > 0) {
+            audioBase64 = buffer.toString("base64");
+            mediaType = "audio";
+            console.log(`  🎙️ Downloaded audio voice note (${(buffer.length / 1024).toFixed(1)} KB)`);
+          }
+        } catch (err: any) {
+          console.warn(`  ⚠️ Failed to download voice note: ${err.message}`);
+        }
+      }
+
+      // Handle WhatsApp Whiteboard / Diagram Images
+      if (msg.message.imageMessage) {
+        try {
+          const buffer = (await downloadMediaMessage(
+            msg,
+            "buffer",
+            {},
+            {
+              logger: pino({ level: "silent" }),
+              reuploadRequest: sock.updateMediaMessage,
+            }
+          )) as Buffer;
+          if (buffer && buffer.length > 0) {
+            imageBase64 = buffer.toString("base64");
+            mediaType = "image";
+            console.log(`  🖼️ Downloaded diagram image (${(buffer.length / 1024).toFixed(1)} KB)`);
+          }
+        } catch (err: any) {
+          console.warn(`  ⚠️ Failed to download image: ${err.message}`);
+        }
+      }
+
+      if (!text.trim() && !audioBase64 && !imageBase64) continue;
 
       const senderJid = msg.key.participant || msg.participant || remoteJid;
       const senderName = msg.pushName || "WhatsApp User";
@@ -236,7 +291,8 @@ export async function connectToWhatsApp(): Promise<WASocket> {
         }
       }
 
-      console.log(`\n💬 [WhatsApp ${isGroup ? "Group: " + groupName : "DM"}] ${senderName}: ${text}`);
+      const displayContent = text.trim() || (mediaType === "audio" ? "[Voice Note]" : "[Image]");
+      console.log(`\n💬 [WhatsApp ${isGroup ? "Group: " + groupName : "DM"}] ${senderName}: ${displayContent}`);
 
       try {
         const result: any = await forwardMessageToSynora({
@@ -246,8 +302,16 @@ export async function connectToWhatsApp(): Promise<WASocket> {
           group_jid: remoteJid,
           group_name: groupName,
           text: text.trim(),
+          audio_base64: audioBase64,
+          image_base64: imageBase64,
+          media_type: mediaType,
+
+          mimetype: (msg.message.audioMessage?.mimetype || msg.message.imageMessage?.mimetype) ?? undefined,
           timestamp: typeof msg.messageTimestamp === "number" ? msg.messageTimestamp : Date.now(),
         });
+
+
+
 
         if (result && result.matched_project) {
           console.log(`  🎯 Discovered Project: ${result.matched_project.name} (${result.matched_project.id})`);

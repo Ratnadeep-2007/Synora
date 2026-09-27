@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     NVIDIA_MODEL: str = "deepseek-ai/deepseek-v4.1-flash"
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
 
+    # Groq high-speed Whisper audio & vision provider
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_WHISPER_MODEL: str = "whisper-large-v3-turbo"
+
+    # Zero-touch Google Meet connection refresh token
+    GOOGLE_REFRESH_TOKEN: str = ""
+
     # Context Intelligence routing gate thresholds.
     # A candidate must clear MIN_CONFIDENCE and beat the runner-up by
     # MIN_MARGIN to be auto-resolved; otherwise the event is ambiguous/unknown
@@ -64,8 +72,17 @@ class Settings(BaseSettings):
         return bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET)
 
     @property
+    def is_google_refresh_token_configured(self) -> bool:
+        return bool(self.GOOGLE_REFRESH_TOKEN.strip())
+
+    @property
     def is_nvidia_nim_configured(self) -> bool:
         return bool(self.NVIDIA_API_KEY.strip())
+
+    @property
+    def is_groq_configured(self) -> bool:
+        return bool(self.GROQ_API_KEY.strip())
+
 
     @field_validator("GOOGLE_OAUTH_SCOPES")
     @classmethod

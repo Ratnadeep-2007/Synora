@@ -9,6 +9,7 @@ from app.models.project import Project
 from app.services.audit_service import AuditService
 from app.services.excalidraw_service import ExcalidrawService
 from app.services.ingestion_service import IngestionService
+from app.services.multimodal_service import MultimodalService
 from app.services.project_agent_service import ProjectAgentService
 from app.services.source_intelligence_pipeline import SourceIntelligencePipeline
 
@@ -34,6 +35,7 @@ class WhatsAppIntelligenceService:
         agent_service: Optional[ProjectAgentService] = None,
         audit_service: Optional[AuditService] = None,
         pipeline: Optional["SourceIntelligencePipeline"] = None,
+        multimodal_service: Optional[MultimodalService] = None,
     ):
         self.ingestion_service = ingestion_service or IngestionService()
         self.excal_service = excal_service or ExcalidrawService()
@@ -42,6 +44,8 @@ class WhatsAppIntelligenceService:
         self.pipeline = pipeline or SourceIntelligencePipeline(
             ingestion_service=self.ingestion_service
         )
+        self.multimodal = multimodal_service or MultimodalService()
+
 
     def process_incoming_message(
         self,
@@ -56,12 +60,14 @@ class WhatsAppIntelligenceService:
         the SAME Context Intelligence and Knowledge Intelligence services as
         Google Meet. This method keeps no project-matching algorithm of its own.
         """
-        raw_text = payload.get("text") or payload.get("caption") or ""
         sender_name = payload.get("sender_name") or payload.get("pushName") or "WhatsApp User"
         sender_jid = payload.get("sender_jid") or "unknown@s.whatsapp.net"
         group_name = payload.get("group_name") or "WhatsApp Group"
         group_jid = payload.get("group_jid") or "unknown@g.us"
         message_id = payload.get("message_id") or payload.get("id") or f"wamid_{int(datetime.now().timestamp() * 1000)}"
+
+        # Pre-process multimodal content (Voice notes via Groq Whisper, Diagram images via Llama Vision)
+        raw_text, multimodal_meta = self.multimodal.process_incoming_payload(payload)
 
         if not raw_text.strip():
             return {
@@ -89,6 +95,13 @@ class WhatsAppIntelligenceService:
 
         continuity = self._conversation_continuity(group_name, raw_text, db, tenant_id)
 
+        meta_dict: Dict[str, Any] = {
+            "group_name": group_name,
+            "sender_jid": sender_jid,
+        }
+        if multimodal_meta:
+            meta_dict["multimodal"] = multimodal_meta
+
         outcome = self.pipeline.process(
             source="whatsapp",
             payload={
@@ -106,8 +119,9 @@ class WhatsAppIntelligenceService:
             event_type="group_message",
             occurred_at=datetime.now(timezone.utc),
             continuity_context=continuity,
-            metadata={"group_name": group_name, "sender_jid": sender_jid},
+            metadata=meta_dict,
         )
+
 
         if outcome.outcome == "unknown_context":
             logger.info(
