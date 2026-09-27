@@ -651,6 +651,15 @@ export default function Home() {
       {currentTab === "evidence" && (
         <EvidenceView
           evidence={allEvidence}
+          contextReviewItems={unknownContextItems}
+          onAssignContext={async (evidenceId, targetProjectId) => {
+            try {
+              await api.assignUnknownContext("system_unknown_context", evidenceId, targetProjectId);
+              await refreshAll();
+            } catch (err: any) {
+              alert(`Context assignment failed: ${err.message}`);
+            }
+          }}
           onOpenEvidenceDetail={(item) =>
             handleOpenEvidence(item.content.slice(0, 80), "Evidence", [item.id])
           }
