@@ -413,17 +413,20 @@ export function ArchitectureView({
               </div>
               <div className="grid grid-cols-3 gap-2 mt-3 text-center">
                 <div className="p-2 rounded bg-surface border border-border">
-                  <div className="text-sm font-semibold text-success">{revisionDiff.added_elements.length}</div>
+                  <div className="text-sm font-semibold text-success">{revisionDiff.added_count ?? revisionDiff.added_elements.length}</div>
                   <div className="text-[10px] text-text-muted">Added</div>
                 </div>
                 <div className="p-2 rounded bg-surface border border-border">
-                  <div className="text-sm font-semibold text-danger">{revisionDiff.removed_elements.length}</div>
+                  <div className="text-sm font-semibold text-danger">{revisionDiff.removed_count ?? revisionDiff.removed_elements.length}</div>
                   <div className="text-[10px] text-text-muted">Removed</div>
                 </div>
                 <div className="p-2 rounded bg-surface border border-border">
-                  <div className="text-sm font-semibold text-primary">{revisionDiff.changed_elements.length}</div>
+                  <div className="text-sm font-semibold text-primary">{revisionDiff.changed_count ?? revisionDiff.changed_elements.length}</div>
                   <div className="text-[10px] text-text-muted">Changed</div>
                 </div>
+              </div>
+              <div className="mt-3 p-3 rounded-lg bg-surface border border-border text-xs text-text-muted">
+                Comparison is non-destructive. The main canvas stays on the latest revision; history is shown only for comparison.
               </div>
             </div>
           )}
