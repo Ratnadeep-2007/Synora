@@ -1294,6 +1294,7 @@ async def assign_unknown_context_evidence(
             db=db,
             actor_id=current_user.id,
             tenant_id=tenant_id,
+            trigger_reprocessing=True,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
