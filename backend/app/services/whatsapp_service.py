@@ -16,6 +16,7 @@ from app.services.audit_service import AuditService
 from app.services.excalidraw_service import ExcalidrawService
 from app.services.ingestion_service import IngestionService
 from app.services.project_agent_service import ProjectAgentService
+from app.services.context_resolver import ContextResolverService, UNKNOWN_CONTEXT_ID, UNKNOWN_CONTEXT_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,13 @@ class WhatsAppIntelligenceService:
         excal_service: Optional[ExcalidrawService] = None,
         agent_service: Optional[ProjectAgentService] = None,
         audit_service: Optional[AuditService] = None,
+        context_resolver: Optional[ContextResolverService] = None,
     ):
         self.ingestion_service = ingestion_service or IngestionService()
         self.excal_service = excal_service or ExcalidrawService()
         self.agent_service = agent_service or ProjectAgentService()
         self.audit_service = audit_service or AuditService()
+        self.context_resolver = context_resolver or ContextResolverService()
 
     def process_incoming_message(
         self,
@@ -88,31 +91,26 @@ class WhatsAppIntelligenceService:
                 "message": "Message ignored: casual chit-chat detected. All project whiteboards left untouched.",
             }
 
-        # 2. Project Understanding / Context Resolution across created projects
-        matched_project, confidence, reasoning = self.identify_project_from_context(
+        # 2. Shared context resolution. Meet and WhatsApp use the same resolver.
+        context_result = self.context_resolver.resolve(
             text=raw_text,
             db=db,
+            metadata={
+                "group_name": group_name,
+                "group_jid": group_jid,
+                "source_name": "whatsapp",
+                "sender_name": sender_name,
+            },
+        )
+        matched_project, context_result = self.context_resolver.route_or_quarantine(
+            result=context_result,
+            db=db,
+            workspace_id="ws_default",
             tenant_id=tenant_id,
         )
-
-        # 3. If conversation is not about any created project in the workspace, LEAVE IT
-        if not matched_project:
-            logger.info(
-                f"WhatsApp message from '{sender_name}' in '{group_name}' did not match any created project: "
-                f"{reasoning}. Leaving Excalidraw whiteboards untouched."
-            )
-            return {
-                "ok": True,
-                "processed": False,
-                "status": "ignored",
-                "reason": reasoning,
-                "matched_project": None,
-                "confidence": confidence,
-                "excalidraw_updated": False,
-                "message": f"Message ignored: {reasoning}. All project whiteboards left untouched.",
-            }
-
         project_id = matched_project.id
+        confidence = context_result.confidence
+        reasoning = context_result.reasoning
         logger.info(
             f"WhatsApp Message from '{sender_name}' in group '{group_name}' "
             f"classified to Project '{matched_project.name}' ({project_id}) "
@@ -135,7 +133,9 @@ class WhatsAppIntelligenceService:
                 "sender_jid": sender_jid,
                 "group_name": group_name,
                 "group_jid": group_jid,
-                "matched_project_id": project_id,
+                "matched_project_id": None if project_id == UNKNOWN_CONTEXT_ID else project_id,
+                "context_status": context_result.status,
+                "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
                 "confidence": confidence,
                 "reasoning": reasoning,
             },
@@ -155,6 +155,8 @@ class WhatsAppIntelligenceService:
                 "group_jid": group_jid,
                 "sender_jid": sender_jid,
                 "confidence": confidence,
+                "context_status": context_result.status,
+                "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
                 "reasoning": reasoning,
             },
         )
@@ -177,16 +179,24 @@ class WhatsAppIntelligenceService:
             db.commit()
             db.refresh(candidate_item)
 
-        # 5. Apply Visual Changes to the Project's Excalidraw Whiteboard
-        whiteboard_result = self.apply_whiteboard_changes(
-            project=matched_project,
-            extracted=extracted,
-            evidence=evidence,
-            sender_name=sender_name,
-            group_name=group_name,
-            db=db,
-            tenant_id=tenant_id,
-        )
+        # 5. Consequential visual changes are proposal-first.
+        if context_result.status != "resolved":
+            whiteboard_result = {
+                "updated": False,
+                "artifact_version": None,
+                "nodes_added": [],
+                "proposal_id": None,
+            }
+        else:
+            whiteboard_result = self.propose_whiteboard_changes(
+                project=matched_project,
+                extracted=extracted,
+                evidence=evidence,
+                sender_name=sender_name,
+                group_name=group_name,
+                db=db,
+                tenant_id=tenant_id,
+            )
 
         # 6. Audit Logging
         self.audit_service.record_event(
@@ -199,6 +209,8 @@ class WhatsAppIntelligenceService:
             after_state={
                 "project_id": project_id,
                 "project_name": matched_project.name,
+                "context_status": context_result.status,
+                "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
                 "confidence": confidence,
                 "artifact_version": whiteboard_result.get("artifact_version"),
                 "nodes_added": whiteboard_result.get("nodes_added", []),
@@ -212,7 +224,9 @@ class WhatsAppIntelligenceService:
             "matched_project": {
                 "id": matched_project.id,
                 "name": matched_project.name,
-            },
+            } if project_id != UNKNOWN_CONTEXT_ID else {"id": UNKNOWN_CONTEXT_ID, "name": UNKNOWN_CONTEXT_NAME},
+            "context_status": context_result.status,
+            "context_candidates": [candidate.model_dump() for candidate in context_result.candidates],
             "confidence": confidence,
             "reasoning": reasoning,
             "evidence_id": evidence.id,
@@ -227,6 +241,73 @@ class WhatsAppIntelligenceService:
                 f"Successfully identified project '{matched_project.name}' ({confidence*100:.0f}% confidence) "
                 f"and updated Excalidraw whiteboard v{whiteboard_result.get('artifact_version')}."
             ),
+        }
+
+
+    def propose_whiteboard_changes(
+        self,
+        project: Project,
+        extracted: Dict[str, Any],
+        evidence: Evidence,
+        sender_name: str,
+        group_name: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+    ) -> Dict[str, Any]:
+        artifact = self.excal_service.get_or_create_artifact(
+            project_id=project.id,
+            db=db,
+            tenant_id=tenant_id,
+            name=f"{project.name} Architecture Whiteboard",
+        )
+        current_nodes = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
+        nodes_to_add = extracted.get("nodes_to_add", [])
+        new_nodes = list(current_nodes)
+        added_nodes: List[str] = []
+        for node in nodes_to_add:
+            if not any(node.lower() == existing.lower() for existing in new_nodes):
+                new_nodes.append(node)
+                added_nodes.append(node)
+
+        state = self.agent_service.state_service.get_or_create_state(project.id, db)
+        decisions = json.loads(state.decisions_json) if state.decisions_json else []
+        requirements = json.loads(state.requirements_json) if state.requirements_json else []
+        updated_elements = self.excal_service._build_living_workspace_elements(
+            node_names=new_nodes,
+            decisions=decisions,
+            requirements=requirements,
+        )
+        diff_preview = {
+            "nodes_before": current_nodes,
+            "nodes_after": new_nodes,
+            "nodes_added": added_nodes,
+            "nodes_removed": [],
+            "source": "whatsapp_group_chat",
+            "group_name": group_name,
+            "sender_name": sender_name,
+        }
+        proposal = ExcalidrawProposal(
+            artifact_id=artifact.id,
+            project_id=project.id,
+            tenant_id=tenant_id,
+            derived_from_state_version=state.current_version,
+            status=ExcalidrawProposalStatus.PENDING.value,
+            reason=(
+                f"WhatsApp context resolved for '{project.name}'. "
+                f"Proposed visual update from '{sender_name}' in '{group_name}'. Evidence: {evidence.id}"
+            ),
+            proposed_elements_json=json.dumps(updated_elements),
+            diff_preview_json=json.dumps(diff_preview),
+            evidence_ids_json=json.dumps([evidence.id]),
+        )
+        db.add(proposal)
+        db.commit()
+        db.refresh(proposal)
+        return {
+            "updated": False,
+            "artifact_version": artifact.version,
+            "nodes_added": added_nodes,
+            "proposal_id": proposal.id,
         }
 
     def _is_casual_chitchat(self, text: str) -> bool:
