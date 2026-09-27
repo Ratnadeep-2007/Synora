@@ -372,18 +372,14 @@ class MeetingIntelligenceService:
         context_model: Optional[str] = None,
     ) -> List[CandidateKnowledge]:
         """
-        Provider-agnostic intelligence extraction directly on Evidence records.
-        Context routing is completed independently; this method only interprets
-        the supplied evidence. This allows Meet and WhatsApp to use the same
-        intelligence path and permits parallel context/knowledge processing.
+        Shared semantic classification for Meet, WhatsApp, and other sources.
+        Context resolution is independent and recorded as provenance.
         """
         if not evidence_records:
-            logger.warning(f"No evidence provided for project '{project_id}'. Intelligence extraction skipped.")
             return []
 
         input_evidence_ids = [e.id for e in evidence_records]
         t0 = time.time()
-
         prompt = self._build_evidence_prompt(
             evidence_records,
             f"Extract all candidate proposals, decisions, requirements, questions, and action items with evidence IDs from {source_name} source. Preserve uncertainty and do not invent facts.",
@@ -391,15 +387,13 @@ class MeetingIntelligenceService:
         batch_result = self.llm_client.generate_structured(prompt, ExtractionBatchResult)
         latency_ms = (time.time() - t0) * 1000.0
 
-        run_model = batch_result.model or self.llm_client.__class__.__name__
-        run_prompt = batch_result.prompt_version or "unknown"
         agent_run = AgentRun(
             project_id=project_id,
             meeting_id=meeting_id,
             input_evidence_ids_json=json.dumps(input_evidence_ids),
-            model=run_model,
-            prompt_version=run_prompt,
-            output_reference_json=json.dumps([{"title": item.title, "category": item.category} for item in batch_result.items]),
+            model=batch_result.model or self.llm_client.__class__.__name__,
+            prompt_version=batch_result.prompt_version or "unknown",
+            output_reference_json=json.dumps([{"title": i.title, "category": i.category} for i in batch_result.items]),
             status="completed",
             latency_ms=latency_ms,
             source=source_name,
@@ -408,16 +402,14 @@ class MeetingIntelligenceService:
         db.add(agent_run)
         db.flush()
 
-        persisted_candidates: List[CandidateKnowledge] = []
+        persisted: List[CandidateKnowledge] = []
         for item in batch_result.items:
-            if not item.evidence_ids:
+            valid_ids = [eid for eid in item.evidence_ids if eid in input_evidence_ids]
+            if not valid_ids:
+                logger.warning("Rejected candidate '%s': invalid evidence references.", item.title)
                 continue
 
-            valid_evidence_ids = [ev_id for ev_id in item.evidence_ids if ev_id in input_evidence_ids]
-            if not valid_evidence_ids:
-                continue
-
-            existing_candidate = (
+            existing = (
                 db.query(CandidateKnowledge)
                 .filter(
                     CandidateKnowledge.project_id == project_id,
@@ -426,8 +418,8 @@ class MeetingIntelligenceService:
                 )
                 .first()
             )
-            if existing_candidate:
-                persisted_candidates.append(existing_candidate)
+            if existing:
+                persisted.append(existing)
                 continue
 
             candidate = CandidateKnowledge(
@@ -438,7 +430,7 @@ class MeetingIntelligenceService:
                 title=item.title,
                 content=item.content,
                 confidence=item.confidence,
-                evidence_ids_json=json.dumps(valid_evidence_ids),
+                evidence_ids_json=json.dumps(valid_ids),
                 status="candidate",
                 agent_run_id=agent_run.agent_run_id,
                 context_status=context_status,
@@ -446,15 +438,14 @@ class MeetingIntelligenceService:
                 context_model=context_model,
             )
             db.add(candidate)
-            persisted_candidates.append(candidate)
+            persisted.append(candidate)
 
         db.commit()
-        for cand in persisted_candidates:
-            db.refresh(cand)
+        for candidate in persisted:
+            db.refresh(candidate)
 
         logger.info(
-            f"Evidence intelligence completed for project '{project_id}' ({source_name}): "
-            f"{len(persisted_candidates)} candidates extracted in {latency_ms:.1f}ms. "
-            f"context={context_status} confidence={context_confidence:.2f}"
+            "Evidence intelligence completed for project '%s' (%s): %s candidates in %.1fms; context=%s confidence=%.2f",
+            project_id, source_name, len(persisted), latency_ms, context_status, context_confidence,
         )
-        return persisted_candidates
+        return persisted
