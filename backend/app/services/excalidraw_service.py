@@ -771,7 +771,11 @@ class ExcalidrawService:
         requirements: Optional[List[Dict[str, Any]]] = None,
         focus_prompt: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Build a clean, deterministic Excalidraw architecture scene."""
+        """
+        Build the current Excalidraw architecture scene from a stable visual grammar.
+        The semantic model proposes meaning; this deterministic compiler controls
+        hierarchy, spacing, routing, and collision-resistant composition.
+        """
         raw_elements: List[Dict[str, Any]] = []
 
         def rect(element_id: str, x: float, y: float, w: float, h: float, stroke: str = "#d1d5db"):
