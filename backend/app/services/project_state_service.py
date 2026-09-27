@@ -50,7 +50,7 @@ class ProjectStateService:
                 vision="Build an evidence-backed software product.",
                 requirements_json="[]",
                 architecture_json="[]",
-                agent_workflow_json='["BA", "Project", "Functional", "Tech", "Frappe"]',
+                agent_workflow_json="[]",
                 decisions_json="[]",
                 constraints_json="[]",
                 assumptions_json="[]",
