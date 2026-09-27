@@ -497,6 +497,17 @@ class ContextResolverService:
         source_event = db.query(SourceEvent).filter(SourceEvent.event_id == evidence.source_event_id).first()
         previous_project_id = evidence.project_id
 
+        if evidence.project_id == target_project_id:
+            return {
+                "evidence_id": evidence.id,
+                "source_event_id": evidence.source_event_id,
+                "project_id": target_project_id,
+                "project_name": target.name,
+                "previous_project_id": previous_project_id,
+                "status": "already_assigned",
+                "actor_id": actor_id,
+            }
+
         evidence.project_id = target_project_id
         if source_event:
             source_event.project_id = target_project_id
