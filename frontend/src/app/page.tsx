@@ -14,7 +14,6 @@ import { AgentView } from "@/components/views/AgentView";
 import { SourcesView } from "@/components/views/SourcesView";
 import { SettingsView } from "@/components/views/SettingsView";
 import { EvidenceDrawer } from "@/components/common/EvidenceDrawer";
-import { CommandPalette, CommandAction } from "@/components/common/CommandPalette";
 import { api, getFrontendUserId } from "@/lib/api";
 import {
   AgentDefinition,
@@ -26,11 +25,9 @@ import {
   ExcalidrawProposal,
   MeetingItem,
   Project,
-  ProjectAgent,
   ProjectState,
   ProjectStateVersion,
   SourceConnection,
-  WorkspaceAgent,
 } from "@/lib/types";
 
 export default function Home() {
@@ -39,7 +36,6 @@ export default function Home() {
   const [workspaceName, setWorkspaceName] = useState<string>("Workspace");
   const [currentTab, setCurrentTab] = useState<NavTab>("overview");
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Core Data State
   const [state, setState] = useState<ProjectState | null>(null);
@@ -53,8 +49,6 @@ export default function Home() {
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
-  const [projectAgent, setProjectAgent] = useState<ProjectAgent | null>(null);
-  const [workspaceAgent, setWorkspaceAgent] = useState<WorkspaceAgent | null>(null);
 
   // Event-driven pipeline state
   const [meetSubscriptions, setMeetSubscriptions] = useState<any[]>([]);
@@ -91,7 +85,6 @@ export default function Home() {
         setAgents([]);
         setExcalArtifact(null);
         setExcalProposals([]);
-        setProjectAgent(null);
         return;
       }
       if (!currentProjectId) setCurrentProjectId(activeId);
@@ -107,8 +100,6 @@ export default function Home() {
         connsData,
         excalData,
         propsData,
-        paData,
-        wsAgentData,
         subsData,
         eventsData,
         unassignedData,
@@ -123,8 +114,6 @@ export default function Home() {
         api.getSourceConnections(),
         api.getExcalidrawArtifact(activeId),
         api.getExcalidrawProposals(activeId),
-        api.getProjectAgent(activeId),
-        api.getWorkspaceAgent(),
         api.listMeetSubscriptions().catch(() => []),
         api.listMeetEvents(undefined, 20).catch(() => []),
         api.listUnassignedMeetings(20).catch(() => []),
@@ -140,8 +129,6 @@ export default function Home() {
       if (connsData.status === "fulfilled") setConnections(connsData.value);
       if (excalData.status === "fulfilled") setExcalArtifact(excalData.value);
       if (propsData.status === "fulfilled") setExcalProposals(propsData.value);
-      if (paData.status === "fulfilled") setProjectAgent(paData.value);
-      if (wsAgentData.status === "fulfilled") setWorkspaceAgent(wsAgentData.value);
       if (subsData.status === "fulfilled") setMeetSubscriptions(subsData.value);
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
       if (unassignedData.status === "fulfilled") setUnassignedMeetings(unassignedData.value);
@@ -383,18 +370,6 @@ export default function Home() {
     }
   };
 
-  const handleSyncSlack = async (channel: string) => {
-    const projectId = requireProject();
-    if (!projectId) return;
-    try {
-      const res = await api.syncSlackChannel(channel, projectId);
-      alert(`Synced ${res.messages_fetched || 0} messages from Slack #${channel}.`);
-      await refreshAll();
-    } catch (err: any) {
-      alert(`Slack channel sync failed: ${err.message}`);
-    }
-  };
-
   const handleOpenMeetingFromEvidence = (meetingId: string) => {
     setSelectedMeetingId(meetingId);
     setCurrentTab("meetings");
@@ -473,30 +448,6 @@ export default function Home() {
     return items.slice(0, 8);
   }, [history, conflicts]);
 
-  const paletteActions: CommandAction[] = useMemo(
-    () => [
-      { id: "go-overview", label: "Open Overview", run: () => setCurrentTab("overview") },
-      { id: "go-state", label: "View current state", hint: "Project State", run: () => setCurrentTab("state") },
-      { id: "go-excalidraw", label: "Open Excalidraw", run: () => setCurrentTab("excalidraw") },
-      { id: "go-meetings", label: "Open recent meeting", hint: meetings[0]?.title || "Meetings", run: () => {
-        if (meetings[0]) {
-          setSelectedMeetingId(meetings[0].id);
-          setCurrentTab("meetings");
-        } else {
-          setCurrentTab("meetings");
-        }
-      } },
-      { id: "go-evidence", label: "Search project evidence", hint: "Evidence", run: () => setCurrentTab("evidence") },
-      { id: "go-decisions", label: "Open decisions", run: () => setCurrentTab("decisions") },
-      { id: "go-conflicts", label: "Review conflicts", hint: `${openConflictsCount} open`, run: () => setCurrentTab("conflicts") },
-      { id: "go-agent", label: "Open agent", run: () => setCurrentTab("agent") },
-      { id: "go-sources", label: "Connect source", hint: "Sources", run: () => setCurrentTab("sources") },
-      { id: "sync-meet", label: "Sync Google Meet now", run: () => { handleSyncGoogleMeet(); } },
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [meetings, openConflictsCount, currentProjectId]
-  );
-
   const activeProject = projects.find((p) => p.id === currentProjectId) || null;
 
   const excalSyncStatus = pendingExcalProposals > 0 ? "pending" : "synchronized";
@@ -514,14 +465,12 @@ export default function Home() {
       currentProjectId={currentProjectId || undefined}
       activeProject={activeProject}
       workspaceName={workspaceName}
-      workspaceAgent={workspaceAgent}
       notifications={notifications}
       onSelectProject={(pId) => {
         setSelectedMeetingId(null);
         setCurrentProjectId(pId);
       }}
       onCreateProject={handleCreateProject}
-      onOpenCommandPalette={() => setPaletteOpen(true)}
     >
       {/* Overview Screen */}
       {currentTab === "overview" && (
@@ -632,8 +581,7 @@ export default function Home() {
       {/* Agent Screen */}
       {currentTab === "agent" && (
         <AgentView
-          agents={agents}
-          projectAgent={projectAgent}
+          capabilities={agents}
           stateVersion={state?.current_version || 1}
           excalidrawSyncLabel={excalSyncStatus === "pending" ? "Pending review" : "Synchronized"}
           activity={agentActivity}
@@ -655,7 +603,6 @@ export default function Home() {
           }}
           onSyncGoogleMeet={handleSyncGoogleMeet}
           onReconcileMeet={handleSyncGoogleMeet}
-          onSyncSlack={handleSyncSlack}
           onNavigateToArchitecture={() => setCurrentTab("excalidraw")}
           onRefreshData={refreshAll}
         />
@@ -669,12 +616,6 @@ export default function Home() {
         />
       )}
 
-      {/* Command Palette (⌘K) */}
-      <CommandPalette
-        isOpen={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        actions={paletteActions}
-      />
 
       {/* Slide-over Evidence Drawer ("Why?") */}
       <EvidenceDrawer

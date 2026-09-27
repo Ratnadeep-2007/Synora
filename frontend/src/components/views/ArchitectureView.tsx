@@ -134,10 +134,10 @@ export function ArchitectureView({
         <div>
           <h1 className="text-xl font-bold tracking-tight text-text-main flex items-center gap-2">
             <PenTool className="w-5 h-5 text-primary" />
-            <span>System Architecture</span>
+            <span>Living workspace</span>
           </h1>
           <p className="text-xs text-text-muted mt-0.5">
-            Living visual diagram of your system architecture, decisions, and workflows maintained with your project agent.
+            A visual workspace for the current project state, architecture, workflows, and decisions.
           </p>
         </div>
 
@@ -215,7 +215,7 @@ export function ArchitectureView({
               title="Ask AI to design and render the complete multi-tier visual architecture on Excalidraw"
             >
               <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? "animate-spin text-amber-300" : "text-amber-300"}`} />
-              <span>{isAiGenerating ? "Designing Scene..." : "AI Visual Architect"}</span>
+              <span>{isAiGenerating ? "Designing Scene..." : "Generate visual proposal"}</span>
             </button>
           )}
         </div>
@@ -276,7 +276,7 @@ export function ArchitectureView({
             Architecture Sequence
           </span>
           <div className="flex flex-wrap items-center gap-2 p-3 bg-canvas rounded-lg border border-border">
-            {(artifact?.extracted_nodes || ["User", "BA Agent", "Project Planner Agent", "Functional Agent", "Tech Agent", "Frappe Agent"]).map(
+            {(artifact?.extracted_nodes || ["User", "Requirements", "Decisions", "Services", "Data"]).map(
               (node, idx, arr) => (
                 <React.Fragment key={idx}>
                   <div className="px-2.5 py-1 rounded bg-surface border border-border text-xs font-medium text-text-main flex items-center gap-1.5 shadow-2xs">

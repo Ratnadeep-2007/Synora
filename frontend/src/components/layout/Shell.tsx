@@ -12,7 +12,6 @@ import {
   Bot,
   Plug,
   Settings as SettingsIcon,
-  Search,
   Bell,
   HelpCircle,
   ChevronDown,
@@ -23,7 +22,7 @@ import {
   FolderPlus,
   User as UserIcon,
 } from "lucide-react";
-import { Project, WorkspaceAgent } from "@/lib/types";
+import { Project } from "@/lib/types";
 
 export type NavTab =
   | "overview"
@@ -60,11 +59,9 @@ interface ShellProps {
   workspaceName?: string;
   currentUserName?: string;
   currentUserInitial?: string;
-  workspaceAgent?: WorkspaceAgent | null;
   notifications?: NotificationItem[];
   onSelectProject?: (projectId: string) => void;
   onCreateProject?: (name: string, description?: string, sources?: string[]) => Promise<void>;
-  onOpenCommandPalette?: () => void;
   children: React.ReactNode;
 }
 
@@ -96,11 +93,9 @@ export function Shell({
   workspaceName = "Workspace",
   currentUserName,
   currentUserInitial,
-  workspaceAgent,
   notifications = [],
   onSelectProject,
   onCreateProject,
-  onOpenCommandPalette,
   children,
 }: ShellProps) {
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
@@ -132,10 +127,6 @@ export function Shell({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        onOpenCommandPalette?.();
-      }
       if (e.key === "Escape") {
         setIsProjectDropdownOpen(false);
         setIsActivityOpen(false);
@@ -144,7 +135,7 @@ export function Shell({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onOpenCommandPalette]);
+  }, []);
 
   const toggleTool = (tool: string) => {
     setNewProjectTools((prev) =>
@@ -404,21 +395,6 @@ export function Shell({
 
           {/* Right: Global search, Activity, Help, User menu */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={onOpenCommandPalette}
-              className="relative hidden md:block"
-              title="Global search (⌘K)"
-              aria-label="Global search"
-            >
-              <Search className="w-4 h-4 text-text-muted absolute left-3 top-2.5 pointer-events-none" />
-              <span className="block pl-9 pr-12 py-1.5 text-xs rounded-md bg-canvas border border-border text-text-muted w-64 text-left">
-                Search project…
-              </span>
-              <kbd className="absolute right-2.5 top-2 text-[10px] font-mono text-text-muted border border-border rounded px-1 bg-surface">
-                ⌘K
-              </kbd>
-            </button>
-
             <div className="relative">
               <button
                 onClick={() => {
@@ -539,7 +515,7 @@ export function Shell({
                 <div>
                   <h3 className="text-base font-bold text-text-main">Create project</h3>
                   <p className="text-xs text-text-muted">
-                    Step {createStep} of 5 · provisions a Project Agent & living Excalidraw canvas
+                    Step {createStep} of 4 · project setup
                   </p>
                 </div>
               </div>
@@ -554,7 +530,7 @@ export function Shell({
 
             {/* Step indicator */}
             <div className="flex items-center gap-1" aria-hidden>
-              {[1, 2, 3, 4, 5].map((s) => (
+              {[1, 2, 3, 4].map((s) => (
                 <div
                   key={s}
                   className={`h-1 flex-1 rounded-full ${s <= createStep ? "bg-primary" : "bg-border"}`}
@@ -593,29 +569,23 @@ export function Shell({
                     onChange={(e) => setNewProjectUse(e.target.value)}
                     className="w-full px-3 py-2 text-xs rounded-md bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-text-main resize-none"
                   />
+                  <div className="pt-2">
+                    <label className="text-xs font-semibold text-text-main" htmlFor="new-project-context">
+                      Initial context <span className="font-normal text-text-muted">(optional)</span>
+                    </label>
+                    <textarea
+                      id="new-project-context"
+                      rows={3}
+                      placeholder="Background, constraints, or key decisions…"
+                      value={newProjectContext}
+                      onChange={(e) => setNewProjectContext(e.target.value)}
+                      className="w-full mt-1.5 px-3 py-2 text-xs rounded-md bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-text-main resize-none"
+                    />
+                  </div>
                 </div>
               )}
 
               {createStep === 3 && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-text-main" htmlFor="new-project-context">
-                    3. Initial context
-                  </label>
-                  <textarea
-                    id="new-project-context"
-                    rows={3}
-                    placeholder="Paste background, constraints, or key decisions..."
-                    value={newProjectContext}
-                    onChange={(e) => setNewProjectContext(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-md bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-text-main resize-none"
-                  />
-                  <p className="text-[11px] text-text-muted">
-                    No internal database or agent terminology is exposed here.
-                  </p>
-                </div>
-              )}
-
-              {createStep === 4 && (
                 <div className="space-y-2">
                   <span className="text-xs font-semibold text-text-main block">4. Connect tools</span>
                   {[
@@ -639,19 +609,11 @@ export function Shell({
                 </div>
               )}
 
-              {createStep === 5 && (
+              {createStep === 4 && (
                 <div className="space-y-2 text-xs">
-                  <span className="text-xs font-semibold text-text-main block">5. Create project</span>
-                  <div className="p-3 rounded-md bg-primary-soft/40 border border-primary/20 space-y-1 text-text-muted">
-                    <div className="flex items-center gap-1.5 font-semibold text-primary">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Automatic provisioning:</span>
-                    </div>
-                    <p className="text-[11px] leading-relaxed">
-                      • 1:1 dedicated <strong>Project Agent</strong> with isolated memory boundary<br />
-                      • Dedicated <strong>Excalidraw living workspace</strong><br />
-                      • PostgreSQL-backed versioned state (starts at <strong>v1</strong>)
-                    </p>
+                  <span className="text-xs font-semibold text-text-main block">4. Review & create</span>
+                  <div className="p-3 rounded-md bg-primary-soft/40 border border-primary/20 text-xs text-text-muted">
+                    Your project space will be created with the selected sources and a living visual workspace.
                   </div>
                   <div className="p-3 rounded-md bg-canvas border border-border space-y-1">
                     <div><strong className="text-text-main">{newProjectName || "Untitled project"}</strong></div>
@@ -669,7 +631,7 @@ export function Shell({
                 >
                   {createStep > 1 ? "Back" : "Cancel"}
                 </button>
-                {createStep < 5 ? (
+                {createStep < 4 ? (
                   <button
                     type="button"
                     onClick={() => {
