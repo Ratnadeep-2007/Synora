@@ -30,6 +30,7 @@ from app.models.project import (
 )
 from app.models.excalidraw import (
     ExcalidrawArtifact,
+    ExcalidrawRevision,
     ExcalidrawProposal,
     ExcalidrawProposalStatus,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "JobStatus",
     "AuditLog",
     "ExcalidrawArtifact",
+    "ExcalidrawRevision",
     "ExcalidrawProposal",
     "ExcalidrawProposalStatus",
     "MeetSubscription",
