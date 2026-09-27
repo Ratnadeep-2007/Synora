@@ -443,3 +443,4 @@ class MeetingIntelligenceService:
             f"{len(persisted_candidates)} candidates extracted in {latency_ms:.1f}ms. "
             f"context={context_status} confidence={context_confidence:.2f}"
         )
+        return persisted_candidates
