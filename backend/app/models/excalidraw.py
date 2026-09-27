@@ -117,7 +117,9 @@ class ExcalidrawProposal(Base):
 
     def __repr__(self) -> str:
         return f"<ExcalidrawProposal id={self.id} artifact={self.artifact_id} status={self.status}>"
-\n\nclass ExcalidrawRevision(Base):
+
+
+class ExcalidrawRevision(Base):
     """Immutable visual snapshot for a project workspace revision."""
     __tablename__ = "excalidraw_revisions"
 
