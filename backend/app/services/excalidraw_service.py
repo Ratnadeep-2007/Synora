@@ -408,9 +408,9 @@ class ExcalidrawService:
 
         nodes_before = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
         nodes_after = [
-            "Next.js Web Client", "Google Meet Ingestor", "WhatsApp Gateway", "Slack Events Bot",
-            "FastAPI Core Engine", "One Shared Synora Agent", "Internal Capabilities", "Deterministic Guardrails",
-            "Database System of Record", "Immutable Evidence Store", "Excalidraw Living Store"
+            "Next.js Web Client", "Google Meet Ingestor", "WhatsApp Gateway", "Excalidraw Workspace",
+            "FastAPI Core Engine", "Context Intelligence", "One Shared Synora Agent", "Internal Capabilities",
+            "Deterministic Guardrails", "PostgreSQL Project State", "Evidence Provenance", "Excalidraw Revisions"
         ]
 
         proposed_elements = self._build_ai_architecture_scene(
