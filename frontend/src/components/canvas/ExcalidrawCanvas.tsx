@@ -44,6 +44,12 @@ interface ExcalidrawCanvasProps {
   onSyncAgentOutput?: () => Promise<void>;
   onSaveCanvas?: (scene: { name: string; elements: any[]; app_state?: any }) => Promise<void>;
   onExportJson?: () => void;
+  compareMode?: boolean;
+  compareElements?: any[];
+  compareAddedIds?: string[];
+  compareChangedIds?: string[];
+  compareFromRevision?: number | null;
+  compareToRevision?: number | null;
 }
 
 export function ExcalidrawCanvas({
@@ -55,23 +61,31 @@ export function ExcalidrawCanvas({
   onSyncAgentOutput,
   onSaveCanvas,
   onExportJson,
+  compareMode = false,
+  compareElements = [],
+  compareAddedIds = [],
+  compareChangedIds = [],
+  compareFromRevision = null,
+  compareToRevision = null,
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [elementCount, setElementCount] = useState(initialElements?.length || 0);
+  const visibleElements = compareMode ? compareElements : initialElements;
+  const [elementCount, setElementCount] = useState(visibleElements?.length || 0);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Update canvas scene when new elements arrive from workspace sync
+  // Update the canvas whenever the current workspace or compare overlay changes.
+  // Compare mode is intentionally view-only and does not write ghost elements back.
   useEffect(() => {
-    if (excalidrawAPI && initialElements && initialElements.length > 0) {
+    if (excalidrawAPI && visibleElements && visibleElements.length > 0) {
       try {
         excalidrawAPI.updateScene({
-          elements: initialElements,
-          commitToHistory: true,
+          elements: visibleElements,
+          commitToHistory: !compareMode,
         });
-        setElementCount(initialElements.length);
+        setElementCount(visibleElements.length);
         // Center view on content after slight render delay
         setTimeout(() => {
           try {
@@ -84,7 +98,7 @@ export function ExcalidrawCanvas({
         console.warn("Failed to update Excalidraw scene:", err);
       }
     }
-  }, [excalidrawAPI, initialElements]);
+  }, [excalidrawAPI, visibleElements, compareMode]);
 
   // Center view on content
   const handleCenterView = useCallback(() => {
@@ -159,6 +173,11 @@ export function ExcalidrawCanvas({
             <span className="text-[11px] text-text-muted">
               • {elementCount} elements
             </span>
+            {compareMode && compareFromRevision !== null && compareToRevision !== null && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-soft text-primary border border-primary/20">
+                Compare r{compareFromRevision} → r{compareToRevision}
+              </span>
+            )}
           </div>
         </div>
 
@@ -167,7 +186,7 @@ export function ExcalidrawCanvas({
           {onSaveCanvas && (
             <button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || compareMode}
               className={`px-3 py-1 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs border ${
                 saveSuccess
                   ? "bg-emerald-500 text-white border-emerald-600"
@@ -244,7 +263,9 @@ export function ExcalidrawCanvas({
         <div className="flex items-center gap-1.5">
           <Info className="w-3 h-3 text-primary" />
           <span>
-            The Synora Agent compiles System Architecture pipelines, Living Decision Cards (emerald), and Requirements (blue) directly onto this canvas.
+            {compareMode
+              ? "Compare view: historical elements are ghosted; added elements are highlighted in green; changed elements are highlighted in amber."
+              : "The Synora Agent compiles the living visual workspace from governed project information."}
           </span>
         </div>
         <div className="font-mono text-[10px]">
