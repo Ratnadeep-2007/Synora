@@ -319,7 +319,8 @@ class ContextIntelligenceService:
                 tag_val = (tag.group(1) or tag.group(2) or tag.group(3) or "").lower()
                 for p in projects:
                     name_words = [w.lower() for w in re.split(r"[\s_-]+", p.name) if w]
-                    if tag_val and (tag_val in name_words or tag_val == p.id.lower() or tag_val in p.name.lower()):
+                    norm_id = p.id.lower().replace("proj_", "")
+                    if tag_val and (tag_val in name_words or tag_val == p.id.lower() or tag_val == norm_id or tag_val in p.name.lower()):
                         signals.append(
                             ContextSignal(
                                 kind="deterministic",
@@ -352,7 +353,8 @@ class ContextIntelligenceService:
                 tag_val = (tag.group(1) or tag.group(2) or tag.group(3) or "").lower()
                 for p in projects:
                     name_words = [w.lower() for w in re.split(r"[\s_-]+", p.name) if w]
-                    if tag_val and (tag_val in name_words or tag_val == p.id.lower() or tag_val in p.name.lower()):
+                    norm_id = p.id.lower().replace("proj_", "")
+                    if tag_val and (tag_val in name_words or tag_val == p.id.lower() or tag_val == norm_id or tag_val in p.name.lower()):
                         return p.id
         return None
 

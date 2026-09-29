@@ -207,3 +207,9 @@ class PossibleProjectMatch(Base):
             f"<PossibleProjectMatch id={self.id} item={self.unknown_item_id} "
             f"candidate={self.candidate_project_id}>"
         )
+
+
+# Canonical aliases for match candidate models
+ContextCandidate = PossibleProjectMatch
+MatchCandidate = PossibleProjectMatch
+

@@ -1,49 +1,53 @@
-# Synora Product Requirements
+# Synora Product Requirements Document (PRD)
 
-## Product
-Synora is an enterprise project-intelligence platform that continuously converts authorized project activity into evidence-backed project knowledge, governed project changes, and a living visual Excalidraw workspace.
+## Product Vision
 
-## Core model
-```
-Sources → Evidence → One Shared Synora Agent
-       → Project-scoped Context
-       → PostgreSQL Project State
-       → Governed Proposals
-       → Living Excalidraw Workspace
-```
+Synora is an enterprise project-intelligence platform that continuously converts multi-source activity into evidence-backed project knowledge, governed project changes, and a living visual Excalidraw workspace.
 
-There is one logical Synora Agent for the organization. Projects are context and security boundaries, not separate agents. BA, planning, functional, technical, and Frappe functions are specialist capabilities invoked by the shared agent.
+## Canonical Agent Model
 
-## Authoritative truth
-PostgreSQL is the production system of record. Project State is authoritative and historically versioned. Evidence is immutable and provenance-linked. Excalidraw is the visual workspace, not the database of record.
+There is **ONE SHARED SYNORA AGENT** for the organization.
+- Projects are context and security boundaries, not independent agents.
+- Specialist capabilities (Business Analysis, Project Planning, Functional Analysis, Technical Architecture, Frappe / ERP Implementation) are modular capabilities invoked by the single agent.
+- There are no separate user-facing specialist agents and no isolated agent memory silos.
 
-## Intelligence
-Semantic ambiguity is handled by a local LLM through Ollama by default. Paid model providers are optional adapters. The system must never fabricate AI output when inference is unavailable.
+## Unified Context Intelligence & Sources
 
-## Sources
-Initial connectors: Google Meet native transcription, Slack, WhatsApp through Baileys, and Excalidraw.
+All ingestion channels—Google Meet, WhatsApp, Slack, and Excalidraw—normalize into a unified `SourceEvent` and enter a single shared context engine: `ContextResolutionService`.
 
-Google Meet flow:
-native transcript → Workspace Events notification → Pub/Sub → worker → Meet REST transcript retrieval → persistence → Evidence → Synora Agent.
+1. **Parallel Ingestion**:
+   - **Context Resolution**: "Which project does this belong to?" (evaluating deterministic signals and semantic vector similarity).
+   - **Knowledge Extraction**: "What does this information mean?" (extracting requirements, decisions, proposals, questions, action items, architecture changes).
+   - Both tasks run concurrently on read-only event snapshots before joining into routing decisions.
+2. **Google Meet Multi-Context Intelligence**:
+   - Google Meet native transcripts are divided into semantic windows based on speaker turns and time gaps ($\ge 45$s).
+   - Individual segments resolve independently to different projects or Unknown Context. Single meetings are never locked to one project.
+3. **Casual Chatter Gate**:
+   - Casual banter, greetings, and chit-chat are dropped before database persistence to prevent state contamination.
+4. **Unknown Context & Human Triage**:
+   - Events with low confidence or unresolved project assignment are quarantined into `proj_unknown_context`.
+   - The UI surfaces explainable `ContextCandidate` rankings.
+   - Humans triage items via three explicit actions:
+     - **Assign to Project**: Migrates event to the chosen project and triggers state/visual updates.
+     - **Keep Unknown**: Retains the item in quarantine.
+     - **Create New Project**: Initializes a new project workspace around the evidence.
 
-Workspace Events notifications do not contain transcript content.
+## Visual-First Excalidraw Workspace
 
-WhatsApp messages enter as normalized SourceEvents. AI may propose a project match; deterministic project membership, channel/group mapping, authorization, and policy validate the assignment.
+Excalidraw is the living visual workspace and an interactive visual intelligence artifact.
 
-## Governance
-High-impact Project State and visual changes use:
-proposal → evidence → visual/state diff → human approval → apply.
+1. **VisualPlan Specification**:
+   - Generative models are prohibited from directly authoring raw Excalidraw JSON.
+   - The shared agent outputs structured `VisualPlan` specifications containing `nodes`, `edges`, `groups`, and `layout`.
+2. **Deterministic Compiler**:
+   - `ExcalidrawCompiler` translates `VisualPlan` into valid Excalidraw elements with automatic collision avoidance, node styling (e.g. `infrastructure`, `system`, `actor`), and container bounds.
+3. **Immutable Revision Model**:
+   - Every state change committed to the visual canvas generates an immutable `VisualRevision` (`ExcalidrawRevision`).
+   - Supports **Current Mode** (interactive live view) and **Compare Mode** (structured visual diff showing added, removed, and modified elements).
 
-Low-risk synchronization may be automatic according to policy.
+## Governed State & Trust Chain
 
-## Visual workspace
-Excalidraw must communicate with minimum text and maximum visual structure: nodes, arrows, grouping, concise labels, decision/requirement markers, and small evidence references. It must not become a transcript or document dump.
-
-## Enterprise controls
-Required: tenant isolation, RBAC, source permissions, audit trail, idempotency, retries, observability, encryption, retention controls, backup/restore, and explicit failure states.
-
-## Product UI
-The UI is a control room, not a chatbot. Core navigation:
-Overview, Project State, Excalidraw, Meetings, Evidence, Decisions, Conflicts, Agent, Sources, Settings.
-
-The Agent view presents one shared Synora Agent and its specialist capabilities. It must not present a collection of independent agents.
+- High-impact Project State changes and visual updates follow strict governance:
+  `SourceEvent → Evidence → Extracted Knowledge → Proposal → Visual/State Diff → Human Approval → Commit`.
+- PostgreSQL + pgvector is the authoritative system of record.
+- Complete traceability is maintained from project state back to original source evidence.

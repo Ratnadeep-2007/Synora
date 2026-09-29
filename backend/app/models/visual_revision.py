@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Optional
 import uuid
 from sqlalchemy import (
     Column,
@@ -105,6 +106,26 @@ class VisualRevision(Base):
         cascade="all, delete-orphan",
     )
 
+    @property
+    def tenant_id(self) -> str:
+        return self.workspace.tenant_id if self.workspace else "default_tenant"
+
+    @property
+    def derived_from_state_version(self) -> Optional[int]:
+        return self.derived_from_project_state_version
+
+    @property
+    def snapshot_json(self) -> str:
+        return self.scene_json
+
+    @property
+    def source_event_ids_json(self) -> str:
+        return self.evidence_ids_json
+
+    @property
+    def created_by(self) -> str:
+        return self.actor_id
+
     __table_args__ = (
         UniqueConstraint("workspace_id", "revision_number", name="uq_visual_revision_number"),
         Index("ix_visual_revision_project_created", "project_id", "created_at"),
@@ -115,6 +136,11 @@ class VisualRevision(Base):
             f"<VisualRevision id={self.id} workspace={self.workspace_id} "
             f"n={self.revision_number}>"
         )
+
+
+# Canonical alias for the visual revision model
+ExcalidrawRevision = VisualRevision
+
 
 
 class VisualOperation(Base):

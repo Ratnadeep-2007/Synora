@@ -256,6 +256,32 @@ class VisualRevisionService:
             "state_version_to": b.derived_from_project_state_version,
         }
 
+    def compare_revisions(
+        self,
+        project_id: str,
+        from_revision: int,
+        to_revision: int,
+        db: Session,
+    ) -> Any:
+        raw = self.compare(project_id, from_revision, to_revision, db)
+
+        class DiffResult:
+            def __init__(self, data):
+                self._data = data
+                self.added = data.get("added", [])
+                self.removed = data.get("removed", [])
+                self.changed = data.get("changed", [])
+                self.from_revision = data.get("from_revision")
+                self.to_revision = data.get("to_revision")
+
+            def __getitem__(self, key):
+                return self._data[key]
+
+            def __repr__(self):
+                return f"<DiffResult added={len(self.added)} removed={len(self.removed)} changed={len(self.changed)}>"
+
+        return DiffResult(raw)
+
     @staticmethod
     def _element_key(el: Dict[str, Any]) -> str:
         return str(el.get("id") or el.get("text") or id(el))

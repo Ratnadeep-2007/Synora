@@ -39,6 +39,22 @@ class ContextResolutionResult(BaseModel):
     model_version: Optional[str] = None
 
     @property
+    def status(self) -> str:
+        if self.decision == "resolved":
+            return "resolved"
+        elif self.decision == "ambiguous":
+            return "ambiguous"
+        return "unresolved"
+
+    @property
+    def resolved_project_id(self) -> Optional[str]:
+        return self.project_id
+
+    @property
+    def reasoning_summary(self) -> str:
+        return self.reason
+
+    @property
     def context_status(self) -> str:
         return self.decision
 

@@ -15,6 +15,7 @@ NODE_STYLES: Dict[str, Dict[str, Any]] = {
     "actor": {"background": "#ede9fe", "stroke": "#6d28d9"},
     "decision": {"background": "#ecfdf5", "stroke": "#2f7154"},
     "requirement": {"background": "#eef2ff", "stroke": "#4338ca"},
+    "infrastructure": {"background": "#e0e7ff", "stroke": "#3730a3"},
     "group": {"background": "#f6f7f5", "stroke": "#68706a"},
     "note": {"background": "#ffffff", "stroke": "#e7eae5"},
 }

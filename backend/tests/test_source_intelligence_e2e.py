@@ -36,7 +36,7 @@ def test_unknown_context_to_assignment_flow(db_session: Session):
 
     outcome = pipeline.process(
         source="whatsapp",
-        payload={"text": "unrelated chatter about a topic no project covers"},
+        payload={"text": "We need to procure 50 specialized FPGA accelerator boards for physical layer encoding"},
         db=db_session,
         tenant_id=TENANT,
         actor_id="Tester",
@@ -159,7 +159,9 @@ def test_meeting_segments_route_to_multiple_projects(
 def test_ai_unavailable_never_fabricates(db_session: Session, monkeypatch):
     monkeypatch.setattr(settings, "LLM_PROVIDER", "nvidia")
     monkeypatch.setattr(settings, "NVIDIA_API_KEY", "", raising=False)
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "", raising=False)
     monkeypatch.setattr(type(settings), "is_nvidia_nim_configured", property(lambda self: False))
+    monkeypatch.setattr(type(settings), "is_groq_configured", property(lambda self: False))
 
     # A resolvable project must exist, otherwise the resolver correctly
     # short-circuits before ever reaching the semantic branch.

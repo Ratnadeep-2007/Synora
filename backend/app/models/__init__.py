@@ -94,8 +94,12 @@ __all__ = [
     "UnknownContextItem",
     "UnknownItemStatus",
     "PossibleProjectMatch",
+    "ContextCandidate",
+    "MatchCandidate",
     "VisualWorkspace",
     "VisualRevision",
+    "ExcalidrawRevision",
     "VisualOperation",
 ]
+
 

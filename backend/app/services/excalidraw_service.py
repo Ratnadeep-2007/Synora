@@ -612,6 +612,63 @@ class ExcalidrawService:
             q = q.filter(ExcalidrawProposal.status == status)
         return q.order_by(ExcalidrawProposal.created_at.desc()).all()
 
+    def propose_changes(
+        self,
+        project_id: str,
+        suggested_elements: List[Dict[str, Any]],
+        reason: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        evidence_ids: Optional[List[str]] = None,
+        derived_from_state_version: int = 1,
+    ) -> ExcalidrawProposal:
+        artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
+        prop = ExcalidrawProposal(
+            artifact_id=artifact.id,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            derived_from_state_version=derived_from_state_version,
+            status=ExcalidrawProposalStatus.PENDING.value,
+            proposed_elements_json=json.dumps(suggested_elements),
+            reason=reason,
+            evidence_ids_json=json.dumps(evidence_ids or []),
+        )
+        db.add(prop)
+        db.commit()
+        db.refresh(prop)
+        return prop
+
+    def approve_proposal(
+        self,
+        proposal_id: str,
+        db: Session,
+        actor_id: str = "reviewer",
+        tenant_id: str = "default_tenant",
+    ) -> Dict[str, Any]:
+        proposal, artifact = self.review_proposal(
+            proposal_id=proposal_id, action="approve", actor_id=actor_id, db=db, tenant_id=tenant_id
+        )
+        from app.services.visual_revision_service import VisualRevisionService
+        rev = VisualRevisionService().current_revision(proposal.project_id, db)
+        return {
+            "status": "approved",
+            "proposal_id": proposal.id,
+            "revision_number": rev.revision_number if rev else (artifact.version if artifact else 1),
+        }
+
+    def reject_proposal(
+        self,
+        proposal_id: str,
+        db: Session,
+        actor_id: str = "reviewer",
+        tenant_id: str = "default_tenant",
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        proposal, artifact = self.review_proposal(
+            proposal_id=proposal_id, action="reject", actor_id=actor_id, db=db, tenant_id=tenant_id, reason=note
+        )
+        return {"status": "rejected", "proposal_id": proposal.id}
+
     def _extract_node_labels(self, elements: List[Dict[str, Any]]) -> List[str]:
         """Extracts readable node labels from Excalidraw elements."""
         labels = []

@@ -4,204 +4,128 @@
 
 Synora is a multi-source project intelligence system. It continuously turns authorized project activity into evidence-backed project knowledge, governed project changes, and a living visual Excalidraw workspace.
 
-## Canonical runtime model
+## Canonical Runtime Model
 
-There is **one shared Synora Agent**.
+There is **ONE SHARED SYNORA AGENT**.
 
-A project is a **context and security boundary**, not a separate agent. The same logical agent operates on many projects by receiving an explicit project-scoped context and permissions.
+A project is a **context and security boundary**, not a separate agent. The same logical agent operates on many projects by receiving an explicit project-scoped context and permissions. Specialist capabilities (Business Analysis, Project Planning, Functional Analysis, Technical Architecture, Frappe / ERP Implementation) are modular sub-capabilities of the single agent, not independent user-facing agents or separate memory silos.
 
 ```text
 Google Meet ─┐
-Slack ───────┼──→ Source Events → Evidence ─→ Synora Agent
-WhatsApp ────┤                              │
-Excalidraw ──┘                              ▼
-                                      Project Context
-                                             │
-                                             ▼
-                                  PostgreSQL Project State
-                                             │
-                              ┌──────────────┴──────────────┐
-                              ▼                             ▼
-                       Governed State Change          Visual Proposal
-                              │                             │
-                              └──────────────┬──────────────┘
-                                             ▼
-                                      Human Approval
-                                             │
-                                             ▼
-                                   Living Excalidraw Workspace
+WhatsApp ────┼──→ Normalize → SourceEvent
+Slack ───────┤                    │
+Excalidraw ──┘                    │
+                                  ▼
+                ┌───────────────────────────────────┐
+                │   Unified Context Intelligence    │
+                │    (ContextResolutionService)     │
+                └─────────────────┬─────────────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+            Context Resolution          Knowledge Extraction
+         ("Which project is this?")     ("What does this mean?")
+                    │                           │
+                    └─────────────┬─────────────┘
+                                  ▼
+                            Resolution Join
+                                  │
+              ┌───────────────────┼───────────────────┐
+              ▼                   ▼                   ▼
+          Resolved            Ambiguous          Unresolved
+       (Authorized)               │                   │
+              │                   └─────────┬─────────┘
+              ▼                             ▼
+        Target Project               Unknown Context
+              │                   (proj_unknown_context)
+              │                             │
+              │                     Human Triage Queue
+              │                 (Assign / Keep / Create)
+              ▼
+   PostgreSQL Project State
+              │
+       ┌──────┴──────┐
+       ▼             ▼
+ Governed State   VisualPlan
+     Change          │
+       │             ▼
+       │     ExcalidrawCompiler (Deterministic)
+       │             │
+       └──────┬──────┘
+              ▼
+       Human Approval (Proposals & Visual Diff)
+              │
+              ▼
+  Living Excalidraw Workspace (Immutable Revisions)
 ```
 
-## Agent and deterministic system
+## Unified Context Intelligence (Source-Agnostic)
 
-NVIDIA NIM + DeepSeek provides semantic intelligence:
-- language understanding
-- classification
-- entity and relationship extraction
-- contradiction interpretation
-- impact analysis
-- proposal composition
-- visual composition suggestions
+Context resolution is strictly source-agnostic and centralized in `ContextResolutionService` (`backend/app/services/context_resolution_service.py` / `ContextIntelligenceService`).
+Google Meet, WhatsApp, Slack, and Excalidraw all route into this shared engine.
 
-Deterministic services remain equally important and authoritative:
-- authentication and authorization
-- tenant/project boundary enforcement
-- project assignment validation
-- idempotency
-- persistence and transactions
-- state transitions
-- approval policy
-- connector checkpoints
-- retries and recovery
-- schema validation
-- audit logging
-- safe external actions
+### Parallel Execution Architecture
 
-If NVIDIA NIM is unavailable, the system may use supported deterministic operations, but it must never claim that deterministic output is AI-generated or fabricate semantic results.
+For every incoming `SourceEvent`, the intelligence layer executes two concurrent paths:
+1. **Context Resolution**: Evaluates deterministic signals (explicit IDs, group/space bindings, tags, member authorization, tenant boundaries) and semantic vector similarity against project profiles.
+2. **Knowledge Extraction**: Extracts semantic meaning (requirements, decisions, proposals, questions, action items, contradictions, architecture entities) without waiting for project classification.
+3. **Resolution Join**: Merges context resolution and extracted knowledge into a unified `ContextResolutionResult` for downstream routing and governance.
 
-## Project context
+### Signals & Scoring Policy
 
-Each execution context contains:
-- tenant and authenticated actor
-- project id
-- project permissions
-- current Project State
-- relevant Evidence and provenance
-- candidate knowledge
-- approved decisions and requirements
-- available tools
-- current Excalidraw representation
+- **Deterministic Signals (Authoritative)**: Explicit project ID (`proj_*`), group/space ID bindings, project tags, actor project membership, tenant isolation. Deterministic authorization is strictly authoritative; semantic similarity never overrides authorization.
+- **Semantic Signals**: Vector/lexical similarity between the source event and project context (vision, decisions, requirements, architecture, constraints).
+- **Casual Chatter Gate**: Banter, greetings, and casual chatter are identified and discarded before database persistence to prevent state contamination.
+- **Decision Confidence**:
+  - High confidence ($\ge 0.75$) with authorized project: Auto-routed (`resolved`).
+  - Low confidence or multiple competing projects: Flagged as `ambiguous` or `unresolved`, routed to **Unknown Context**.
 
-The same Synora Agent can move between projects only through an explicit authorized context switch.
+## Unknown Context & Human Triage
 
-## Specialist capabilities
+Synora never forces uncertain information into an arbitrary project.
 
-The shared agent invokes specialist capabilities as modules:
+- **Quarantine Project**: Unassigned, ambiguous, or unmapped events route to a dedicated system project: `proj_unknown_context` ("Unknown Context").
+- **Explainable Candidates**: Ambiguous items include ranked `ContextCandidate` / `PossibleProjectMatch` entries displaying deterministic score, semantic score, combined confidence, and an explanation.
+- **Human Triage Actions**:
+  1. **Assign to Project**: Moves the evidence and extracted knowledge to an existing authorized project, triggering state and visual proposals.
+  2. **Keep Unknown**: Retains the event in Unknown Context without project assignment.
+  3. **Create New Project**: Seeds a new project workspace initialized with the triage evidence.
 
-```text
-Business Analysis
-Project Planning
-Functional Analysis
-Technical Architecture
-Frappe / ERP Implementation
-```
+## Google Meet Multi-Context Intelligence
 
-These are not independent agents and do not own independent memory boundaries.
+Meetings are not treated as monolithic single-project events. A multi-turn Google Meet transcript is segmented into semantic windows using speaker shifts and time gaps ($\ge 45$ seconds). Each segment is independently resolved:
+- Segment 1 (e.g. Synora authentication) $\rightarrow$ Routes to Synora.
+- Segment 2 (e.g. Healthcare Claims) $\rightarrow$ Routes to Healthcare project.
+- Segment 3 (e.g. Unrelated discussion) $\rightarrow$ Routes to Unknown Context.
 
-## Data architecture
+Meeting evidence is linked by `segment_id` and provenance timestamps back to the provider conference.
 
-Production:
-- PostgreSQL as system of record
-- pgvector for semantic retrieval
-- object storage for large artifacts
-- Redis and workers for asynchronous processing
+## Visual-First Excalidraw & VisualPlan Architecture
 
-Development/test may use SQLite only as a convenience when explicitly configured.
+Excalidraw is the living visual workspace and a primary source of visual evidence.
 
-Project State is authoritative and historically versioned. Evidence is immutable and provenance-linked.
+### Immutable Revision Model (`VisualRevision` / `ExcalidrawRevision`)
+- Every applied visual change creates a sequentially numbered, immutable `VisualRevision` (e.g., `rev_1`, `rev_2`).
+- Revisions store raw scene JSON, schema version, parent revision ID, and commit metadata.
+- **Current Mode vs. Compare Mode**: Users can inspect the active scene or compare any two revisions with structured visual diffs (`added`, `removed`, `changed`).
 
-## Google Meet
+### AI VisualPlan & Deterministic Compiler
+- LLMs are **prohibited** from emitting arbitrary, raw Excalidraw JSON.
+- The shared agent proposes structured `VisualPlan` objects containing:
+  - `nodes`: Keyed entities with label, description, type (`system`, `service`, `database`, `actor`, `queue`, `infrastructure`, `external`, `decision`), and optional group.
+  - `edges`: Directed relationships (`from`, `to`, `label`, `style`).
+  - `groups`: Logical boundaries (e.g., frontend, backend, cloud).
+  - `layout`: Layout direction hints (`horizontal`, `vertical`, `layered`).
+- The deterministic `ExcalidrawCompiler` (`backend/app/services/excalidraw_compiler.py`):
+  - Renders rectangles, diamonds, ellipses, text elements, and binding arrows.
+  - Applies design-system color tokens (e.g., `#e0e7ff` / `#3730a3` for infrastructure).
+  - Enforces deterministic collision avoidance, automatic spacing, and container sizing.
+- High-impact visual modifications follow the governance gate:
+  `VisualPlan Proposal → Visual Diff Preview → Human Approval → ExcalidrawRevision Committed`.
 
-Native Meet transcription is the source.
+## Governed State & Evidence Traceability
 
-```text
-Google Meet native transcription
-    ↓
-Workspace Events API notification
-    ↓
-Pub/Sub
-    ↓
-Synora worker
-    ↓
-Meet REST API
-    ↓
-Transcript + entries + participants
-    ↓
-PostgreSQL → Evidence → Synora Agent
-```
+All project state transitions and visual changes maintain complete lineage:
+$$\text{Current State} \longrightarrow \text{Proposed Change} \longrightarrow \text{Extracted Knowledge} \longrightarrow \text{Evidence} \longrightarrow \text{Source Event}$$
 
-Workspace Events carries the notification; Meet REST retrieves transcript content.
-
-No browser caption scraping, meeting bots, raw-audio capture, or custom Google Meet speech-to-text is part of the canonical path.
-
-## WhatsApp
-
-Baileys is an external connector boundary for controlled deployments.
-
-```text
-WhatsApp → Baileys bridge → normalized SourceEvent → Evidence → Synora Agent
-```
-
-The model may propose the project a message belongs to. Deterministic policy validates that the project is an authorized destination. Uncertain mappings remain unassigned/reviewable.
-
-## Excalidraw
-
-Excalidraw is the living visual workspace and a source of visual evidence.
-
-The visual representation should use minimum text and maximum visual structure:
-- nodes
-- arrows
-- groups
-- relationships
-- concise labels
-- decision markers
-- requirement markers
-- compact evidence references
-
-It must not become a transcript dump or generic document editor.
-
-High-impact visual changes follow:
-
-```text
-proposal → visual diff → human approval → apply
-```
-
-## Governance
-
-High-impact changes to Project State or the visual workspace require human approval according to policy.
-
-Every important change must be traceable:
-
-```text
-Current State
- → Change
- → Evidence
- → Source
-```
-
-## Enterprise controls
-
-Required:
-- tenant isolation
-- RBAC
-- source permissions
-- encryption at rest
-- audit trail
-- retention controls
-- idempotent processing
-- bounded retries
-- observability
-- backup and restore
-- explicit degraded/error states
-- no fabricated metrics or status
-
-## UI principle
-
-The UI is a control room, not a chatbot.
-
-Primary navigation:
-
-```text
-Overview
-Project State
-Excalidraw
-Meetings
-Evidence
-Decisions
-Conflicts
-Agent
-Sources
-Settings
-```
-
-The Agent view must show one shared Synora Agent and its capabilities, with the active project context clearly visible.
+PostgreSQL is the production system of record; pgvector powers semantic retrieval; Redis and background workers handle asynchronous ingestion; SQLite is permitted only for self-contained local testing.
