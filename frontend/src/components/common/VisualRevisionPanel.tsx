@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { History, RotateCcw } from "lucide-react";
+import { History, RotateCcw, X } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 
 export interface VisualRevisionSummary {
@@ -37,6 +37,7 @@ interface VisualRevisionPanelProps {
   diff?: VisualRevisionDiff | null;
   onSelectCompare?: (revisionNumber: number) => void;
   onRestore?: (revisionNumber: number) => void;
+  onClearCompare?: () => void;
   busy?: boolean;
 }
 
@@ -48,6 +49,7 @@ export function VisualRevisionPanel({
   diff = null,
   onSelectCompare,
   onRestore,
+  onClearCompare,
   busy = false,
 }: VisualRevisionPanelProps) {
   return (
@@ -132,6 +134,20 @@ export function VisualRevisionPanel({
 
       {diff && (
         <div className="p-4 rounded-lg bg-canvas border border-border space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+              visual compare
+            </span>
+            {onClearCompare && (
+              <button
+                onClick={onClearCompare}
+                disabled={busy}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border bg-surface text-[11px] font-medium text-text-main disabled:opacity-50"
+              >
+                <X className="w-3 h-3" /> Exit compare
+              </button>
+            )}
+          </div>
           <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
             r{diff.from_revision} → r{diff.to_revision}
           </span>
