@@ -366,6 +366,17 @@ export const api = {
       body: JSON.stringify({ focus_prompt: focusPrompt, direct_apply: directApply }),
     }),
 
+  generateDiagramFromText: (
+    projectId: string,
+    text: string,
+    autoApply: boolean = true,
+    title?: string
+  ): Promise<{ success: boolean; artifact_version: number; elements: any[]; plan: any; message: string }> =>
+    request(`/projects/${projectId}/excalidraw/text-to-diagram`, {
+      method: "POST",
+      body: JSON.stringify({ text, auto_apply: autoApply, title }),
+    }),
+
 
   // 10. One Project = One Logical Project Agent Architecture
   getProjects: (): Promise<Project[]> =>

@@ -63,3 +63,9 @@ class AiGenerateDiagramRequest(BaseModel):
     focus_prompt: Optional[str] = Field(None, description="Optional focus or instructions for the AI visual generator")
     direct_apply: bool = Field(False, description="If True, directly updates the active canvas; if False, creates a reviewable proposal")
 
+
+class TextToDiagramRequest(BaseModel):
+    text: str = Field(..., description="Raw text describing system architecture, components, or workflows")
+    title: Optional[str] = Field(None, description="Optional diagram title")
+    auto_apply: bool = Field(True, description="When true, directly applies elements to the living Excalidraw canvas")
+

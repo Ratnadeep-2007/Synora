@@ -166,3 +166,37 @@ def test_ai_visual_architecture_is_proposal_only(db_session: Session):
     assert diff["nodes_after"] == ["Client", "API"]
     assert diff["ai_status"] == "ai"
     assert "critique_ok" in diff
+
+
+def test_generate_diagram_from_text_automated(db_session: Session):
+    from app.models.project import Project
+    from app.services.excalidraw_service import ExcalidrawService
+
+    db_session.add(Project(id="proj_text_diagram_test", workspace_id="ws_default", name="Text Diagram Test"))
+    db_session.commit()
+
+    excal = ExcalidrawService()
+    # Baseline must be clean and empty without predefined boilerplate
+    art = excal.get_or_create_artifact("proj_text_diagram_test", db_session)
+    assert json.loads(art.elements_json) == []
+    assert json.loads(art.extracted_nodes_json) == []
+
+    # Automated Text -> Model Analysis -> Excalidraw Output
+    res = excal.generate_diagram_from_text(
+        project_id="proj_text_diagram_test",
+        text="Next.js frontend calls FastAPI backend with PostgreSQL database and Redis cache",
+        db=db_session,
+        auto_apply=True,
+    )
+
+    assert res["success"] is True
+    assert res["auto_applied"] is True
+    assert res["artifact_version"] >= 2
+    assert len(res["elements"]) > 0
+
+    # Ensure artifact in database was directly updated without waiting for manual UI approval
+    db_session.refresh(art)
+    elements = json.loads(art.elements_json)
+    assert len(elements) > 0
+    node_labels = json.loads(art.extracted_nodes_json)
+    assert any("Backend" in l or "Postgres" in l or "Redis" in l or "Frontend" in l or "Service" in l or "Database" in l for l in node_labels)

@@ -259,6 +259,30 @@ export function ArchitectureView({
     }
   };
 
+  const [promptText, setPromptText] = useState("");
+  const [isPromptGenerating, setIsPromptGenerating] = useState(false);
+
+  const handlePromptToDiagram = async () => {
+    if (!projectId || !promptText.trim()) return;
+    try {
+      setIsPromptGenerating(true);
+      const res = await api.generateDiagramFromText(projectId, promptText.trim(), true);
+      setPromptText("");
+      if (res?.elements) {
+        await onIngestScene({
+          name: artifact?.name || "System Architecture",
+          elements: res.elements,
+          app_state: artifact?.app_state,
+        });
+      }
+      await loadRevisions();
+    } catch (err: any) {
+      alert(`Generation failed: ${err.message}`);
+    } finally {
+      setIsPromptGenerating(false);
+    }
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -430,6 +454,31 @@ export function ArchitectureView({
         lastSyncAt={lastSyncAt || artifact?.updated_at}
         onRetry={onRetrySync}
       />
+
+      {/* Direct Automated Text -> Excalidraw Generator */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-2.5 bg-surface border border-border rounded-xl shadow-2xs">
+        <input
+          type="text"
+          value={promptText}
+          onChange={(e) => setPromptText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !isPromptGenerating && promptText.trim()) {
+              handlePromptToDiagram();
+            }
+          }}
+          placeholder="Type your system architecture or flow (e.g. Next.js Client -> FastAPI Gateway -> PostgreSQL & Redis)..."
+          className="flex-1 px-3.5 py-2 text-xs bg-canvas border border-border rounded-lg text-text-main placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+        <button
+          onClick={handlePromptToDiagram}
+          disabled={isPromptGenerating || !promptText.trim()}
+          className="px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary/90 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shrink-0 shadow-2xs"
+          title="Directly compile text to Excalidraw diagram"
+        >
+          <Sparkles className={`w-3.5 h-3.5 ${isPromptGenerating ? "animate-spin text-amber-300" : "text-amber-300"}`} />
+          <span>{isPromptGenerating ? "Generating..." : "Generate Diagram"}</span>
+        </button>
+      </div>
 
       {/* Primary Human-Facing Agent Output: Embedded Interactive Excalidraw Canvas */}
       {compareFrom !== null && currentRevisionNumber !== null && (

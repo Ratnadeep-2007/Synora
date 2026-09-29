@@ -42,6 +42,7 @@ from app.schemas.excalidraw import (
     ExcalidrawIngestRequest,
     ExcalidrawProposalRead,
     ExcalidrawProposalReviewRequest,
+    TextToDiagramRequest,
 )
 from app.schemas.intelligence import AgentRunRead, CandidateKnowledgeRead
 from app.schemas.project_state import (
@@ -1088,6 +1089,31 @@ async def ai_generate_excalidraw_diagram(
         "direct_applied": direct,
         "message": "AI Visual Architecture diagram generated successfully for Excalidraw.",
     }
+
+
+@router.post(
+    "/{project_id}/excalidraw/text-to-diagram",
+    summary="Automated Text to Excalidraw Generator",
+    description="Direct automated pipeline: Text -> Model Analysis -> Excalidraw Output.",
+)
+async def text_to_excalidraw_diagram(
+    project_id: str,
+    body: TextToDiagramRequest,
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    result = excal_service.generate_diagram_from_text(
+        project_id=project_id,
+        text=body.text,
+        db=db,
+        tenant_id=tenant_id,
+        auto_apply=body.auto_apply,
+        actor_id=current_user.id,
+        title=body.title,
+    )
+    return result
 
 
 

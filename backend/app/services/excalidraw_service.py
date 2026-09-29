@@ -65,10 +65,9 @@ class ExcalidrawService:
             .first()
         )
         if not artifact:
-            # Default baseline elements: canonical 5-tier flow
-            canonical_capabilities = ["Business Analysis", "Project Planning", "Functional Analysis", "Technical Architecture", "Frappe / ERP Analysis"]
-            initial_elements = self._build_living_workspace_elements(canonical_capabilities)
-            baseline_nodes = ["Sources / Evidence", "One Shared Synora Agent", "Capabilities", "Deterministic Guardrails", "Authoritative Project State", "Excalidraw Living Workspace"]
+            # Clean baseline without predefined boilerplate:
+            initial_elements = []
+            baseline_nodes = []
             artifact = ExcalidrawArtifact(
                 project_id=project_id,
                 tenant_id=tenant_id,
@@ -81,7 +80,7 @@ class ExcalidrawService:
             db.add(artifact)
             db.commit()
             db.refresh(artifact)
-            logger.info(f"Initialized ExcalidrawArtifact v1 for project '{project_id}'")
+            logger.info(f"Initialized clean ExcalidrawArtifact v1 for project '{project_id}'")
 
         # Ensure the project's immutable visual revision history exists.
         self._ensure_visual_revision(artifact, db, tenant_id=tenant_id, name=name)
@@ -451,6 +450,117 @@ class ExcalidrawService:
             len(critique.issues),
         )
         return proposal, None
+
+    def generate_diagram_from_text(
+        self,
+        project_id: str,
+        text: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        auto_apply: bool = True,
+        actor_id: str = "synora_agent",
+        title: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Simple, direct, fully-automated flow:
+        Text -> Model Analysis -> Excalidraw Output.
+
+        Analyzes the text, generates the VisualPlan, compiles Excalidraw elements,
+        and automatically applies it to the living workspace (updating the canvas
+        and committing an immutable revision) without requiring human UI acceptance.
+        """
+        from app.services.excalidraw_compiler import ExcalidrawCompiler
+        from app.services.visual_plan_service import VisualPlanService
+        from app.services.visual_revision_service import VisualRevisionService
+        from app.models.excalidraw import ExcalidrawProposal, ExcalidrawProposalStatus
+
+        artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
+        state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
+        state_version = state.current_version if state else 1
+
+        # 1. Model Analysis -> VisualPlan
+        planner = VisualPlanService()
+        plan, ai_status = planner.build_plan_from_text(text=text, title=title)
+
+        # 2. Compile to Excalidraw Elements
+        compiler = ExcalidrawCompiler()
+        compiled_elements = compiler.compile(plan)
+        nodes_after = [n.label for n in plan.nodes]
+
+        # 3. Completely automated apply (no manual acceptance required)
+        proposal = None
+        if auto_apply:
+            now = datetime.now(timezone.utc)
+            artifact.elements_json = json.dumps(compiled_elements)
+            artifact.extracted_nodes_json = json.dumps(nodes_after)
+            artifact.version += 1
+            artifact.updated_at = now
+
+            # Commit revision so the workspace is live and preserved
+            VisualRevisionService(audit_service=self.audit_service).commit_revision(
+                project_id=project_id,
+                scene=compiled_elements,
+                db=db,
+                tenant_id=tenant_id,
+                app_state=json.loads(artifact.app_state_json) if artifact.app_state_json else {"viewBackgroundColor": "#ffffff", "gridSize": 20},
+                operations=[{"op_type": "update", "payload": {"action": "text_to_diagram", "nodes": nodes_after}}],
+                actor_id=actor_id,
+                reason=f"Automated diagram from text: {text[:80]}",
+            )
+
+            # Record approved proposal for auditability
+            proposal = ExcalidrawProposal(
+                artifact_id=artifact.id,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                derived_from_state_version=state_version,
+                status=ExcalidrawProposalStatus.APPROVED.value,
+                approved_at=now,
+                approved_by=actor_id,
+                reason=f"Auto-applied from text: {text[:80]}",
+                proposed_elements_json=json.dumps(compiled_elements),
+                diff_preview_json=json.dumps({
+                    "nodes_added": nodes_after,
+                    "nodes_removed": [],
+                    "ai_status": ai_status,
+                }),
+                evidence_ids_json="[]",
+            )
+            db.add(proposal)
+            db.commit()
+            db.refresh(artifact)
+            db.refresh(proposal)
+            logger.info("text_to_diagram_applied: project=%s version=%d nodes=%d", project_id, artifact.version, len(nodes_after))
+        else:
+            proposal = ExcalidrawProposal(
+                artifact_id=artifact.id,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                derived_from_state_version=state_version,
+                status=ExcalidrawProposalStatus.PENDING.value,
+                reason=f"Diagram proposal from text: {text[:80]}",
+                proposed_elements_json=json.dumps(compiled_elements),
+                diff_preview_json=json.dumps({
+                    "nodes_added": nodes_after,
+                    "nodes_removed": [],
+                    "ai_status": ai_status,
+                }),
+                evidence_ids_json="[]",
+            )
+            db.add(proposal)
+            db.commit()
+            db.refresh(proposal)
+
+        return {
+            "success": True,
+            "project_id": project_id,
+            "artifact_version": artifact.version,
+            "elements": compiled_elements,
+            "plan": plan.model_dump(),
+            "ai_status": ai_status,
+            "auto_applied": auto_apply,
+            "proposal_id": proposal.id if proposal else None,
+            "message": "Text successfully analyzed and compiled into Excalidraw diagram.",
+        }
 
     @staticmethod
     def _json_list(raw: Optional[str]) -> List[Any]:

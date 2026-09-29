@@ -53,6 +53,40 @@ class VisualPlanService:
 
         return self._deterministic_plan(state_summary, current_nodes or []), AI_STATUS_DETERMINISTIC
 
+    def build_plan_from_text(
+        self,
+        text: str,
+        title: Optional[str] = None,
+    ) -> Tuple[VisualPlan, str]:
+        """Direct text-to-visual-plan synthesizer.
+
+        Analyzes the text with AI (NVIDIA NIM / DeepSeek / LLM client) to generate
+        a tailored VisualPlan (nodes, edges, groups, layout), or parses
+        the text deterministically if the model is offline.
+        """
+        clean_title = title or (text[:40].strip() + ("..." if len(text) > 40 else ""))
+        state_summary = {
+            "title": clean_title,
+            "vision": text,
+            "architecture": [],
+            "requirements": [{"title": "Requirement", "detail": text}],
+            "decisions": [],
+            "constraints": [],
+            "raw_text": text,
+        }
+
+        if self._explicit_client:
+            plan = self._call_client(state_summary, [], [text], text, None)
+            if plan is not None:
+                return plan, AI_STATUS_AI
+
+        if settings.LLM_PROVIDER.lower() == "nvidia" and settings.is_nvidia_nim_configured:
+            plan = self._call_nim(state_summary, [], [text], text, None)
+            if plan is not None:
+                return plan, AI_STATUS_AI
+
+        return self._plan_from_text_deterministic(text, clean_title), AI_STATUS_DETERMINISTIC
+
     # ------------------------------------------------------------------
     # Semantic providers
     # ------------------------------------------------------------------
@@ -239,4 +273,78 @@ class VisualPlanService:
             notes=["Deterministic plan derived from Project State (AI visual planner unavailable)."],
             model="deterministic",
             prompt_version="visual-plan-deterministic-v1",
+        )
+
+    def _plan_from_text_deterministic(self, text: str, title: str) -> VisualPlan:
+        """Deterministic fallback when AI model is offline: extracts keywords/entities directly from text."""
+        import re
+        nodes: List[VisualNode] = []
+        relationships: List[VisualRelationship] = []
+
+        words = re.findall(r'\b[A-Za-z0-9_-]{2,25}\b', text)
+        known_components: List[Tuple[str, str]] = []
+        keyword_types = {
+            "gateway": "service",
+            "api": "service",
+            "service": "service",
+            "server": "service",
+            "backend": "service",
+            "frontend": "client",
+            "client": "client",
+            "ui": "client",
+            "web": "client",
+            "mobile": "client",
+            "app": "client",
+            "database": "datastore",
+            "db": "datastore",
+            "postgres": "datastore",
+            "postgresql": "datastore",
+            "mysql": "datastore",
+            "mongodb": "datastore",
+            "redis": "datastore",
+            "cache": "datastore",
+            "queue": "queue",
+            "kafka": "queue",
+            "rabbitmq": "queue",
+            "celery": "queue",
+            "auth": "service",
+            "payment": "service",
+            "stripe": "external",
+            "user": "actor",
+            "customer": "actor",
+            "admin": "actor",
+        }
+
+        found_types = set()
+        for w in words:
+            wl = w.lower()
+            if wl in keyword_types and wl not in found_types:
+                found_types.add(wl)
+                known_components.append((w.capitalize(), keyword_types[wl]))
+
+        if not known_components:
+            clauses = [c.strip() for c in re.split(r'[,.;\n]+', text) if len(c.strip()) > 3]
+            for idx, clause in enumerate(clauses[:6]):
+                label = clause[:30].strip()
+                known_components.append((label, "service"))
+
+        if not known_components:
+            known_components = [("Input System", "service"), ("Processing Engine", "service"), ("Output Storage", "datastore")]
+
+        for idx, (label, ntype) in enumerate(known_components):
+            nid = f"node_{idx}"
+            nodes.append(VisualNode(id=nid, label=label, node_type=ntype))
+            if idx > 0:
+                relationships.append(VisualRelationship(source=f"node_{idx-1}", target=nid))
+
+        return VisualPlan(
+            title=title,
+            layout_direction="horizontal",
+            grouping_intent=["system"],
+            nodes=nodes,
+            relationships=relationships,
+            preserve=[],
+            notes=["Synthesized directly from input text."],
+            model="deterministic",
+            prompt_version="visual-plan-text-deterministic-v1",
         )
