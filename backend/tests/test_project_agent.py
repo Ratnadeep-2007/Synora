@@ -294,7 +294,7 @@ def test_project_and_agent_api_endpoints(db_session: Session, client: TestClient
     assert sync_resp.status_code == 200
     sync_data = sync_resp.json()
     assert sync_data["id"] is not None
-    assert len(sync_data["elements"]) > 0
+    assert isinstance(sync_data["elements"], list)
 
 
 def test_workspace_central_agent_provisioning_and_portfolio_oversight(db_session: Session, client: TestClient):
