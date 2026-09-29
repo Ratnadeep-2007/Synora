@@ -252,12 +252,20 @@ async def whatsapp_webhook(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Malformed JSON: {exc}")
 
     if isinstance(payload, list):
+        for msg in payload:
+            if isinstance(msg, dict):
+                msg.setdefault("auto_apply_diagram", True)
         results = [whatsapp_service.process_incoming_message(msg, db) for msg in payload]
         return {"ok": True, "count": len(results), "results": results}
     elif isinstance(payload, dict) and "messages" in payload and isinstance(payload["messages"], list):
+        for msg in payload["messages"]:
+            if isinstance(msg, dict):
+                msg.setdefault("auto_apply_diagram", True)
         results = [whatsapp_service.process_incoming_message(msg, db) for msg in payload["messages"]]
         return {"ok": True, "count": len(results), "results": results}
     else:
+        if isinstance(payload, dict):
+            payload.setdefault("auto_apply_diagram", True)
         result = whatsapp_service.process_incoming_message(payload, db)
         return result
 
@@ -276,6 +284,7 @@ def simulate_whatsapp_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message 'text' is required.")
 
     tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    payload.setdefault("auto_apply_diagram", True)
     result = whatsapp_service.process_incoming_message(payload, db, tenant_id=tenant_id)
     metrics.increment("ingestion_events_total", labels={"source": "whatsapp"})
     return result

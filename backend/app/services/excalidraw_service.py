@@ -202,7 +202,7 @@ class ExcalidrawService:
 
         extracted_nodes = self._extract_node_labels(req.elements)
         visual_summary = f"Excalidraw diagram '{req.name}' with components: {', '.join(extracted_nodes)}"
-        pipeline = SourceIntelligencePipeline()
+        pipeline = getattr(self, "pipeline", None) or SourceIntelligencePipeline()
 
         synthetic_event_id = f"excal_raw_{int(datetime.now().timestamp() * 1000)}"
         outcome = pipeline.process(

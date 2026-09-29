@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.project import Project
 from app.services.audit_service import AuditService
 from app.services.excalidraw_service import ExcalidrawService
@@ -185,14 +186,41 @@ class WhatsAppIntelligenceService:
         matched_project = db.query(Project).filter(Project.id == project_id).first()
         confidence = 1.0
 
-        # Visual changes are proposal-first: the living workspace is never
-        # silently mutated by an incoming message.
-        proposal = self._propose_visual_update(
-            project_id=project_id,
-            db=db,
-            tenant_id=tenant_id,
-            reason=f"WhatsApp update from '{sender_name}' in group '{group_name}'",
+        auto_apply = bool(
+            payload.get("auto_apply_diagram", getattr(settings, "AUTO_APPLY_VISUAL_UPDATES", False))
         )
+
+        proposal = None
+        diagram_res = None
+        excalidraw_updated = False
+
+        if auto_apply:
+            try:
+                diagram_res = self.excal_service.generate_diagram_from_text(
+                    project_id=project_id,
+                    text=raw_text,
+                    db=db,
+                    tenant_id=tenant_id,
+                    auto_apply=True,
+                    actor_id=sender_name or "whatsapp_agent",
+                )
+                excalidraw_updated = bool(
+                    diagram_res.get("auto_applied")
+                    or diagram_res.get("applied")
+                    or diagram_res.get("success")
+                )
+            except Exception as exc:
+                logger.error(f"Error auto-applying Excalidraw diagram from WhatsApp: {exc}")
+                excalidraw_updated = False
+        else:
+            # Visual changes are proposal-first when auto_apply is False:
+            # the living workspace is not mutated without human review.
+            proposal = self._propose_visual_update(
+                project_id=project_id,
+                db=db,
+                tenant_id=tenant_id,
+                reason=f"WhatsApp update from '{sender_name}' in group '{group_name}'",
+            )
 
         self.audit_service.record_event(
             action="whatsapp_group_message_processed",
@@ -207,8 +235,17 @@ class WhatsAppIntelligenceService:
                 "ai_status": outcome.ai_status,
                 "candidates_created": outcome.candidates_created,
                 "visual_proposal_id": proposal.id if proposal else None,
+                "excalidraw_updated": excalidraw_updated,
             },
         )
+
+        msg_str = (
+            f"Routed to project '{matched_project.name if matched_project else project_id}'."
+        )
+        if excalidraw_updated:
+            msg_str += " Excalidraw whiteboard automatically updated with new architecture diagram."
+        elif proposal:
+            msg_str += " Visual changes are pending human review."
 
         return {
             "ok": True,
@@ -225,14 +262,12 @@ class WhatsAppIntelligenceService:
             "evidence_id": outcome.evidence_id,
             "candidate_id": None,
             "candidates_created": outcome.candidates_created,
-            "excalidraw_updated": False,
+            "excalidraw_updated": excalidraw_updated,
             "visual_proposal_pending": proposal is not None,
             "proposal_id": proposal.id if proposal else None,
+            "diagram": diagram_res,
             "multimodal": multimodal_meta or None,
-            "message": (
-                f"Routed to project '{matched_project.name if matched_project else project_id}'. "
-                "Visual changes are pending human review."
-            ),
+            "message": msg_str,
         }
 
     def _conversation_continuity(

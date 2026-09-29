@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.15)
     CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
+    AUTO_APPLY_VISUAL_UPDATES: bool = Field(default=False, description="Whether incoming messages auto-apply diagrams directly to Excalidraw")
 
     model_config = SettingsConfigDict(env_file=(".env", "backend/.env", "../.env"), env_file_encoding="utf-8", extra="ignore")
 

@@ -492,3 +492,73 @@ def test_whatsapp_session_status_lifecycle_and_group_count(client):
     assert body2["details"]["session_status"] == "disconnected"
     assert body2["details"]["active_groups_count"] is None
 
+
+def test_whatsapp_message_auto_applies_diagram_to_excalidraw(db_session: Session):
+    """
+    Validates end-to-end automated pipeline:
+    WhatsApp Message In -> Classified to Project -> Excalidraw Diagram Generated & Directly Applied.
+    No UI interaction needed.
+    """
+    from app.models.visual_revision import VisualRevision
+
+    agent_service = ProjectAgentService()
+    service = WhatsAppIntelligenceService()
+
+    proj = agent_service.get_or_create_project(
+        project_id="proj_auto_diagram",
+        name="Auto Pipeline Service",
+        description="Autonomous diagram generation test",
+        workspace_id="ws_default",
+        db=db_session,
+    )
+
+    artifact = service.excal_service.get_or_create_artifact(
+        project_id=proj.id,
+        db=db_session,
+    )
+    assert artifact.version == 1
+
+    payload = {
+        "message_id": "wamid.AUTO12345",
+        "sender_jid": "919999999999@s.whatsapp.net",
+        "sender_name": "DevOps Architect",
+        "group_jid": "120363025812345678@g.us",
+        "group_name": "Core Architecture",
+        "text": (
+            f"Regarding {proj.id}: We are designing a microservices architecture with an "
+            "API Gateway that directs requests to Auth Service and Payment Service, "
+            "persisting into Postgres DB with a Redis cache."
+        ),
+        "auto_apply_diagram": True,
+    }
+
+    result = service.process_incoming_message(payload, db_session)
+
+    assert result["ok"] is True
+    assert result["processed"] is True
+    assert result["matched_project"]["id"] == proj.id
+    assert result["excalidraw_updated"] is True
+    assert result["visual_proposal_pending"] is False
+
+    # Verify artifact updated directly
+    db_session.refresh(artifact)
+    assert artifact.version == 2
+    elements = json.loads(artifact.elements_json)
+    assert len(elements) > 0
+
+    nodes = json.loads(artifact.extracted_nodes_json)
+    assert len(nodes) >= 2
+    node_labels = [n.lower() for n in nodes]
+    assert any("api" in n or "gateway" in n for n in node_labels)
+
+    # Verify visual revision was committed
+    revisions = (
+        db_session.query(VisualRevision)
+        .filter(VisualRevision.project_id == proj.id)
+        .all()
+    )
+    assert len(revisions) >= 2  # v1 (clean baseline) + v2 (auto-applied architecture)
+    latest_rev = max(revisions, key=lambda r: r.revision_number)
+    assert latest_rev.revision_number == 2
+
+

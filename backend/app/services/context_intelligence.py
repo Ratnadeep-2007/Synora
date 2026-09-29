@@ -377,7 +377,10 @@ class ContextIntelligenceService:
             return [], None, False
 
         if not self._explicit_client:
-            provider = settings.LLM_PROVIDER.lower()
+            provider = (settings.LLM_PROVIDER or "").lower()
+            if provider == "deterministic":
+                # Deterministic-only mode: no semantic candidates, and no fabricated output.
+                return [], "deterministic_only", False
             is_active = (
                 (provider == "groq" and settings.is_groq_configured)
                 or (provider == "nvidia" and settings.is_nvidia_nim_configured)
@@ -385,15 +388,22 @@ class ContextIntelligenceService:
                 or settings.is_nvidia_nim_configured
             )
             if not is_active:
-                # Deterministic-only mode: no semantic candidates, and no fabricated output.
+                # No semantic provider is reachable: safe deterministic-only path.
+                # Candidates stay empty so content routes to Unknown Context;
+                # nothing here is ever presented as AI output.
                 return [], "ai_unavailable", False
 
         prompt = self._build_semantic_prompt(text, corpus, continuity_context, visual_context)
         try:
             batch = self.llm_client.generate_structured(prompt, ContextCandidateBatch)
         except NotImplementedError:
+            # Safe fallback path (deterministic rule engine has no semantic
+            # ranking): report it explicitly and keep candidates empty so the
+            # content routes to Unknown Context instead of guessing.
             return [], "ai_unavailable", False
         except Exception as exc:
+            # Provider failover: a live AI failure must never fabricate
+            # candidates. Surface the error state and fall to Unknown Context.
             logger.warning("context_intelligence_semantic_failed: %s", exc)
             return [], "semantic_error", False
 

@@ -82,6 +82,12 @@ class KnowledgeIntelligenceService:
         provider = (settings.LLM_PROVIDER or "").lower()
         if provider == "deterministic":
             return DeterministicRuleLLMClient(), AiStatus.DETERMINISTIC.value
+        if provider == "groq":
+            if settings.is_groq_configured:
+                from app.services.llm import get_default_llm_client
+
+                return get_default_llm_client(), AiStatus.AI.value
+            return None, AiStatus.UNAVAILABLE.value
         if provider == "nvidia" and settings.is_nvidia_nim_configured:
             from app.services.llm import get_default_llm_client
 

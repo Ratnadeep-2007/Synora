@@ -396,22 +396,28 @@ def get_default_llm_client() -> LLMClient:
     """Return the configured semantic provider. Supports Groq, NVIDIA NIM, or deterministic fallback."""
     from app.core.config import settings
 
-    provider = settings.LLM_PROVIDER.lower()
-    if provider == "groq" and settings.is_groq_configured:
-        logger.info("Initializing Groq LLM client with model '%s'", settings.GROQ_MODEL)
-        return GroqLLMClient(
-            api_key=settings.GROQ_API_KEY,
-            model_name=settings.GROQ_MODEL,
-            base_url=settings.GROQ_BASE_URL,
-        )
-    elif provider == "nvidia" and settings.is_nvidia_nim_configured:
-        logger.info("Initializing NVIDIA NIM LLM client with model '%s'", settings.NVIDIA_MODEL)
-        return NvidiaNimLLMClient(
-            api_key=settings.NVIDIA_API_KEY,
-            model_name=settings.NVIDIA_MODEL,
-            base_url=settings.NVIDIA_BASE_URL,
-        )
-    elif settings.is_groq_configured:
+    provider = (settings.LLM_PROVIDER or "").lower()
+    if provider == "groq":
+        if settings.is_groq_configured:
+            logger.info("Initializing Groq LLM client with model '%s'", settings.GROQ_MODEL)
+            return GroqLLMClient(
+                api_key=settings.GROQ_API_KEY,
+                model_name=settings.GROQ_MODEL,
+                base_url=settings.GROQ_BASE_URL,
+            )
+        return DeterministicRuleLLMClient()
+    if provider == "nvidia":
+        if settings.is_nvidia_nim_configured:
+            logger.info("Initializing NVIDIA NIM LLM client with model '%s'", settings.NVIDIA_MODEL)
+            return NvidiaNimLLMClient(
+                api_key=settings.NVIDIA_API_KEY,
+                model_name=settings.NVIDIA_MODEL,
+                base_url=settings.NVIDIA_BASE_URL,
+            )
+        return DeterministicRuleLLMClient()
+    if provider == "deterministic":
+        return DeterministicRuleLLMClient()
+    if settings.is_groq_configured:
         logger.info("Auto-selecting Groq LLM client with model '%s'", settings.GROQ_MODEL)
         return GroqLLMClient(
             api_key=settings.GROQ_API_KEY,
