@@ -316,9 +316,18 @@ export async function connectToWhatsApp(): Promise<WASocket> {
         if (result && result.matched_project) {
           console.log(`  🎯 Discovered Project: ${result.matched_project.name} (${result.matched_project.id})`);
           console.log(`  🧠 Confidence: ${(result.confidence * 100).toFixed(1)}% | Reason: ${result.reasoning}`);
+          if (result.visual_proposal_pending) {
+            console.log(`  💡 Visual Architecture Proposal created: ${result.proposal_id} (pending review in UI)`);
+          }
           if (result.excalidraw_updated) {
             console.log(`  🎨 Excalidraw Whiteboard Updated! Artifact v${result.artifact_version} | Nodes Added: ${JSON.stringify(result.nodes_added)}`);
           }
+        } else if (result && result.status === "unknown_context") {
+          console.log(`  ❓ Unknown Context (preserved for triage): ${result.reason || ""} | evidence=${result.evidence_id || ""} unknown_item=${result.unknown_item_id || ""}`);
+        } else if (result && result.status === "ignored") {
+          console.log(`  ⏭️ Ignored casual chit-chat: ${result.reason || ""}`);
+        } else if (result) {
+          console.log(`  ℹ️ Backend response: ${JSON.stringify(result).slice(0, 300)}`);
         }
       } catch (err: any) {
         console.error("  ❌ Failed to process message in Synora:", err.message);

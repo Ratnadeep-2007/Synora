@@ -140,7 +140,21 @@ class WhatsAppIntelligenceService:
                 "evidence_id": outcome.evidence_id,
                 "confidence": 0.0,
                 "excalidraw_updated": False,
+                "multimodal": multimodal_meta or None,
                 "message": "Message preserved in Unknown Context for human review.",
+            }
+
+        if outcome.outcome == "ignored":
+            return {
+                "ok": True,
+                "processed": False,
+                "status": "ignored",
+                "reason": outcome.reason or "Casual conversation / non-project chit-chat (leave it)",
+                "matched_project": None,
+                "confidence": 0.0,
+                "excalidraw_updated": False,
+                "multimodal": multimodal_meta or None,
+                "message": "Message ignored: casual chit-chat detected. All project evidence left untouched.",
             }
 
         if outcome.outcome == "duplicate":
@@ -153,6 +167,18 @@ class WhatsAppIntelligenceService:
                 "confidence": 0.0,
                 "excalidraw_updated": False,
                 "message": "Duplicate message ignored (already processed).",
+            }
+
+        if outcome.outcome == "ignored":
+            return {
+                "ok": True,
+                "processed": False,
+                "status": "ignored",
+                "reason": outcome.reason,
+                "matched_project": None,
+                "confidence": 0.0,
+                "excalidraw_updated": False,
+                "message": "Message ignored: casual chit-chat detected. All project evidence left untouched.",
             }
 
         project_id = outcome.project_id
@@ -202,6 +228,7 @@ class WhatsAppIntelligenceService:
             "excalidraw_updated": False,
             "visual_proposal_pending": proposal is not None,
             "proposal_id": proposal.id if proposal else None,
+            "multimodal": multimodal_meta or None,
             "message": (
                 f"Routed to project '{matched_project.name if matched_project else project_id}'. "
                 "Visual changes are pending human review."
@@ -226,13 +253,19 @@ class WhatsAppIntelligenceService:
                 .all()
             )
             lines = []
+            if group_name and group_name != "WhatsApp Group":
+                lines.append(f"WhatsApp Group: {group_name}")
             for ev in recent:
                 try:
-                    body = json.loads(ev.payload_json).get("text", "")
+                    payload = json.loads(ev.payload_json)
+                    body = payload.get("text", "")
+                    sender = payload.get("sender_name", "")
                 except Exception:
                     body = ""
+                    sender = ""
                 if body:
-                    lines.append(f"- {body}")
+                    sender_prefix = f"{sender}: " if sender else ""
+                    lines.append(f"- {sender_prefix}{body}")
             return "\n".join(lines)
         except Exception:
             return ""
@@ -261,62 +294,11 @@ class WhatsAppIntelligenceService:
         Detects casual non-project banter, greetings, food/lunch talk,
         meeting link requests, and short acknowledgments.
         Returns True if the message should be completely ignored (leave it).
+        Delegates to the shared gate so every source behaves identically.
         """
-        clean = text.strip().lower()
-        if not clean:
-            return True
+        from app.services.context_intelligence import ContextIntelligenceService
 
-        # Extract alphanumeric words
-        cleaned_words = re.findall(r"[a-z0-9]+", clean)
-        acks = {
-            "ok", "okay", "k", "kk", "cool", "sure", "done", "got", "it", "noted",
-            "yes", "yeah", "yep", "no", "nope", "thanks", "thank", "you", "thx", "ty",
-            "great", "awesome", "perfect", "good", "nice", "sounds", "will", "do",
-            "alright", "agreed", "understood"
-        }
-        if cleaned_words and all(w in acks for w in cleaned_words):
-            return True
-
-        # Casual greeting phrases
-        greetings = [
-            r"^good\s+(morning|afternoon|evening|night)\b",
-            r"^gm\b",
-            r"^(hey|hi|hello|hola|yo)\b",
-            r"^how\s+are\s+you\b",
-            r"^whats\s+up\b",
-            r"^what's\s+up\b",
-            r"^happy\s+(friday|monday|weekend|birthday)\b",
-            r"^have\s+a\s+good\s+(weekend|day|evening)\b",
-            r"^see\s+you\s+(tomorrow|later|soon)\b",
-            r"^bye\b",
-        ]
-        tech_anchors = [
-            "api", "service", "pipeline", "database", "redis", "jwt", "model",
-            "excalidraw", "project", "architecture", "decided", "integrate", "claims", "core"
-        ]
-        for pattern in greetings:
-            if re.search(pattern, clean):
-                if not any(anchor in clean for anchor in tech_anchors):
-                    return True
-
-        # Food, lunch, coffee, social outings
-        if re.search(r"\b(lunch|dinner|breakfast|coffee|tea|pizza|burger|snacks|cafeteria|restaurant|hungry|food|drinks|beers)\b", clean):
-            if not any(anchor in clean for anchor in tech_anchors):
-                return True
-
-        # Meeting links & logistics banter
-        logistics_patterns = [
-            r"\b(send|share|give|drop|where is|what is)\b.*?\b(link|url)\b",
-            r"\b(zoom|meet|gmeet|teams|call)\s+(link|url)\b",
-            r"\b(can you call me|give me a call|call you in a bit|on another call)\b",
-            r"\b(are you free|anyone free|quick sync|hop on a call)\b",
-            r"\b(traffic is bad|running late|be there in \d+\s*mins?)\b",
-        ]
-        if any(re.search(pat, clean) for pat in logistics_patterns):
-            if not any(anchor in clean for anchor in tech_anchors):
-                return True
-
-        return False
+        return ContextIntelligenceService.is_casual_chatter(text)
 
     def _clean_summary(self, text: str, prefix: str = "") -> str:
         """Helper to create a neat 1-line summary title from message text."""

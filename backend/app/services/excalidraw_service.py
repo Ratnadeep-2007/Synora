@@ -186,6 +186,71 @@ class ExcalidrawService:
         logger.info(f"Ingested Excalidraw diagram for project '{project_id}' as evidence '{evidence.id}'")
         return artifact, evidence
 
+    def ingest_unassociated_diagram(
+        self,
+        req: ExcalidrawIngestRequest,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        actor_id: str = "system_excalidraw",
+    ) -> Dict[str, Any]:
+        """
+        Ingests an Excalidraw diagram scene WITHOUT a trusted project binding.
+        Runs it through Unified Context Intelligence to resolve project or Unknown Context.
+        Never writes ambiguous information directly onto a real project's live canvas.
+        """
+        from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+        from app.services.source_intelligence_pipeline import SourceIntelligencePipeline
+
+        extracted_nodes = self._extract_node_labels(req.elements)
+        visual_summary = f"Excalidraw diagram '{req.name}' with components: {', '.join(extracted_nodes)}"
+        pipeline = SourceIntelligencePipeline()
+
+        synthetic_event_id = f"excal_raw_{int(datetime.now().timestamp() * 1000)}"
+        outcome = pipeline.process(
+            source="excalidraw",
+            payload={
+                "name": req.name,
+                "text": visual_summary,
+                "extracted_nodes": extracted_nodes,
+                "elements": req.elements,
+                "app_state": req.app_state,
+            },
+            db=db,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            source_event_id=synthetic_event_id,
+            event_type="diagram_import",
+            visual_context=visual_summary,
+        )
+
+        if outcome.outcome == "resolved" and outcome.project_id:
+            resolved_proj_id = outcome.project_id
+            from app.services.project_state_service import ProjectStateService
+            state_svc = ProjectStateService()
+            state = state_svc.get_or_create_state(resolved_proj_id, db)
+            proposal = self.generate_proposal_from_state(
+                project_id=resolved_proj_id,
+                state_version=state.current_version,
+                db=db,
+                tenant_id=tenant_id,
+                reason=f"Excalidraw diagram import '{req.name}'",
+            )
+            return {
+                "status": "resolved",
+                "project_id": resolved_proj_id,
+                "evidence_id": outcome.evidence_id,
+                "proposal_id": proposal.id if proposal else None,
+                "reason": outcome.reason,
+            }
+        else:
+            return {
+                "status": "unknown_context",
+                "project_id": SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID,
+                "unknown_item_id": outcome.unknown_item_id,
+                "evidence_id": outcome.evidence_id,
+                "reason": outcome.reason,
+            }
+
     def generate_proposal_from_state(
         self,
         project_id: str,
@@ -199,26 +264,46 @@ class ExcalidrawService:
         Computes a visual diff preview without modifying the authoritative artifact.
         """
         artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
-        
+
         # Read the target state or version snapshot
         state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
         if not state:
             raise ExcalidrawError(f"Project '{project_id}' has no ProjectState.")
 
-        agent_workflow = json.loads(state.agent_workflow_json) if state.agent_workflow_json else []
         nodes_before = json.loads(artifact.extracted_nodes_json) if artifact.extracted_nodes_json else []
+        current_scene = self._json_list(artifact.elements_json)
 
-        # Target nodes based on Project State
-        # If user is in workflow, prepend User
-        nodes_after = list(agent_workflow)
-        if "User" not in nodes_after:
-            nodes_after = ["User"] + nodes_after
+        # Visualisation is derived from project KNOWLEDGE (vision, requirements,
+        # architecture, decisions) - not from the deprecated agent workflow - and
+        # is compiled by the deterministic compiler rather than hand-built JSON.
+        from app.services.excalidraw_compiler import ExcalidrawCompiler
+        from app.services.visual_critique_service import VisualCritiqueService
+        from app.services.visual_plan_service import VisualPlanService
 
+        state_summary = {
+            "title": state.title,
+            "vision": state.vision,
+            "requirements": self._json_list(state.requirements_json),
+            "architecture": self._json_list(state.architecture_json),
+            "decisions": self._json_list(state.decisions_json),
+            "constraints": self._json_list(state.constraints_json),
+            "open_questions": self._json_list(state.open_questions_json),
+        }
+        plan, ai_status = VisualPlanService().build_plan(
+            state_summary=state_summary,
+            current_nodes=nodes_before,
+            evidence_snippets=self._recent_evidence_snippets(project_id, db),
+            focus_prompt=reason,
+        )
+        proposed_elements = ExcalidrawCompiler().compile(plan)
+        critique = VisualCritiqueService().critique(plan, proposed_elements)
+
+        nodes_after = [n.label for n in plan.nodes]
         nodes_added = [n for n in nodes_after if n not in nodes_before]
         nodes_removed = [n for n in nodes_before if n not in nodes_after]
 
-        connections_before = [f"{nodes_before[i]} -> {nodes_before[i+1]}" for i in range(len(nodes_before) - 1)]
-        connections_after = [f"{nodes_after[i]} -> {nodes_after[i+1]}" for i in range(len(nodes_after) - 1)]
+        connections_before = self._scene_relationships(current_scene)
+        connections_after = [f"{r.source} -> {r.target}" for r in plan.relationships]
 
         diff_preview = {
             "nodes_before": nodes_before,
@@ -227,19 +312,14 @@ class ExcalidrawService:
             "nodes_removed": nodes_removed,
             "connections_before": connections_before,
             "connections_after": connections_after,
+            "layout_direction": plan.layout_direction,
+            "critique_ok": critique.ok,
+            "critique_issues": critique.issues,
+            "ai_status": ai_status,
         }
 
-        # Build proposed elements scene with decisions and living workspace cards
-        decisions = json.loads(state.decisions_json) if state.decisions_json else []
-        requirements = json.loads(state.requirements_json) if state.requirements_json else []
-        proposed_elements = self._build_living_workspace_elements(
-            node_names=nodes_after,
-            decisions=decisions,
-            requirements=requirements,
-        )
-
         summary_reason = reason or (
-            f"Align architecture diagram with approved Project State v{state_version}. "
+            f"Align living workspace with Project State v{state_version}. "
             f"Added nodes: {', '.join(nodes_added) if nodes_added else 'None'}. "
             f"Removed nodes: {', '.join(nodes_removed) if nodes_removed else 'None'}."
         )

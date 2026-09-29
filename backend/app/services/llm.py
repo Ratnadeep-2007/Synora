@@ -297,12 +297,129 @@ class NvidiaNimLLMClient(LLMClient):
             return self._fallback_client.generate_structured(prompt, schema)
 
 
+class GroqLLMClient(LLMClient):
+    """
+    High-speed OpenAI-compatible LLM Client for Groq (e.g. openai/gpt-oss-20b or llama models).
+    Provides sub-second structured JSON extraction with fallback to DeterministicRuleLLMClient.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "openai/gpt-oss-20b",
+        base_url: str = "https://api.groq.com/openai/v1",
+        timeout_seconds: float = 15.0,
+    ):
+        self.api_key = api_key.strip()
+        self.model_name = model_name
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self._fallback_client = DeterministicRuleLLMClient()
+
+    def generate_structured(self, prompt: str, schema: Type[T]) -> T:
+        if not self.api_key or self.api_key.startswith("your-") or not self.api_key.strip():
+            logger.info("Groq API key not configured. Using deterministic rule engine.")
+            return self._fallback_client.generate_structured(prompt, schema)
+
+        import httpx
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Synora/1.0",
+        }
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an enterprise software architecture intelligence extraction model for Synora. "
+                        "Respond strictly in valid JSON matching the requested schema."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+                if resp.status_code != 200:
+                    logger.warning(
+                        f"Groq API returned HTTP {resp.status_code}: {resp.text[:200]}. Falling back to rule engine."
+                    )
+                    return self._fallback_client.generate_structured(prompt, schema)
+
+                res_json = resp.json()
+                msg = res_json["choices"][0]["message"]
+                content = msg.get("content") or msg.get("reasoning_content") or ""
+                if not content or not content.strip():
+                    return self._fallback_client.generate_structured(prompt, schema)
+
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+
+                parsed = json.loads(content)
+
+                if schema == ExtractionBatchResult:
+                    items = []
+                    raw_items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
+                    for it in raw_items:
+                        items.append(CandidateItemDTO(
+                            category=it.get("category", "proposal"),
+                            classification=it.get("classification", ClassificationEnum.PROPOSAL),
+                            title=it.get("title", "Candidate"),
+                            content=it.get("content", ""),
+                            confidence=float(it.get("confidence", 0.9)),
+                            evidence_ids=it.get("evidence_ids", []),
+                        ))
+                    return ExtractionBatchResult(
+                        items=items,
+                        model=f"groq/{self.model_name}",
+                        prompt_version="v2.0-groq",
+                    )  # type: ignore
+
+                return schema.model_validate(parsed)
+
+        except Exception as exc:
+            logger.warning(f"Groq LLM call failed: {exc}. Using deterministic rule engine fallback.")
+            return self._fallback_client.generate_structured(prompt, schema)
+
+
 def get_default_llm_client() -> LLMClient:
-    """Return the configured semantic provider. NVIDIA NIM is the product default."""
+    """Return the configured semantic provider. Supports Groq, NVIDIA NIM, or deterministic fallback."""
     from app.core.config import settings
 
-    if settings.LLM_PROVIDER.lower() == "nvidia" and settings.is_nvidia_nim_configured:
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == "groq" and settings.is_groq_configured:
+        logger.info("Initializing Groq LLM client with model '%s'", settings.GROQ_MODEL)
+        return GroqLLMClient(
+            api_key=settings.GROQ_API_KEY,
+            model_name=settings.GROQ_MODEL,
+            base_url=settings.GROQ_BASE_URL,
+        )
+    elif provider == "nvidia" and settings.is_nvidia_nim_configured:
         logger.info("Initializing NVIDIA NIM LLM client with model '%s'", settings.NVIDIA_MODEL)
+        return NvidiaNimLLMClient(
+            api_key=settings.NVIDIA_API_KEY,
+            model_name=settings.NVIDIA_MODEL,
+            base_url=settings.NVIDIA_BASE_URL,
+        )
+    elif settings.is_groq_configured:
+        logger.info("Auto-selecting Groq LLM client with model '%s'", settings.GROQ_MODEL)
+        return GroqLLMClient(
+            api_key=settings.GROQ_API_KEY,
+            model_name=settings.GROQ_MODEL,
+            base_url=settings.GROQ_BASE_URL,
+        )
+    elif settings.is_nvidia_nim_configured:
+        logger.info("Auto-selecting NVIDIA NIM LLM client with model '%s'", settings.NVIDIA_MODEL)
         return NvidiaNimLLMClient(
             api_key=settings.NVIDIA_API_KEY,
             model_name=settings.NVIDIA_MODEL,

@@ -43,11 +43,17 @@ class WhatsAppZipParser:
 
         self.file_list = set(self.zf.namelist())
 
-        # Locate the chat text file
+        # Locate the chat text file. WhatsApp always names it `_chat.txt`; prefer
+        # that over any other .txt in the archive.
         txt_candidates = [n for n in self.file_list if n.endswith(".txt")]
         if not txt_candidates:
             raise ValueError("No .txt chat export file found inside the zip archive.")
-        self.txt_filename = txt_candidates[0]
+        preferred = [
+            n for n in txt_candidates if Path(n).name == "_chat.txt"
+        ] or [
+            n for n in txt_candidates if "whatsapp chat" in Path(n).name.lower()
+        ]
+        self.txt_filename = (preferred or txt_candidates)[0]
 
     def parse_messages(self) -> List[Dict[str, Any]]:
         with self.zf.open(self.txt_filename) as f:
@@ -86,13 +92,16 @@ class WhatsAppZipParser:
         if current:
             messages.append(current)
 
-        # Match referenced attachments
+        # Match referenced attachments. WhatsApp references media by its base
+        # filename (e.g. "PTT-20260912-WA0001.opus" or "<attached: ...>"), so
+        # match on both the basename and the full archive path.
         for msg in messages:
             text = msg["text"]
-            for fn in self.file_list:
+            for fn in sorted(self.file_list, key=len, reverse=True):
                 if fn == self.txt_filename:
                     continue
-                if fn in text or f"{fn} (file attached)" in text:
+                basename = Path(fn).name
+                if basename and basename in text:
                     msg["attachment"] = fn
                     break
 

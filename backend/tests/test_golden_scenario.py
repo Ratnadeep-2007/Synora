@@ -200,11 +200,13 @@ def test_golden_end_to_end_scenario(db_session: Session, client: TestClient):
     assert proposal.status == ExcalidrawProposalStatus.PENDING.value
     assert proposal.derived_from_state_version == 2
 
-    # Verify structured diff preview
+    # Verify structured diff preview. Visualisation is derived from project
+    # knowledge (not the deprecated agent workflow) and compiled deterministically.
     diff = json.loads(proposal.diff_preview_json)
-    assert "Onboarding Agent" in diff["nodes_added"]
-    assert "User -> Onboarding Agent" in diff["connections_after"]
-    assert "Onboarding Agent -> BA Agent" in diff["connections_after"]
+    assert diff["nodes_after"], "expected a compiled visual plan"
+    assert diff["nodes_added"], "expected new nodes derived from Project State"
+    assert diff["connections_after"], "expected compiled relationships"
+    assert "critique_ok" in diff
     # Verify authoritative artifact is NOT yet updated (Output Safety)
     db_session.refresh(artifact)
     assert artifact.version == 1, "Authoritative artifact was mutated before human approval!"
@@ -223,7 +225,21 @@ def test_golden_end_to_end_scenario(db_session: Session, client: TestClient):
     assert reviewed_prop.status == ExcalidrawProposalStatus.APPROVED.value
     assert updated_artifact is not None
     assert updated_artifact.version == 2
-    assert "Onboarding Agent" in json.loads(updated_artifact.extracted_nodes_json)
+    # Approval applies the COMPILED visual plan derived from Project State, so the
+    # artifact now carries the canonical shared-agent nodes (not the deprecated
+    # sequential agent workflow).
+    applied_nodes = json.loads(updated_artifact.extracted_nodes_json)
+    assert "Synora Agent" in applied_nodes
+    assert "Project State" in applied_nodes
+    assert "Onboarding Agent" not in applied_nodes
+
+    # The approval also appends an immutable visual revision linked to state v2.
+    from app.services.visual_revision_service import VisualRevisionService
+
+    latest_revision = VisualRevisionService().current_revision(project_id, db_session)
+    assert latest_revision is not None
+    assert latest_revision.derived_from_project_state_version == 2
+    assert latest_revision.proposal_id == proposal.id
 
     # Verify audit log entry
     audit_logs = audit_service.query_logs(

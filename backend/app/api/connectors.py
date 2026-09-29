@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -83,10 +84,18 @@ async def slack_events_webhook(
     if payload.get("type") == "url_verification":
         return {"challenge": payload.get("challenge")}
 
-    # 3. Normalize & Ingest
+    # 3. Normalize & Ingest (casual chit-chat never reaches the platform).
     normalized_events = connector.handle_webhook(payload=payload, headers=headers)
+    from app.services.context_intelligence import ContextIntelligenceService
+
     ingested_events = []
+    ignored_casual = 0
     for event_in in normalized_events:
+        _text = (event_in.payload or {}).get("text", "") if isinstance(event_in.payload, dict) else ""
+        if ContextIntelligenceService.is_casual_chatter(_text):
+            ignored_casual += 1
+            metrics.increment("ingestion_events_total", labels={"source": "slack", "status": "ignored_casual"})
+            continue
         ingested = ingestion_service.ingest_event(event_in, db)
         ingested_events.append(ingested.event_id)
         metrics.increment("ingestion_events_total", labels={"source": "slack"})
@@ -95,6 +104,7 @@ async def slack_events_webhook(
         "ok": True,
         "events_received": len(normalized_events),
         "ingested_event_ids": ingested_events,
+        "ignored_casual": ignored_casual,
     }
 
 
@@ -130,7 +140,15 @@ def sync_slack_channel(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     ingested_events = []
+    from app.services.context_intelligence import ContextIntelligenceService as _Ctx
+
+    ignored_casual = 0
     for event_in in fetch_result.events:
+        _text = event_in.payload.get("text", "") if isinstance(event_in.payload, dict) else ""
+        if _Ctx.is_casual_chatter(_text):
+            ignored_casual += 1
+            metrics.increment("ingestion_events_total", labels={"source": "slack", "status": "ignored_casual"})
+            continue
         ingested = ingestion_service.ingest_event(event_in, db)
         ingested_events.append(ingested.event_id)
         ingestion_service.create_evidence_from_event(
@@ -146,6 +164,7 @@ def sync_slack_channel(
         "channel": channel,
         "messages_fetched": len(fetch_result.events),
         "ingested_event_ids": ingested_events,
+        "ignored_casual": ignored_casual,
         "has_more": fetch_result.has_more,
         "next_cursor": fetch_result.next_cursor,
     }
@@ -361,7 +380,11 @@ async def import_whatsapp_export(
             text = f"[{target_project}] {text}"
 
         sender_jid = f"{re.sub(r'[^a-zA-Z0-9]', '', sender).lower() or 'user'}@s.whatsapp.net"
-        message_id = f"wamid_export_{int(time.time()*1000)}_{idx}"
+        # Deterministic id so re-importing the same archive is idempotent
+        # (a time-based id would duplicate evidence on every upload).
+        message_id = "wamid_export_" + hashlib.sha256(
+            f"{group_name}|{sender}|{msg.get('raw_timestamp','')}|{msg['text']}".encode("utf-8")
+        ).hexdigest()[:24]
 
         payload: Dict[str, Any] = {
             "message_id": message_id,
@@ -380,12 +403,10 @@ async def import_whatsapp_export(
                     payload["audio_base64"] = b64
                     payload["media_type"] = "audio"
                     payload["filename"] = attachment
-                    audio_transcriptions += 1
                 elif attachment.lower().endswith((".jpg", ".png", ".jpeg", ".webp")):
                     payload["image_base64"] = b64
                     payload["media_type"] = "image"
                     payload["filename"] = attachment
-                    images_analyzed += 1
 
         try:
             res = whatsapp_service.process_incoming_message(payload, db, tenant_id=tenant_id)
@@ -395,6 +416,14 @@ async def import_whatsapp_export(
                 matched_count += 1
             if res.get("visual_proposal_pending"):
                 proposals_count += 1
+
+            # Count media only when it was actually processed (never on attempt),
+            # so the report cannot claim transcription/vision that did not happen.
+            multimodal = res.get("multimodal") or {}
+            if (multimodal.get("audio_transcription") or {}).get("processed"):
+                audio_transcriptions += 1
+            if (multimodal.get("vision_analysis") or {}).get("processed"):
+                images_analyzed += 1
         except Exception as exc:
             logger.warning(f"Error processing export message {idx}: {exc}")
 
@@ -413,6 +442,26 @@ async def import_whatsapp_export(
         "images_analyzed": images_analyzed,
         "elapsed_seconds": round(elapsed, 2),
     }
+
+
+@router.post("/excalidraw/ingest", summary="Ingest Excalidraw Diagram via Unified Context Intelligence")
+def ingest_excalidraw_connector(
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    from app.schemas.excalidraw import ExcalidrawIngestRequest
+    from app.services.excalidraw_service import ExcalidrawService
+
+    req = ExcalidrawIngestRequest(
+        name=payload.get("name") or "Imported Architecture Diagram",
+        elements=payload.get("elements") or [],
+        app_state=payload.get("app_state") or {},
+    )
+    excal_service = ExcalidrawService()
+    tenant = getattr(current_user, "tenant_id", None) or "default_tenant"
+    actor = getattr(current_user, "email", None) or "user"
+    return excal_service.ingest_unassociated_diagram(req, db, tenant_id=tenant, actor_id=actor)
 
 
 

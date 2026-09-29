@@ -48,10 +48,11 @@ class Settings(BaseSettings):
     NVIDIA_MODEL: str = "deepseek-ai/deepseek-v4.1-flash"
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
 
-    # Groq high-speed Whisper audio & vision provider
+    # Groq high-speed Whisper audio & LLM provider
     GROQ_API_KEY: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_WHISPER_MODEL: str = "whisper-large-v3-turbo"
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
 
     # Zero-touch Google Meet connection refresh token
     GOOGLE_REFRESH_TOKEN: str = ""
@@ -60,8 +61,8 @@ class Settings(BaseSettings):
     # A candidate must clear MIN_CONFIDENCE and beat the runner-up by
     # MIN_MARGIN to be auto-resolved; otherwise the event is ambiguous/unknown
     # and goes to Unknown Context for human review.
-    CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.62)
-    CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.12)
+    CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.72)
+    CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.15)
     CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
 

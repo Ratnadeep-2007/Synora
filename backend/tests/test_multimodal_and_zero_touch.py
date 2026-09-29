@@ -140,6 +140,44 @@ def test_multimodal_payload_preprocessing_whiteboard_image():
         assert "vision_analysis" in meta
 
 
+def test_whiteboard_without_vision_provider_never_fabricates():
+    """With no vision provider configured, the image is marked unprocessed only.
+
+    It must never invent components/relationships, which would otherwise flow
+    into project evidence as if they were real AI output.
+    """
+    service = MultimodalService(nvidia_api_key="")
+    payload = {
+        "image_base64": base64.b64encode(b"fake image data").decode("utf-8"),
+        "media_type": "image",
+        "caption": "Check our proposed architecture sketch",
+    }
+
+    text, meta = service.process_incoming_payload(payload)
+    assert "[Diagram image attached - analysis unavailable]" in text
+    analysis = meta["vision_analysis"]
+    assert analysis["processed"] is False
+    assert analysis["provider"] == "unavailable"
+    # No invented architecture.
+    assert analysis["components"] == []
+    assert analysis["relationships"] == []
+    for fabricated in ("Frontend Client", "API Service", "Database"):
+        assert fabricated not in text
+
+
+def test_voice_note_without_transcription_provider_never_fabricates():
+    service = MultimodalService(groq_api_key="")
+    payload = {
+        "audio_base64": base64.b64encode(b"\x00" * 64).decode("utf-8"),
+        "media_type": "audio",
+        "filename": "voice.ogg",
+    }
+    text, meta = service.process_incoming_payload(payload)
+    assert "[Voice note attached - transcription unavailable]" in text
+    assert meta["audio_transcription"]["processed"] is False
+    assert meta["audio_transcription"]["text"] == ""
+
+
 def test_zero_touch_google_meet_connection_bootstrap(db_session: Session):
     """When GOOGLE_REFRESH_TOKEN is present in .env, ensure_env_connection automatically seeds connection."""
     custom_settings = Settings(

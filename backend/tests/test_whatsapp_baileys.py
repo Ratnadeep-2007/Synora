@@ -71,10 +71,10 @@ def test_whatsapp_uses_shared_context_intelligence(db_session: Session):
     assert res_tag.decision == "resolved"
     assert res_tag.project_id == core_proj.id
 
-    # 3. Free text without a deterministic signal is NOT silently attached
+    # 3. Free text that does not match any workspace project goes to Unknown Context
     res_free = ctx.resolve(
         source="whatsapp",
-        payload={"text": "we should probably revisit the session storage approach."},
+        payload={"text": "we need to build a Shopify e-commerce catalog sync for an external apparel store."},
         db=db_session,
     )
     assert res_free.decision == "unknown"
@@ -353,7 +353,7 @@ def test_whatsapp_api_endpoints(client, db_session: Session):
     sim_payload = {
         "sender_name": "Chief Architect",
         "group_name": "Synora Product Council",
-        "text": "requirement is that all claims above $5000 must trigger AML Verification Engine.",
+        "text": "general announcement: let us schedule a sync to review all roadmap priorities next week.",
     }
     res_sim = client.post(
         "/connectors/whatsapp/simulate",

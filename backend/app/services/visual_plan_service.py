@@ -37,7 +37,7 @@ class VisualPlanService:
         constraints: Optional[List[str]] = None,
     ) -> Tuple[VisualPlan, str]:
         """Return (plan, ai_status) where ai_status is 'ai' or 'deterministic'."""
-        if self._explicit_client is not None:
+        if self._explicit_client:
             plan = self._call_client(
                 state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
             )
@@ -174,6 +174,7 @@ class VisualPlanService:
         add("state", "Project State", "datastore", group="pipeline")
         add("visual", "Living Workspace", "service", group="pipeline")
 
+        # Architecture components become the technical layer of the diagram.
         architecture = state_summary.get("architecture") or []
         for index, entry in enumerate(architecture[:6]):
             label = (
@@ -183,27 +184,58 @@ class VisualPlanService:
             ) or f"Component {index + 1}"
             add(f"arch_{index}", str(label), "service", group="architecture")
 
+        # Requirements and decisions are first-class visual nodes (decision cards).
+        requirements = state_summary.get("requirements") or []
+        for index, entry in enumerate(requirements[:4]):
+            label = (
+                entry.get("title") or entry.get("content")
+                if isinstance(entry, dict)
+                else str(entry)
+            ) or f"Requirement {index + 1}"
+            add(f"req_{index}", str(label), "requirement", group="requirements")
+
+        decisions = state_summary.get("decisions") or []
+        for index, entry in enumerate(decisions[:4]):
+            label = (
+                entry.get("text") or entry.get("title")
+                if isinstance(entry, dict)
+                else str(entry)
+            ) or f"Decision {index + 1}"
+            add(f"dec_{index}", str(label), "decision", group="decisions")
+
         relationships = [
             VisualRelationship(source="actor_user", target="evidence"),
             VisualRelationship(source="evidence", target="agent"),
             VisualRelationship(source="agent", target="state"),
             VisualRelationship(source="state", target="visual"),
         ]
-        arch_ids = [n.id for n in nodes if n.group == "architecture"]
-        for i in range(len(arch_ids) - 1):
-            relationships.append(
-                VisualRelationship(source=arch_ids[i], target=arch_ids[i + 1])
-            )
-        if arch_ids:
-            relationships.append(VisualRelationship(source="state", target=arch_ids[0], style="dashed"))
 
+        def chain(group: str, source: str):
+            ids = [n.id for n in nodes if n.group == group]
+            for i in range(len(ids) - 1):
+                relationships.append(
+                    VisualRelationship(source=ids[i], target=ids[i + 1])
+                )
+            if ids:
+                relationships.append(
+                    VisualRelationship(source=source, target=ids[0], style="dashed")
+                )
+
+        chain("architecture", "state")
+        chain("requirements", "agent")
+        chain("decisions", "state")
+
+        # `preserve` refers to visual element ids the plan keeps. The
+        # deterministic planner rebuilds the canvas from Project State, so it
+        # preserves nothing by id; existing-but-dropped content is reported
+        # through the proposal diff (nodes_removed) instead.
         return VisualPlan(
             title=state_summary.get("title") or "Project Architecture",
             layout_direction="horizontal",
             grouping_intent=["pipeline", "architecture"],
             nodes=nodes,
             relationships=relationships,
-            preserve=list(current_nodes),
+            preserve=[],
             notes=["Deterministic plan derived from Project State (AI visual planner unavailable)."],
             model="deterministic",
             prompt_version="visual-plan-deterministic-v1",

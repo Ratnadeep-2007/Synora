@@ -25,6 +25,7 @@ class RoutingOutcome(str, Enum):
     RESOLVED = "resolved"
     UNKNOWN_CONTEXT = "unknown_context"
     DUPLICATE = "duplicate"
+    IGNORED = "ignored"
 
 
 class SourceEventOutcome(BaseModel):
@@ -43,14 +44,20 @@ class SourceEventOutcome(BaseModel):
 class SourceIntelligencePipeline:
     """Shared source-event pipeline for every connector.
 
-    Google Meet, WhatsApp, and Excalidraw input all flow through here:
+    Google Meet, WhatsApp, Slack and Excalidraw input all flow through here:
 
+        casual-chat gate (drop, never persisted, never shown)
+            |
         SourceEvent
             |
             +--> Context Intelligence   (which project?)
             +--> Knowledge Intelligence (what does it mean?)
             |
         Join -> Routing Gate -> Project evidence  OR  Unknown Context
+
+    Exhaustive rule: project-related content is tried deterministically,
+    then semantically with full context, then once more at the model's
+    extreme. Only if all attempts still fail does it go to Unknown Context.
 
     The two intelligence branches run concurrently on a shared read-only
     snapshot. The branches are pure (no database access) so they are safe to
@@ -92,6 +99,18 @@ class SourceIntelligencePipeline:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SourceEventOutcome:
         text = self.context_service.extract_text(source, payload)
+
+        # 0. Casual-chat gate: pure banter never touches the DB and never
+        # appears in the platform (no SourceEvent, Evidence, or Unknown item).
+        if ContextIntelligenceService.is_casual_chatter(text):
+            metrics.increment("ingestion_events_total", labels={"source": source, "status": "ignored_casual"})
+            logger.info("source_routing_ignored_casual: source=%s", source)
+            return SourceEventOutcome(
+                outcome=RoutingOutcome.IGNORED.value,
+                source=source,
+                source_event_id=source_event_id,
+                reason="Casual conversation / non-project chit-chat (leave it)",
+            )
 
         # 1. Idempotency: never process the same provider event twice.
         if source_event_id:
@@ -187,6 +206,60 @@ class SourceIntelligencePipeline:
                 )
                 context_result = context_future.result()
                 extraction = knowledge_future.result()
+
+                # Exhaustive extreme: if still UNKNOWN/AMBIGUOUS, retry the
+                # semantic pass once more (model gets a second chance with the
+                # same full context). Only if both attempts fail do we fall to
+                # Unknown Context. This keeps project talk in-project to the
+                # model's limit.
+                if (
+                    not getattr(context_result, "is_casual", False)
+                    and context_result.decision != ContextDecision.CASUAL_IGNORED.value
+                    and context_result.decision != ContextDecision.RESOLVED.value
+                ):
+                    retry = self.context_service.resolve_with_corpus(
+                        text,
+                        corpus,
+                        det_signals,
+                        continuity_context,
+                        visual_context,
+                    )
+                    if retry.decision == ContextDecision.RESOLVED.value:
+                        logger.info(
+                            "source_routing_resolved_on_retry: source=%s project_id=%s",
+                            source,
+                            retry.project_id,
+                        )
+                        context_result = retry
+                    else:
+                        logger.info(
+                            "source_routing_exhausted: source=%s decision=%s reason=%s",
+                            source,
+                            context_result.decision,
+                            context_result.reason,
+                        )
+
+        # Casual conversation gate: purge completely to prevent platform pollution.
+        # Drops banter whether caught by semantic AI intelligence or deterministic regex.
+        if (
+            getattr(context_result, "is_casual", False)
+            or context_result.decision == ContextDecision.CASUAL_IGNORED.value
+            or ContextIntelligenceService.is_casual_chatter(text)
+        ):
+            logger.info(
+                "source_event_casual_detected: source=%s dropping event to prevent platform pollution",
+                source,
+            )
+            db.delete(evidence)
+            db.delete(source_event)
+            db.commit()
+            return SourceEventOutcome(
+                outcome=RoutingOutcome.IGNORED.value,
+                source=source,
+                source_event_id=source_event.source_event_id,
+                project_id=None,
+                reason="Casual non-project conversation detected; ignored to preserve workspace purity",
+            )
 
         # 5. Routing gate.
         resolved_project_id = self._route(context_result, authorized, authorized_project_ids)

@@ -67,6 +67,7 @@ class MultimodalService:
                 "text": "",
                 "provider": "empty",
                 "model": "none",
+                "processed": False,
                 "error": "Empty audio payload",
             }
 
@@ -107,6 +108,7 @@ class MultimodalService:
                         "text": transcript_text,
                         "provider": "groq_whisper",
                         "model": model_name,
+                        "processed": True,
                         "duration": duration,
                         "segments": segments,
                     }
@@ -117,13 +119,19 @@ class MultimodalService:
             except Exception as exc:
                 logger.warning(f"Groq Whisper transcription failed: {exc}")
 
-        # Deterministic / Mock Fallback if API unavailable
+        # No transcription provider available. Report it as UNPROCESSED rather
+        # than inventing transcript text that would become project evidence.
+        logger.warning(
+            "audio_transcription_unavailable: GROQ_API_KEY not configured or request failed"
+        )
         return {
-            "text": "[Voice Note: Audio received - transcription service offline]",
-            "provider": "fallback",
-            "model": "deterministic",
+            "text": "",
+            "provider": "unavailable",
+            "model": "none",
+            "processed": False,
             "duration": 0.0,
             "segments": [],
+            "error": "Transcription provider unavailable (set GROQ_API_KEY)",
         }
 
     # -------------------------------------------------------------------------
@@ -220,6 +228,7 @@ class MultimodalService:
                         )
                         parsed["provider"] = "nvidia_vision"
                         parsed["model"] = model_name
+                        parsed["processed"] = True
                         return parsed
                 else:
                     logger.warning(
@@ -228,23 +237,22 @@ class MultimodalService:
             except Exception as exc:
                 logger.warning(f"NVIDIA Vision extraction failed: {exc}")
 
-        # Deterministic / Fallback parser
+        # No vision provider available. Report it as UNPROCESSED rather than
+        # inventing components/relationships that would become project evidence.
+        logger.warning(
+            "vision_analysis_unavailable: NVIDIA_API_KEY not configured or request failed"
+        )
         return {
-            "summary": "Architecture diagram / whiteboard image captured.",
-            "ocr_text": "System architecture diagram",
-            "components": [
-                {"name": "Frontend Client", "type": "client"},
-                {"name": "API Service", "type": "service"},
-                {"name": "Database", "type": "datastore"},
-            ],
-            "relationships": [
-                {"source": "Frontend Client", "target": "API Service", "label": "HTTPS"},
-                {"source": "API Service", "target": "Database", "label": "SQL Queries"},
-            ],
-            "decisions": ["Adopt multi-tier service architecture."],
-            "requirements": ["High-availability persistent storage."],
-            "provider": "fallback",
-            "model": "deterministic",
+            "summary": "",
+            "ocr_text": "",
+            "components": [],
+            "relationships": [],
+            "decisions": [],
+            "requirements": [],
+            "provider": "unavailable",
+            "model": "none",
+            "processed": False,
+            "error": "Vision provider unavailable (set NVIDIA_API_KEY)",
         }
 
     # -------------------------------------------------------------------------
@@ -280,6 +288,10 @@ class MultimodalService:
                         raw_text = f"{raw_text}\n[Transcribed Voice Note]: {transcribed}"
                     else:
                         raw_text = f"[Transcribed Voice Note]: {transcribed}"
+                else:
+                    # Explicit marker only: never fabricate transcript content.
+                    marker = "[Voice note attached - transcription unavailable]"
+                    raw_text = f"{raw_text}\n{marker}" if raw_text else marker
 
         # 2. Handle Image / Whiteboard diagram
         elif (
@@ -292,16 +304,19 @@ class MultimodalService:
                 mime_type = payload.get("mimetype") or "image/png"
                 vision_res = self.extract_from_image(image_data, mime_type=mime_type)
                 multimodal_meta["vision_analysis"] = vision_res
-                ocr = vision_res.get("ocr_text", "")
-                summary = vision_res.get("summary", "")
-                image_notes = f"[Analyzed Whiteboard/Diagram Image]: {summary}"
-                if ocr:
-                    image_notes += f" | Text: {ocr}"
-
-                if raw_text:
-                    raw_text = f"{raw_text}\n{image_notes}"
+                # Default to processed: only an explicit processed=False marks a
+                # provider-unavailable result.
+                if vision_res.get("processed", True):
+                    ocr = vision_res.get("ocr_text", "")
+                    summary = vision_res.get("summary", "")
+                    image_notes = f"[Analyzed Whiteboard/Diagram Image]: {summary}"
+                    if ocr:
+                        image_notes += f" | Text: {ocr}"
+                    raw_text = f"{raw_text}\n{image_notes}" if raw_text else image_notes
                 else:
-                    raw_text = image_notes
+                    # Explicit marker only: never fabricate components/relationships.
+                    marker = "[Diagram image attached - analysis unavailable]"
+                    raw_text = f"{raw_text}\n{marker}" if raw_text else marker
 
         return raw_text, multimodal_meta
 

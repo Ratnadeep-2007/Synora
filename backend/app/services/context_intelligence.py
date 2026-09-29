@@ -111,21 +111,125 @@ class ContextIntelligenceService:
             return project.id in authorized_project_ids
         return True
 
+    @staticmethod
+    def is_casual_chatter(text: str) -> bool:
+        """
+        Shared casual-chat gate used by EVERY source.
+
+        Returns True when the message is pure banter (greetings, acks,
+        food/lunch, meeting-link logistics) with no project substance.
+        Such messages must be dropped BEFORE any persistence so they never
+        appear in the platform (no SourceEvent, no Evidence, no Unknown item).
+        Project-related content always returns False, even if uncertain —
+        uncertain project talk goes to Unknown Context, never dropped.
+        """
+        import re as _re
+
+        clean = (text or "").strip().lower()
+        if not clean:
+            return True
+
+        cleaned_words = _re.findall(r"[a-z0-9]+", clean)
+        acks = {
+            "ok", "okay", "k", "kk", "cool", "sure", "done", "got", "it", "noted",
+            "yes", "yeah", "yep", "no", "nope", "thanks", "thank", "you", "thx", "ty",
+            "great", "awesome", "perfect", "good", "nice", "sounds", "will", "do",
+            "alright", "agreed", "understood", "lol", "haha", "hahaha", "lmao", "rofl",
+            "xd", "true", "fine", "np", "welcome",
+        }
+        if cleaned_words and all(w in acks for w in cleaned_words):
+            return True
+
+        tech_anchors = [
+            "api", "service", "pipeline", "database", "redis", "jwt", "model",
+            "excalidraw", "project", "architecture", "decided", "integrate", "claims", "core",
+            "synora", "dinein", "feature", "schema", "table", "endpoint", "agent", "llm",
+            "backend", "frontend", "ui", "ux", "canvas", "webhook", "token", "auth",
+            "deploy", "build", "bug", "fix", "test", "docker", "server", "code", "repo",
+        ]
+
+        # Casual greeting phrases
+        greetings = [
+            r"^good\s+(morning|afternoon|evening|night)\b",
+            r"^gm\b",
+            r"^(hey|hi|hello|hola|yo|sup)\b",
+            r"^how\s+are\s+you\b",
+            r"^whats\s+up\b",
+            r"^what's\s+up\b",
+            r"^happy\s+(friday|monday|weekend|birthday|diwali|holi|eid|new year)\b",
+            r"^have\s+a\s+good\s+(weekend|day|evening)\b",
+            r"^see\s+you\s+(tomorrow|later|soon)\b",
+            r"^bye\b",
+        ]
+        for pattern in greetings:
+            if _re.search(pattern, clean):
+                if not any(anchor in clean for anchor in tech_anchors):
+                    return True
+
+        # Social small talk / personal banter
+        social_patterns = [
+            r"\b(weekend plans|plans for the weekend|watch(?:ing)? (?:the )?(?:match|game|movie)|going home|on the way|brb|gtg|ttyl)\b",
+            r"\b(congrats|congratulations|happy birthday|take care|sleep well)\b",
+            r"\b(how was your day|how is it going|what are you doing)\b",
+        ]
+        if any(_re.search(pat, clean) for pat in social_patterns):
+            if not any(anchor in clean for anchor in tech_anchors):
+                return True
+
+        if _re.search(r"\b(lunch|dinner|breakfast|coffee|tea|pizza|burger|snacks|cafeteria|restaurant|hungry|food|drinks|beers)\b", clean):
+            if not any(anchor in clean for anchor in tech_anchors):
+                return True
+
+        logistics_patterns = [
+            r"\b(send|share|give|drop|where is|what is)\b.*?\b(link|url)\b",
+            r"\b(zoom|meet|gmeet|teams|call)\s+(link|url)\b",
+            r"\b(can you call me|give me a call|call you in a bit|on another call)\b",
+            r"\b(are you free|anyone free|quick sync|hop on a call)\b",
+            r"\b(traffic is bad|running late|be there in \d+\s*mins?)\b",
+        ]
+        if any(_re.search(pat, clean) for pat in logistics_patterns):
+            if not any(anchor in clean for anchor in tech_anchors):
+                return True
+
+        return False
+
     def _build_corpus(self, projects: List[Project], db: Session) -> List[Dict[str, Any]]:
-        """Build the bounded candidate corpus: prompt-safe project summaries."""
+        """Build the bounded candidate corpus: prompt-safe, high-density project summaries."""
         corpus: List[Dict[str, Any]] = []
-        evidence_limit = settings.CONTEXT_RESOLUTION_EVIDENCE_LIMIT
+        evidence_limit = min(settings.CONTEXT_RESOLUTION_EVIDENCE_LIMIT, 3)
         for project in projects:
             state = db.query(ProjectState).filter(ProjectState.project_id == project.id).first()
             sections: Dict[str, Any] = {}
             if state:
-                sections = {
-                    "vision": (state.vision or "")[:400],
-                    "requirements": self._safe_json(state.requirements_json)[:4],
-                    "decisions": self._safe_json(state.decisions_json)[:4],
-                    "constraints": self._safe_json(state.constraints_json)[:3],
-                    "architecture": self._safe_json(state.architecture_json)[:4],
-                }
+                if state.vision and state.vision != "Build an evidence-backed software product.":
+                    sections["vision"] = state.vision[:300]
+                reqs = self._safe_json(state.requirements_json)
+                if reqs:
+                    sections["requirements"] = reqs[:3]
+                arch = self._safe_json(state.architecture_json)
+                if arch:
+                    sections["architecture"] = arch[:3]
+            try:
+                from app.models.visual_revision import VisualRevision
+                rev = (
+                    db.query(VisualRevision)
+                    .filter(VisualRevision.project_id == project.id, VisualRevision.is_current == True)
+                    .first()
+                )
+                if rev and rev.scene_json:
+                    data = json.loads(rev.scene_json)
+                    elems = data if isinstance(data, list) else data.get("elements", [])
+                    comps = []
+                    for el in elems:
+                        txt = el.get("text") if isinstance(el, dict) else None
+                        if txt and 2 < len(txt.strip()) < 80:
+                            clean_t = txt.strip().replace("\n", " ")
+                            if clean_t not in comps:
+                                comps.append(clean_t)
+                    if comps:
+                        sections["whiteboard_components"] = comps[:5]
+            except Exception:
+                pass
             recent_evidence = (
                 db.query(Evidence)
                 .filter(Evidence.project_id == project.id)
@@ -133,17 +237,18 @@ class ContextIntelligenceService:
                 .limit(evidence_limit)
                 .all()
             )
-            corpus.append(
-                {
-                    "project_id": project.id,
-                    "name": project.name,
-                    "description": (project.description or "")[:400],
-                    "state": sections,
-                    "recent_evidence": [
-                        {"id": e.id, "text": (e.content or "")[:240]} for e in recent_evidence
-                    ],
-                }
-            )
+            item: Dict[str, Any] = {
+                "project_id": project.id,
+                "name": project.name,
+                "description": (project.description or "")[:350],
+            }
+            if sections:
+                item["state"] = sections
+            if recent_evidence:
+                item["recent_evidence"] = [
+                    {"id": e.id, "text": (e.content or "")[:140]} for e in recent_evidence
+                ]
+            corpus.append(item)
         return corpus
 
     @staticmethod
@@ -166,9 +271,14 @@ class ContextIntelligenceService:
         transcript = payload.get("transcript_entries")
         if isinstance(transcript, list):
             return " ".join(str(t.get("text", "")) for t in transcript if isinstance(t, dict)).strip()
-        nodes = payload.get("extracted_nodes")
+        nodes = payload.get("extracted_nodes") or payload.get("nodes")
         if isinstance(nodes, list):
             return " ".join(str(n) for n in nodes).strip()
+        elements = payload.get("elements")
+        if isinstance(elements, list):
+            texts = [e.get("text", "") for e in elements if isinstance(e, dict) and e.get("text")]
+            if texts:
+                return " ".join(t.strip() for t in texts if t.strip())
         return ""
 
     # ------------------------------------------------------------------
@@ -255,28 +365,38 @@ class ContextIntelligenceService:
         corpus: List[Dict[str, Any]],
         continuity_context: Optional[str] = None,
         visual_context: Optional[str] = None,
-    ) -> tuple[List[CandidateProject], Optional[str]]:
+    ) -> tuple[List[CandidateProject], Optional[str], bool]:
         """Ask the semantic provider to rank candidate projects.
 
-        Returns (candidates, ai_status) where ai_status is None on success or a
-        machine-readable reason when semantic resolution was unavailable.
+        Returns (candidates, ai_status, is_casual) where is_casual is True
+        if the message was identified as purely casual/off-topic chat.
         """
         if not text.strip() or not corpus:
-            return [], None
+            return [], None, False
 
         if not self._explicit_client:
-            if settings.LLM_PROVIDER.lower() != "nvidia" or not settings.is_nvidia_nim_configured:
+            provider = settings.LLM_PROVIDER.lower()
+            is_active = (
+                (provider == "groq" and settings.is_groq_configured)
+                or (provider == "nvidia" and settings.is_nvidia_nim_configured)
+                or settings.is_groq_configured
+                or settings.is_nvidia_nim_configured
+            )
+            if not is_active:
                 # Deterministic-only mode: no semantic candidates, and no fabricated output.
-                return [], "ai_unavailable"
+                return [], "ai_unavailable", False
 
         prompt = self._build_semantic_prompt(text, corpus, continuity_context, visual_context)
         try:
             batch = self.llm_client.generate_structured(prompt, ContextCandidateBatch)
         except NotImplementedError:
-            return [], "ai_unavailable"
+            return [], "ai_unavailable", False
         except Exception as exc:
             logger.warning("context_intelligence_semantic_failed: %s", exc)
-            return [], "semantic_error"
+            return [], "semantic_error", False
+
+        if getattr(batch, "is_casual", False):
+            return [], None, True
 
         valid_ids = {c["project_id"] for c in corpus}
         candidates: List[CandidateProject] = []
@@ -294,7 +414,7 @@ class ContextIntelligenceService:
                 )
             )
         candidates.sort(key=lambda c: c.confidence, reverse=True)
-        return candidates[: settings.CONTEXT_RESOLUTION_CANDIDATE_LIMIT], None
+        return candidates[: settings.CONTEXT_RESOLUTION_CANDIDATE_LIMIT], None, False
 
     def _build_semantic_prompt(
         self,
@@ -304,11 +424,30 @@ class ContextIntelligenceService:
         visual_context: Optional[str],
     ) -> str:
         lines = [
-            "You resolve which Synora project an incoming source event belongs to.",
-            "Return ONLY JSON: {\"items\":[{\"project_id\":\"...\",\"confidence\":0.0,\"reasons\":[\"...\"]}]}",
-            "Rank the candidate projects by how strongly the incoming content belongs to them.",
-            "Use ONLY the project_ids listed below. If nothing fits, return an empty items array.",
-            "Explain each suggestion with short concrete reasons (terms, components, intent).",
+            "You are Synora's Context Intelligence routing engine.",
+            "Return ONLY JSON matching this schema: {\"is_casual\": false, \"items\": [{\"project_id\": \"...\", \"confidence\": 0.0, \"reasons\": [\"...\"]}]}",
+            "",
+            "RULE 1: CASUAL CHIT-CHAT DETECTION (ZERO PLATFORM POLLUTION)",
+            "is_casual=true ONLY for pure banter with ZERO project substance:",
+            "- short acks (ok, thanks, got it, sounds good), pure greetings (hi, good morning) with no technical content,",
+            "- food/lunch/coffee/social talk with no technical anchor, meeting-link logistics (send the link, hop on a call).",
+            "- NEVER set is_casual=true just because the text contains the words 'chatter', 'chat', 'unrelated', 'topic'.",
+            "- If the content mentions ANY feature, system, decision, task, requirement, architecture, bug, or business idea — even if it matches NO candidate — set is_casual=false and return low-confidence items or [] so it routes to Unknown Context.",
+            "- If it is casual chat: return {\"is_casual\": true, \"items\": []}. This ensures casual chat is dropped and never appears anywhere on the platform.",
+            "- If the content contains ANY project discussion, technical ideas, features, architecture, bug reports, tasks, or business requirements: set \"is_casual\": false and proceed to Rule 2.",
+            "",
+            "RULE 2: CONTEXTUAL & DOMAIN-BASED CLASSIFICATION (NO PROJECT NAME REQUIRED)",
+            "Team members rarely type the project name or ID. You MUST classify based on domain semantics, technical concepts, architecture, feature continuity, and system context:",
+            "- Study the candidate projects below: inspect their names, descriptions, vision, architecture, requirements, decisions, and recent evidence.",
+            "- Identify the technical domain, business concepts, or feature area being discussed (e.g. restaurant tables/billing/KOT -> Dinein; agentic execution/vector quantization/whiteboard canvas sync -> Synora; claims review/KYC/medical verification -> Healthcare Claims Engine).",
+            "- Do NOT require or expect the user to say the project name or ID. If the concepts, vocabulary, workflow, or technical substance clearly align with one project, assign HIGH confidence (0.80 - 0.95) and detail your domain reasoning in 'reasons'.",
+            "- Use the conversation continuity window to check which project this group/channel is currently working on.",
+            "",
+            "RULE 3: UNKNOWN CONTEXT CRITERIA (ONLY WHEN IMPOSSIBLE TO RESOLVE)",
+            "Only route project discussion to Unknown Context (assigning confidence < 0.50 or returning []) when:",
+            "- UNRECOGNIZED / UNRELATED DOMAIN: The message discusses a product, system, or business completely alien to all candidate projects (e.g., shoe retail, cryptocurrency mining, real estate CRM when no such project exists).",
+            "- SPLIT INTENT: The message explicitly spans multiple distinct projects (e.g., 'we have to add agentic layer in Synora and Dinein'). Assign equal low confidence (< 0.50) so human triage can decide.",
+            "- CONFLICTING OR HIGHLY AMBIGUOUS: Two projects share the exact same domain concepts and cannot be differentiated.",
             "",
             "--- CANDIDATE PROJECTS ---",
         ]
@@ -370,7 +509,7 @@ class ContextIntelligenceService:
             continuity_context=continuity_context,
             visual_context=visual_context,
         )
-        if record:
+        if record and result.decision != ContextDecision.CASUAL_IGNORED.value:
             self._record(source, source_event_id, result, db, tenant_id)
         return result
 
@@ -404,7 +543,20 @@ class ContextIntelligenceService:
         if visual_context:
             signals.append(ContextSignal(kind="visual", name="scene_structure", weight=0.3))
 
-        candidates, ai_status = self._semantic_candidates(text, corpus, continuity_context, visual_context)
+        candidates, ai_status, is_casual = self._semantic_candidates(text, corpus, continuity_context, visual_context)
+
+        if is_casual:
+            return ContextResolutionResult(
+                decision=ContextDecision.CASUAL_IGNORED.value,
+                project_id=None,
+                confidence=0.0,
+                margin=0.0,
+                is_casual=True,
+                signals=signals,
+                candidate_projects=[],
+                reason="Casual non-project conversation detected; ignored to preserve workspace purity",
+                requires_human_review=False,
+            )
 
         if ai_status:
             signals.append(
@@ -481,8 +633,10 @@ class ContextIntelligenceService:
     ) -> ContextResolution:
         row = ContextResolution(
             tenant_id=tenant_id,
+            workspace_id="ws_default",
             source=source,
             source_event_id=source_event_id,
+            evidence_id=result.evidence_ids[0] if result.evidence_ids else None,
             project_id=result.project_id,
             decision=result.decision,
             confidence=result.confidence,
@@ -491,6 +645,8 @@ class ContextIntelligenceService:
             candidate_projects_json=json.dumps([c.model_dump() for c in result.candidate_projects]),
             reason=result.reason,
             requires_human_review=result.requires_human_review,
+            model=result.model,
+            model_version=result.model_version,
         )
         db.add(row)
         db.commit()

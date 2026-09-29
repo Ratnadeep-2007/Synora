@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
+import json
+from typing import Optional
 import uuid
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, String, Text
 from sqlalchemy.orm import relationship
@@ -23,6 +25,7 @@ class ContextDecision(str, Enum):
     RESOLVED = "resolved"
     AMBIGUOUS = "ambiguous"
     UNKNOWN = "unknown"
+    CASUAL_IGNORED = "casual_ignored"
 
 
 class UnknownItemStatus(str, Enum):
@@ -44,8 +47,10 @@ class ContextResolution(Base):
 
     id = Column(String(64), primary_key=True, default=generate_resolution_id)
     tenant_id = Column(String(64), default="default_tenant", index=True, nullable=False)
+    workspace_id = Column(String(64), default="ws_default", nullable=True)
     source = Column(String(64), index=True, nullable=False)
     source_event_id = Column(String(255), index=True, nullable=True)
+    evidence_id = Column(String(64), nullable=True, index=True)
     project_id = Column(String(64), nullable=True, index=True)
     decision = Column(String(32), default=ContextDecision.UNKNOWN.value, index=True, nullable=False)
     confidence = Column(Float, default=0.0, nullable=False)
@@ -54,16 +59,60 @@ class ContextResolution(Base):
     candidate_projects_json = Column(Text, default="[]", nullable=False)
     reason = Column(Text, default="", nullable=False)
     requires_human_review = Column(Boolean, default=True, nullable=False)
+    model = Column(String(64), nullable=True)
+    model_version = Column(String(64), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_by = Column(String(255), nullable=True)
 
     __table_args__ = (
         Index("ix_context_resolution_source_event", "source", "source_event_id"),
         Index("ix_context_resolution_decision", "tenant_id", "decision"),
     )
+
+    @property
+    def context_status(self) -> str:
+        return self.decision
+
+    @context_status.setter
+    def context_status(self, val: str) -> None:
+        self.decision = val
+
+    @property
+    def resolved_project_id(self) -> Optional[str]:
+        return self.project_id
+
+    @resolved_project_id.setter
+    def resolved_project_id(self, val: Optional[str]) -> None:
+        self.project_id = val
+
+    @property
+    def explanation(self) -> str:
+        return self.reason
+
+    @explanation.setter
+    def explanation(self, val: str) -> None:
+        self.reason = val
+
+    @property
+    def deterministic_signals_json(self) -> str:
+        try:
+            sigs = json.loads(self.signals_json or "[]")
+            return json.dumps([s for s in sigs if isinstance(s, dict) and s.get("kind") in ("deterministic", "authorization")])
+        except Exception:
+            return "[]"
+
+    @property
+    def semantic_signals_json(self) -> str:
+        try:
+            sigs = json.loads(self.signals_json or "[]")
+            return json.dumps([s for s in sigs if isinstance(s, dict) and s.get("kind") in ("semantic", "continuity", "visual")])
+        except Exception:
+            return "[]"
 
     def __repr__(self) -> str:
         return (
