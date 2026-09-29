@@ -174,9 +174,14 @@ export function ExcalidrawCanvas({
               • {elementCount} elements
             </span>
             {compareMode && compareFromRevision !== null && compareToRevision !== null && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-soft text-primary border border-primary/20">
-                Compare r{compareFromRevision} → r{compareToRevision}
-              </span>
+              <>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-soft text-primary border border-primary/20">
+                  Compare r{compareFromRevision} → r{compareToRevision}
+                </span>
+                <span className="text-[10px] text-text-muted font-mono">
+                  +{compareAddedIds.length} added • ~{compareChangedIds.length} changed
+                </span>
+              </>
             )}
           </div>
         </div>
