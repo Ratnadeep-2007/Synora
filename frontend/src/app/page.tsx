@@ -146,6 +146,10 @@ export default function Home() {
 
   useEffect(() => {
     refreshAll();
+    const interval = setInterval(() => {
+      refreshAll();
+    }, 3000);
+    return () => clearInterval(interval);
   }, [refreshAll]);
 
   // Load meeting detail when selected

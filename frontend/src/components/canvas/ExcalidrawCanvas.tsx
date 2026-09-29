@@ -75,11 +75,17 @@ export function ExcalidrawCanvas({
   const visibleElements = compareMode ? compareElements : initialElements;
   const [elementCount, setElementCount] = useState(visibleElements?.length || 0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const lastRenderedKeyRef = useRef<string>("");
+  const currentKey = `${version}_${compareMode ? "cmp" : "norm"}_${visibleElements?.length || 0}`;
 
   // Update the canvas whenever the current workspace or compare overlay changes.
   // Compare mode is intentionally view-only and does not write ghost elements back.
   useEffect(() => {
     if (excalidrawAPI && visibleElements && visibleElements.length > 0) {
+      if (lastRenderedKeyRef.current === currentKey) {
+        return;
+      }
+      lastRenderedKeyRef.current = currentKey;
       try {
         excalidrawAPI.updateScene({
           elements: visibleElements,
@@ -98,7 +104,7 @@ export function ExcalidrawCanvas({
         console.warn("Failed to update Excalidraw scene:", err);
       }
     }
-  }, [excalidrawAPI, visibleElements, compareMode]);
+  }, [excalidrawAPI, visibleElements, compareMode, currentKey]);
 
   // Center view on content
   const handleCenterView = useCallback(() => {
