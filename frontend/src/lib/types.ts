@@ -156,6 +156,10 @@ export interface ExcalidrawDiffPreview {
   nodes_removed: string[];
   connections_before: string[];
   connections_after: string[];
+  layout_direction?: string;
+  critique_ok?: boolean;
+  critique_issues?: string[];
+  ai_status?: string;
 }
 
 export interface ExcalidrawArtifact {

@@ -1,3 +1,8 @@
+from app.services.conversation_continuity import (
+    build_continuity_window,
+    build_cross_source_context,
+    build_meet_continuity,
+)
 from app.services.encryption_service import EncryptionService
 from app.services.google_oauth import GoogleOAuthService
 from app.services.google_meet import GoogleMeetService
@@ -11,6 +16,9 @@ from app.services.visual_revision_service import VisualRevisionService
 from app.services.visual_plan_service import VisualPlanService
 
 __all__ = [
+    "build_continuity_window",
+    "build_cross_source_context",
+    "build_meet_continuity",
     "EncryptionService",
     "GoogleOAuthService",
     "GoogleMeetService",

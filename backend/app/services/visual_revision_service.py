@@ -226,7 +226,13 @@ class VisualRevisionService:
         to_revision_number: int,
         db: Session,
     ) -> Dict[str, Any]:
-        """Structured, explainable diff between two revisions."""
+        """Structured, explainable diff between two revisions.
+
+        Besides added/removed/changed labels, returns ``overlay_elements``:
+        the target scene annotated so a canvas can render compare mode
+        directly - removed elements re-appear as ghost/dashed nodes and
+        added/changed elements carry highlight styling.
+        """
         a = self.get_revision(project_id, from_revision_number, db)
         b = self.get_revision(project_id, to_revision_number, db)
         elements_a = {self._element_key(e): e for e in self._json_list(a.scene_json) if isinstance(e, dict)}
@@ -239,6 +245,11 @@ class VisualRevisionService:
             for k in elements_b
             if k in elements_a and self._element_signature(elements_a[k]) != self._element_signature(elements_b[k])
         ]
+
+        overlay = self.build_compare_overlay(
+            scene_from=self._json_list(a.scene_json),
+            scene_to=self._json_list(b.scene_json),
+        )
 
         return {
             "project_id": project_id,
@@ -254,7 +265,87 @@ class VisualRevisionService:
             "relationships_after": self._relationships(elements_b.values()),
             "state_version_from": a.derived_from_project_state_version,
             "state_version_to": b.derived_from_project_state_version,
+            "overlay_elements": overlay,
         }
+
+    @staticmethod
+    def build_compare_overlay(
+        scene_from: List[Dict[str, Any]], scene_to: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Annotate the target scene for compare-mode rendering.
+
+        - removed (ghost): element existed in ``from`` but not ``to``;
+          re-inserted as dashed, translucent, non-editable so the canvas can
+          show where old content used to be.
+        - added: element only in ``to``; highlighted with a green tint.
+        - changed: element in both with a different signature; flagged so
+          the canvas can outline it.
+        - unchanged: passed through untouched.
+
+        The annotation lives in ``customData.compare`` plus standard
+        Excalidraw style keys, so any renderer can apply it directly.
+        """
+        def key(el: Dict[str, Any]) -> str:
+            return str(el.get("id") or el.get("text") or "")
+
+        def signature(el: Dict[str, Any]) -> str:
+            return json.dumps(
+                {
+                    "type": el.get("type"),
+                    "text": el.get("text"),
+                    "startBinding": el.get("startBinding"),
+                    "endBinding": el.get("endBinding"),
+                },
+                sort_keys=True,
+                default=str,
+            )
+
+        from_map = {key(e): e for e in scene_from if isinstance(e, dict) and key(e)}
+        to_map = {key(e): e for e in scene_to if isinstance(e, dict) and key(e)}
+
+        overlay: List[Dict[str, Any]] = []
+        for k, el in to_map.items():
+            annotated = dict(el)
+            custom = dict(annotated.get("customData") or {})
+            if k not in from_map:
+                annotated.update(
+                    {
+                        "strokeColor": "#15803d",
+                        "backgroundColor": "#dcfce7",
+                        "strokeStyle": "solid",
+                        "strokeWidth": 2,
+                    }
+                )
+                custom["compare"] = "added"
+            elif signature(from_map[k]) != signature(el):
+                annotated["strokeWidth"] = max(int(el.get("strokeWidth") or 1), 2)
+                annotated["strokeColor"] = el.get("strokeColor") or "#b45309"
+                annotated["backgroundColor"] = el.get("backgroundColor") or "#fef3c7"
+                custom["compare"] = "changed"
+            else:
+                custom["compare"] = "unchanged"
+            annotated["customData"] = custom
+            overlay.append(annotated)
+
+        for k, el in from_map.items():
+            if k in to_map:
+                continue
+            ghost = dict(el)
+            ghost.update(
+                {
+                    "strokeStyle": "dashed",
+                    "strokeColor": "#9ca3af",
+                    "backgroundColor": "transparent",
+                    "opacity": 45,
+                    "angle": el.get("angle", 0),
+                    "locked": True,
+                }
+            )
+            custom = dict(ghost.get("customData") or {})
+            custom["compare"] = "removed"
+            ghost["customData"] = custom
+            overlay.append(ghost)
+        return overlay
 
     def compare_revisions(
         self,

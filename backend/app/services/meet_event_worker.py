@@ -394,12 +394,20 @@ class MeetEventWorker:
                 reason = "trusted_subscription_mapping"
             else:
                 neighbour_text = self._neighbouring_text(windows, index)
+                cross_source = ""
+                try:
+                    from app.services.conversation_continuity import build_meet_continuity
+
+                    cross_source = build_meet_continuity(db, meeting_id=meeting.id)
+                except Exception:
+                    cross_source = ""
+                continuity = "\n".join(p for p in (neighbour_text, cross_source) if p)[:1500]
                 resolution = self.context_service.resolve(
                     source="google_meet",
                     payload={"text": text, "meeting_id": meeting.id},
                     db=db,
                     trusted_project_id=None,
-                    continuity_context=neighbour_text,
+                    continuity_context=continuity or None,
                     source_event_id=f"{transcript.id}:seg{index}",
                     record=True,
                 )

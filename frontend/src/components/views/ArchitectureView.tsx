@@ -13,7 +13,6 @@ import {
   Layers,
   Sparkles,
   GitCompareArrows,
-  Upload,
   Download,
   ExternalLink,
   Plus,
@@ -57,12 +56,8 @@ export function ArchitectureView({
   onSyncLivingWorkspace,
   onAiGenerateVisuals,
 }: ArchitectureViewProps) {
-  const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [isSyncingWorkspace, setIsSyncingWorkspace] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
   const [processingProposalId, setProcessingProposalId] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Immutable visual revision history
   const [revisions, setRevisions] = useState<VisualRevisionSummary[]>([]);
@@ -283,34 +278,6 @@ export function ArchitectureView({
     }
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsImporting(true);
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-
-      const elements = Array.isArray(parsed) ? parsed : parsed.elements || [];
-      const appState = parsed.appState || { viewBackgroundColor: "#ffffff" };
-      const name = file.name.replace(/\.[^/.]+$/, "") || "Uploaded Architecture Scene";
-
-      await onIngestScene({
-        name,
-        elements,
-        app_state: appState,
-      });
-    } catch (err: any) {
-      alert(`Failed to parse or ingest Excalidraw file: ${err.message}`);
-    } finally {
-      setIsImporting(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    }
-  };
-
   const handleExportExcalidraw = () => {
     if (!artifact) return;
     const scene = {
@@ -330,15 +297,6 @@ export function ArchitectureView({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  };
-
-  const handleGenerate = async () => {
-    try {
-      setIsGenerating(true);
-      await onGenerateProposal(currentStateVersion);
-    } finally {
-      setIsGenerating(false);
-    }
   };
 
   const handleReview = async (proposalId: string, action: "approve" | "reject") => {
@@ -365,86 +323,6 @@ export function ArchitectureView({
           <p className="text-xs text-text-muted mt-0.5">
             A visual workspace for the current project state, architecture, workflows, and decisions.
           </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".excalidraw,.json"
-            className="hidden"
-          />
-
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isImporting}
-            className="px-3 py-1.5 text-xs font-medium text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
-            title="Import an .excalidraw or JSON file"
-          >
-            <Upload className="w-3.5 h-3.5 text-text-muted" />
-            <span>{isImporting ? "Importing..." : "Import"}</span>
-          </button>
-
-          {artifact && (
-            <button
-              onClick={handleExportExcalidraw}
-              className="px-3 py-1.5 text-xs font-medium text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs"
-              title="Download scene as .excalidraw file"
-            >
-              <Download className="w-3.5 h-3.5 text-text-muted" />
-              <span>Export</span>
-            </button>
-          )}
-
-          {onSyncLivingWorkspace && (
-            <button
-              onClick={async () => {
-                try {
-                  setIsSyncingWorkspace(true);
-                  await onSyncLivingWorkspace();
-                } finally {
-                  setIsSyncingWorkspace(false);
-                }
-              }}
-              disabled={isSyncingWorkspace}
-              className="px-3 py-1.5 text-xs font-medium text-primary bg-primary-soft hover:bg-primary/20 border border-primary/20 rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
-              title="Update visual diagram with the latest project decisions and state"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingWorkspace ? "animate-spin" : ""}`} />
-              <span>{isSyncingWorkspace ? "Updating..." : "Update from State"}</span>
-            </button>
-          )}
-
-          <button
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className="px-3 py-1.5 text-xs font-medium text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50"
-            title="Generate proposed diagram changes based on the latest project state"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-text-muted" />
-            <span>{isGenerating ? "Drafting..." : "Propose Changes"}</span>
-          </button>
-
-          {onAiGenerateVisuals && (
-            <button
-              onClick={async () => {
-                try {
-                  setIsAiGenerating(true);
-                  // Always proposal-first: visual changes never auto-apply.
-                  await onAiGenerateVisuals(undefined, false);
-                } finally {
-                  setIsAiGenerating(false);
-                }
-              }}
-              disabled={isAiGenerating}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg flex items-center gap-1.5 transition-colors shadow-xs disabled:opacity-50"
-              title="Ask the Synora Agent to plan a diagram change for review"
-            >
-              <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? "animate-spin text-amber-300" : "text-amber-300"}`} />
-              <span>{isAiGenerating ? "Designing Scene..." : "Generate visual proposal"}</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -714,6 +592,11 @@ export function ArchitectureView({
                         ))}
                       </div>
                     </div>
+                    {diff.ai_status && diff.ai_status !== "ai" && (
+                      <p className="text-[11px] text-text-muted pt-2 border-t border-border">
+                        Planned with safe fallback ({diff.ai_status}) — not presented as AI output.
+                      </p>
+                    )}
                   </div>
                 </div>
               );

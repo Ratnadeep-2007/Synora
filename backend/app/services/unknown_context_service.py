@@ -164,6 +164,33 @@ class UnknownContextService:
         item = self.get_item(item_id, db, tenant_id)
         payload = self._safe_payload(item.payload_json)
 
+        # Re-resolve with the item's own continuity (same-group thread +
+        # cross-source Meet/WhatsApp context), not the bare sentence, so a
+        # terse follow-up ("yes, ship it") suggests the project its thread
+        # was about.
+        continuity = ""
+        try:
+            from app.services.conversation_continuity import (
+                build_continuity_window,
+                build_meet_continuity,
+            )
+
+            if item.source == "whatsapp":
+                continuity = build_continuity_window(
+                    db=db,
+                    tenant_id=tenant_id,
+                    group_name=payload.get("group_name"),
+                    group_jid=payload.get("group_jid"),
+                    current_text=item.content or "",
+                    actor_jid=payload.get("sender_jid"),
+                )
+            else:
+                continuity = build_meet_continuity(
+                    db, tenant_id=tenant_id, meeting_id=item.meeting_id
+                )
+        except Exception:
+            continuity = ""
+
         resolution: ContextResolutionResult = self.context_service.resolve(
             source=item.source,
             payload=payload or {"text": item.content},
@@ -171,6 +198,7 @@ class UnknownContextService:
             tenant_id=tenant_id,
             actor_id=item.actor_id,
             source_event_id=item.source_event_id,
+            continuity_context=continuity or None,
             record=False,
         )
 

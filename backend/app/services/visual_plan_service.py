@@ -44,7 +44,8 @@ class VisualPlanService:
             if plan is not None:
                 return plan, AI_STATUS_AI
 
-        if settings.LLM_PROVIDER.lower() == "nvidia" and settings.is_nvidia_nim_configured:
+        provider = (settings.LLM_PROVIDER or "").lower()
+        if provider == "nvidia" and settings.is_nvidia_nim_configured:
             plan = self._call_nim(
                 state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
             )
@@ -80,7 +81,8 @@ class VisualPlanService:
             if plan is not None:
                 return plan, AI_STATUS_AI
 
-        if settings.LLM_PROVIDER.lower() == "nvidia" and settings.is_nvidia_nim_configured:
+        provider = (settings.LLM_PROVIDER or "").lower()
+        if provider == "nvidia" and settings.is_nvidia_nim_configured:
             plan = self._call_nim(state_summary, [], [text], text, None)
             if plan is not None:
                 return plan, AI_STATUS_AI

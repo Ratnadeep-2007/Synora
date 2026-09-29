@@ -572,7 +572,7 @@ class ContextIntelligenceService:
 
         if ai_status:
             signals.append(
-                ContextSignal(kind="semantic", name="ai_unavailable", detail=ai_status, weight=0.0)
+                ContextSignal(kind="semantic", name=ai_status, detail=ai_status, weight=0.0)
             )
 
         if not candidates:

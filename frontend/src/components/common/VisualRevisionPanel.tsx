@@ -27,6 +27,7 @@ export interface VisualRevisionDiff {
   relationships_after: string[];
   state_version_from?: number | null;
   state_version_to?: number | null;
+  overlay_elements?: any[];
 }
 
 interface VisualRevisionPanelProps {
@@ -151,6 +152,16 @@ export function VisualRevisionPanel({
           <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
             r{diff.from_revision} → r{diff.to_revision}
           </span>
+          {(diff.overlay_elements?.length || 0) > 0 && (
+            <p className="text-[11px] text-text-muted">
+              {(diff.overlay_elements || []).filter((el: any) => el?.customData?.compare === "removed").length} ghost
+              {" · "}
+              {(diff.overlay_elements || []).filter((el: any) => el?.customData?.compare === "added").length} new
+              {" · "}
+              {(diff.overlay_elements || []).filter((el: any) => el?.customData?.compare === "changed").length} changed
+              {" "}— dashed nodes are removed history, green nodes are new.
+            </p>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <div>
               <span className="text-text-muted">Added</span>
