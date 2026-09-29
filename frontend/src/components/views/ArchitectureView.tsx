@@ -12,6 +12,7 @@ import {
   Shield,
   Layers,
   Sparkles,
+  GitCompareArrows,
   Upload,
   Download,
   ExternalLink,
@@ -68,6 +69,9 @@ export function ArchitectureView({
   const [currentRevisionNumber, setCurrentRevisionNumber] = useState<number | null>(null);
   const [compareFrom, setCompareFrom] = useState<number | null>(null);
   const [revisionDiff, setRevisionDiff] = useState<VisualRevisionDiff | null>(null);
+  const [compareElements, setCompareElements] = useState<any[]>([]);
+  const [compareAddedIds, setCompareAddedIds] = useState<string[]>([]);
+  const [compareChangedIds, setCompareChangedIds] = useState<string[]>([]);
   const [isRevisionBusy, setIsRevisionBusy] = useState(false);
 
   const projectId = artifact?.project_id;
@@ -83,8 +87,121 @@ export function ArchitectureView({
     }
   };
 
+  const clearCompare = () => {
+    setCompareFrom(null);
+    setRevisionDiff(null);
+    setCompareElements([]);
+    setCompareAddedIds([]);
+    setCompareChangedIds([]);
+  };
+
+  const elementSignature = (el: any) =>
+    JSON.stringify(
+      {
+        type: el?.type,
+        text: el?.text,
+        x: el?.x,
+        y: el?.y,
+        width: el?.width,
+        height: el?.height,
+        points: el?.points,
+        startBinding: el?.startBinding,
+        endBinding: el?.endBinding,
+        backgroundColor: el?.backgroundColor,
+        strokeColor: el?.strokeColor,
+      },
+      Object.keys({
+        type: el?.type,
+        text: el?.text,
+        x: el?.x,
+        y: el?.y,
+        width: el?.width,
+        height: el?.height,
+        points: el?.points,
+        startBinding: el?.startBinding,
+        endBinding: el?.endBinding,
+        backgroundColor: el?.backgroundColor,
+        strokeColor: el?.strokeColor,
+      }).sort()
+    );
+
+  const buildCompareScene = (historicalElements: any[], currentElements: any[], revisionNumber: number) => {
+    const historical = Array.isArray(historicalElements) ? historicalElements : [];
+    const current = Array.isArray(currentElements) ? currentElements : [];
+    const historicalById = new Map(historical.map((el) => [String(el?.id), el]));
+    const currentById = new Map(current.map((el) => [String(el?.id), el]));
+
+    const added = current.filter((el) => el?.id && !historicalById.has(String(el.id))).map((el) => String(el.id));
+    const changed = current
+      .filter((el) => {
+        if (!el?.id || !historicalById.has(String(el.id))) return false;
+        return elementSignature(historicalById.get(String(el.id))) !== elementSignature(el);
+      })
+      .map((el) => String(el.id));
+
+    const currentStyled = current.map((el) => {
+      const id = String(el?.id || "");
+      if (!added.includes(id) && !changed.includes(id)) return el;
+      const styled = { ...el };
+      styled.opacity = 100;
+      styled.strokeWidth = Math.max(Number(el?.strokeWidth || 2), 3);
+      if (el?.type === "text") {
+        styled.strokeColor = changed.includes(id) ? "#b45309" : "#15803d";
+      } else if (el?.type === "arrow" || el?.type === "line") {
+        styled.strokeColor = changed.includes(id) ? "#b45309" : "#15803d";
+        styled.strokeStyle = "solid";
+      } else {
+        styled.strokeColor = changed.includes(id) ? "#b45309" : "#15803d";
+        if (!el?.backgroundColor || el.backgroundColor === "transparent") {
+          styled.backgroundColor = changed.includes(id) ? "#fffbeb" : "#ecfdf5";
+        }
+      }
+      return styled;
+    });
+
+    const historicalGhosts = historical
+      .filter((el) => {
+        const id = String(el?.id || "");
+        if (!id) return false;
+        const matching = currentById.get(id);
+        return !matching || elementSignature(matching) !== elementSignature(el);
+      })
+      .map((el) => {
+        const id = String(el?.id || "");
+        const ghost = {
+          ...el,
+          id: `compare-ghost-${revisionNumber}-${id}`,
+          opacity: 42,
+          strokeColor: "#94a3b8",
+          strokeStyle: "dashed",
+          locked: true,
+        };
+        if (ghost.type === "text") {
+          ghost.strokeColor = "#64748b";
+          ghost.opacity = 48;
+        } else if (ghost.type === "arrow" || ghost.type === "line") {
+          ghost.strokeColor = "#94a3b8";
+          ghost.opacity = 42;
+          delete ghost.startBinding;
+          delete ghost.endBinding;
+        } else {
+          ghost.backgroundColor = "transparent";
+          ghost.strokeColor = "#94a3b8";
+        }
+        ghost.boundElements = null;
+        return ghost;
+      });
+
+    return {
+      scene: [...historicalGhosts, ...currentStyled],
+      addedIds: added,
+      changedIds: changed,
+    };
+  };
+
   useEffect(() => {
     loadRevisions();
+    clearCompare();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, artifact?.version]);
 
@@ -93,9 +210,27 @@ export function ArchitectureView({
     try {
       setIsRevisionBusy(true);
       setCompareFrom(revisionNumber);
-      const diff = await api.compareVisualRevisions(projectId, revisionNumber, currentRevisionNumber);
+
+      const [diff, historicalRevision] = await Promise.all([
+        api.compareVisualRevisions(projectId, revisionNumber, currentRevisionNumber),
+        api.getVisualRevision(projectId, revisionNumber),
+      ]);
+
+      const historicalElements =
+        historicalRevision?.elements ||
+        historicalRevision?.scene ||
+        historicalRevision?.snapshot?.elements ||
+        [];
+
+      const currentElements = artifact?.elements || [];
+      const compareScene = buildCompareScene(historicalElements, currentElements, revisionNumber);
+
       setRevisionDiff(diff);
+      setCompareElements(compareScene.scene);
+      setCompareAddedIds(compareScene.addedIds);
+      setCompareChangedIds(compareScene.changedIds);
     } catch (err: any) {
+      clearCompare();
       alert(`Compare failed: ${err.message}`);
     } finally {
       setIsRevisionBusy(false);
@@ -297,6 +432,27 @@ export function ArchitectureView({
       />
 
       {/* Primary Human-Facing Agent Output: Embedded Interactive Excalidraw Canvas */}
+      {compareFrom !== null && currentRevisionNumber !== null && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-primary-soft/50 border border-primary/20 text-xs">
+          <div className="flex items-center gap-3 min-w-0">
+            <GitCompareArrows className="w-4 h-4 text-primary shrink-0" />
+            <div className="min-w-0">
+              <p className="font-semibold text-text-main">Compare r{compareFrom} with current r{currentRevisionNumber}</p>
+              <p className="text-[11px] text-text-muted">
+                Historical elements are ghosted. Added elements are green. Changed elements are amber.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={clearCompare}
+            disabled={isRevisionBusy}
+            className="px-2.5 py-1.5 rounded-md border border-border bg-surface text-text-main font-medium shrink-0 disabled:opacity-50"
+          >
+            Exit compare
+          </button>
+        </div>
+      )}
+
       <ExcalidrawCanvas
         projectName={artifact?.name || "System Architecture"}
         version={artifact?.version || 1}
@@ -306,6 +462,12 @@ export function ArchitectureView({
         onSyncAgentOutput={onSyncLivingWorkspace}
         onSaveCanvas={onIngestScene}
         onExportJson={handleExportExcalidraw}
+        compareMode={compareFrom !== null && compareElements.length > 0}
+        compareElements={compareElements}
+        compareAddedIds={compareAddedIds}
+        compareChangedIds={compareChangedIds}
+        compareFromRevision={compareFrom}
+        compareToRevision={currentRevisionNumber}
       />
 
       {/* Authoritative Diagram Artifact Breakdown & Decision Citations */}
@@ -520,6 +682,7 @@ export function ArchitectureView({
         busy={isRevisionBusy}
         onSelectCompare={handleSelectCompare}
         onRestore={handleRestoreRevision}
+        onClearCompare={clearCompare}
       />
 
       {/* Historical Proposals */}
