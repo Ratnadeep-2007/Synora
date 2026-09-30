@@ -897,7 +897,7 @@ class WorkspaceAtlasService:
     def _mini_visual_sequence(self, category: str, title: str) -> List[str]:
         """Return three compact explanatory stages for a knowledge item."""
         key = category.upper()
-        middle = (title or key.title()).strip()[:20] or key.title()
+        middle = (title or key.title()).strip()[:12] or key.title()
         if key == "DECISION":
             return ["Context", middle, "Impact"]
         if key == "REQUIREMENT":
@@ -924,7 +924,7 @@ class WorkspaceAtlasService:
         """Render a tiny left-to-right explainer flow inside a knowledge card."""
         box_gap = 8
         box_width = max(42, int((width - box_gap * 2) / 3))
-        box_height = 52
+        box_height = 54
         box_y = y + 18
         elements: List[Dict[str, Any]] = []
 
