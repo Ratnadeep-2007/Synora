@@ -693,7 +693,7 @@ class ContextIntelligenceService:
         try:
             from app.services.context_feedback_service import ContextFeedbackService
             fb_svc = ContextFeedbackService(db)
-            feedback_context = fb_svc.get_feedback_for_prompt([p.id for p in projects])
+            feedback_context = fb_svc.get_feedback_for_prompt([p.id for p in projects], tenant_id=tenant_id)
         except Exception as exc:
             logger.debug("failed_to_fetch_feedback: %s", exc)
 
