@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     COOKIE_SAMESITE: str = "lax"
 
     # Free runtime provider abstraction.
-    # Default: Google Gemini with gemini-3.5-flash-lite and gemini-embedding-2.
+    # Default: Google Gemini with gemini-3.8-flash and gemini-embedding-2.
     # Supported: gemini | groq | nvidia | deterministic
     LLM_PROVIDER: str = Field(default="gemini", description="gemini | groq | nvidia | deterministic")
     GEMINI_API_KEY: str = ""
