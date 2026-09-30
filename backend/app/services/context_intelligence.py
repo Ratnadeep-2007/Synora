@@ -193,7 +193,7 @@ class ContextIntelligenceService:
 
         return False
 
-    def _build_corpus(self, projects: List[Project], db: Session) -> List[Dict[str, Any]]:
+    def _build_corpus(self, projects: List[Project], db: Session, tenant_id: str = "default_tenant") -> List[Dict[str, Any]]:
         """Build the bounded candidate corpus: prompt-safe, high-density project summaries."""
         corpus: List[Dict[str, Any]] = []
         evidence_limit = min(settings.CONTEXT_RESOLUTION_EVIDENCE_LIMIT, 3)

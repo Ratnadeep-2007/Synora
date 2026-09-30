@@ -1151,6 +1151,7 @@ async def generate_excalidraw_proposal(
     project_id: str,
     state_version: Optional[int] = Query(None, description="State version to derive diagram from"),
     reason: Optional[str] = Query(None, description="Optional justification"),
+    auto_apply: bool = Query(False, description="Whether to auto-apply directly"),
     excal_service: ExcalidrawService = Depends(get_excalidraw_service),
     state_service: ProjectStateService = Depends(get_project_state_service),
     db: Session = Depends(get_db),
@@ -1166,7 +1167,7 @@ async def generate_excalidraw_proposal(
         db=db,
         tenant_id=tenant_id,
         reason=reason,
-        auto_apply=True,
+        auto_apply=auto_apply,
         actor_id=current_user.id,
     )
     return excal_service.format_proposal_read(proposal)

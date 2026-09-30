@@ -623,7 +623,7 @@ export function Shell({
         </div>
       )}
 
-      {/* Modal: Create Project — focused 5-step flow */
+      {/* Modal: Create Project — focused 5-step flow */}
       {isNewProjectModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl bg-surface border border-border shadow-2xl p-6 space-y-5">

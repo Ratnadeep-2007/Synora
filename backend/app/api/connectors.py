@@ -279,7 +279,19 @@ async def whatsapp_webhook(
             logger.exception("Failed to enqueue WhatsApp message")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"WhatsApp batch que@router.post("/whatsapp/simulate", summary="Simulate WhatsApp Group Chat Message")
+                detail=f"WhatsApp batch queue error: {exc}",
+            )
+
+    return {
+        "ok": True,
+        "status": "queued",
+        "enqueued": len(queued),
+        "duplicates": duplicates,
+        "items": queued,
+    }
+
+
+@router.post("/whatsapp/simulate", summary="Simulate WhatsApp Group Chat Message")
 def simulate_whatsapp_message(
     payload: Dict[str, Any],
     db: Session = Depends(get_db),
@@ -322,15 +334,6 @@ def process_whatsapp_batches(
         tenant_id=tenant_id,
         force=force,
     )
-
-
-_400_BAD_REQUEST, detail="Message 'text' is required.")
-
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    payload.setdefault("auto_apply_diagram", True)
-    result = whatsapp_service.process_incoming_message(payload, db, tenant_id=tenant_id)
-    metrics.increment("ingestion_events_total", labels={"source": "whatsapp"})
-    return result
 
 
 @router.get("/whatsapp/history", summary="Recent WhatsApp Ingested Messages")

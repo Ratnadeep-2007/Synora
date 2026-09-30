@@ -60,5 +60,5 @@ class WhatsAppBatchItem(Base):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "group_jid", "message_id", name="uq_whatsapp_batch_message"),
-        Index("ix_whatsapp_batch_items_status", "batch_id", "status"),
+        Index("ix_whatsapp_batch_items_batch_status", "batch_id", "status"),
     )

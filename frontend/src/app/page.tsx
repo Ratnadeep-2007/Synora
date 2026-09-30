@@ -553,7 +553,8 @@ export default function Home() {
 
   const activeProject = projects.find((p) => p.id === currentProjectId) || null;
 
-  const excalSyncStatus = pendingExcalProposals > 0 ? "pending" : "synchronized";
+  const pendingProposalsCount = excalProposals.filter((p) => p.status === "pending").length;
+  const excalSyncStatus = pendingProposalsCount > 0 ? "pending" : "synchronized";
 
   return (
     <Shell
