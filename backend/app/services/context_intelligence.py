@@ -35,7 +35,7 @@ class ContextIntelligenceService:
     A. Deterministic signals - explicit project id, explicit tag, trusted
        connector mapping, user-selected project. A deterministic hit
        short-circuits with no model call and no human review.
-    B. Semantic signals - NVIDIA NIM + DeepSeek ranks candidate projects and
+    B. Semantic signals - configured provider ranks candidate projects and
        returns per-candidate reasons.
     C. Continuity / D. Visual - source-specific window supplied by the caller.
 
