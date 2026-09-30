@@ -48,6 +48,13 @@ class VisualPlanService:
         if provider in ("deterministic", "mock", "test"):
             return self._deterministic_plan(state_summary, current_nodes or [], focus_prompt, evidence_snippets), AI_STATUS_DETERMINISTIC
 
+        if provider == "gemini" and settings.is_gemini_configured:
+            plan = self._call_gemini(
+                state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
+            )
+            if plan is not None:
+                return plan, AI_STATUS_AI
+
         if provider == "groq" and settings.is_groq_configured:
             plan = self._call_groq(
                 state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
@@ -63,7 +70,13 @@ class VisualPlanService:
                 return plan, AI_STATUS_AI
 
         # Fallback to any active configured semantic provider
-        if settings.is_groq_configured:
+        if settings.is_gemini_configured:
+            plan = self._call_gemini(
+                state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
+            )
+            if plan is not None:
+                return plan, AI_STATUS_AI
+        elif settings.is_groq_configured:
             plan = self._call_groq(
                 state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
             )
@@ -109,6 +122,11 @@ class VisualPlanService:
         if provider in ("deterministic", "mock", "test"):
             return self._plan_from_text_deterministic(text, clean_title), AI_STATUS_DETERMINISTIC
 
+        if provider == "gemini" and settings.is_gemini_configured:
+            plan = self._call_gemini(state_summary, [], [text], text, None)
+            if plan is not None:
+                return plan, AI_STATUS_AI
+
         if provider == "groq" and settings.is_groq_configured:
             plan = self._call_groq(state_summary, [], [text], text, None)
             if plan is not None:
@@ -119,7 +137,11 @@ class VisualPlanService:
             if plan is not None:
                 return plan, AI_STATUS_AI
 
-        if settings.is_groq_configured:
+        if settings.is_gemini_configured:
+            plan = self._call_gemini(state_summary, [], [text], text, None)
+            if plan is not None:
+                return plan, AI_STATUS_AI
+        elif settings.is_groq_configured:
             plan = self._call_groq(state_summary, [], [text], text, None)
             if plan is not None:
                 return plan, AI_STATUS_AI
@@ -264,6 +286,58 @@ class VisualPlanService:
         if not content:
             return None
         plan = self._parse(content, model=getattr(self.client, "model_name", "client"))
+        return self._ensure_efficient_notes(plan, state, focus)
+
+    def _call_gemini(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
+        if not settings.is_gemini_configured:
+            return None
+        import httpx
+
+        prompt = self._build_prompt(state, nodes, evidence, focus, constraints)
+        project_title = state.get("title") or "Project"
+        system_instruction = (
+            f"You are the Synora visual architecture planner for project '{project_title}'. "
+            "Produce structured, production-grade VisualPlans and high-signal project-context notes. "
+            "Model concrete domain components and actionable architectural notes. "
+            "Never emit Synora platform meta-nodes and never return raw Excalidraw JSON. "
+            "Return ONLY strict JSON matching the requested VisualPlan schema."
+        )
+        url = (
+            f"{settings.GEMINI_BASE_URL.rstrip('/')}/models/"
+            f"{settings.GEMINI_MODEL}:generateContent?key={settings.GEMINI_API_KEY}"
+        )
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+            },
+        }
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code != 200:
+                    logger.warning(
+                        "visual_plan_gemini_http_%s: %s", resp.status_code, resp.text[:200]
+                    )
+                    return None
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    return None
+                parts = candidates[0].get("content", {}).get("parts", [])
+                content = parts[0].get("text", "") if parts else ""
+                if "```json" in content:
+                    content = content.split("```json", 1)[1].split("```", 1)[0].strip()
+                elif "```" in content:
+                    content = content.split("```", 1)[1].split("```", 1)[0].strip()
+        except Exception as exc:
+            logger.warning("visual_plan_gemini_failed: %s", exc)
+            return None
+        if not content.strip():
+            return None
+        plan = self._parse(content, model=f"gemini/{settings.GEMINI_MODEL}")
         return self._ensure_efficient_notes(plan, state, focus)
 
     def _call_nim(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
