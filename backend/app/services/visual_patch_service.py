@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 import json
 import logging
 import uuid
@@ -77,24 +76,52 @@ class VisualPatchService:
             except Exception:
                 pass
 
-        # Call reasoning engine to generate patch operations
-        operations, safety, reason = self._synthesize_operations(project_id, text, state_summary, current_rev)
+        # Generate semantic architecture changes plus a synthesized overall context.
+        operations, context_notes, safety, reason = self._synthesize_operations(
+            project_id, text, state_summary, current_rev
+        )
 
-        # Preserve each incoming conversation as its own immutable visual note.
-        # Use evidence identity when available so replaying the same evidence is idempotent.
-        conversation_key = (evidence_ids or [text])[-1]
-        conversation_note_id = make_stable_semantic_id(
-            "conversation_note",
-            str(conversation_key),
-        )
-        conversation_note = VisualPatchOperation(
-            op_type=VisualPatchOpType.ADD_NOTE,
-            target_id=conversation_note_id,
-            category=VisualNoteCategory.PROJECT_CONTEXT,
-            content=f"PROJECT CONTEXT\n{text[:650].strip()}",
-            evidence_ids=list(evidence_ids or []),
-        )
-        operations = [conversation_note] + operations
+        # Context cards are stable sections, not message history. Existing cards are
+        # updated in place; new projects receive them as additions.
+        context_ids = [
+            "context_purpose",
+            "context_current_state",
+            "context_key_decisions",
+            "context_constraints",
+            "context_open_items",
+        ]
+        context_ops: List[VisualPatchOperation] = []
+        existing_context_ids = set()
+        if current_rev and current_rev.scene_json:
+            try:
+                raw_scene = json.loads(current_rev.scene_json)
+                for el in raw_scene if isinstance(raw_scene, list) else []:
+                    if isinstance(el, dict) and el.get("semantic_type") == "note":
+                        sid = str(el.get("semantic_id") or el.get("id") or "")
+                        if sid.startswith("context_"):
+                            existing_context_ids.add(sid)
+            except Exception:
+                pass
+
+        for index, content in enumerate(context_notes[:5]):
+            clean = str(content).strip()
+            if not clean:
+                continue
+            target_id = context_ids[index]
+            context_ops.append(
+                VisualPatchOperation(
+                    op_type=(
+                        VisualPatchOpType.UPDATE_NOTE
+                        if target_id in existing_context_ids
+                        else VisualPatchOpType.ADD_NOTE
+                    ),
+                    target_id=target_id,
+                    category=VisualNoteCategory.PROJECT_CONTEXT,
+                    content=clean[:650],
+                    evidence_ids=list(evidence_ids or []),
+                )
+            )
+        operations = context_ops + operations
 
         patch = VisualPatch(
             patch_id=patch_id,
@@ -163,7 +190,7 @@ class VisualPatchService:
                     "id": el.get("semantic_id") or el.get("id"),
                     "label": el.get("text") or el.get("boundText") or "",
                 })
-            elif el.get("semantic_type") == "note" or str(el.get("id", "")).startswith("note_"):
+            elif el.get("semantic_type") == "note" or str(el.get("id", "")).startswith(("note_", "context_")):
                 existing_notes.append({
                     "id": el.get("semantic_id") or el.get("id"),
                     "content": el.get("text") or "",
@@ -200,10 +227,10 @@ class VisualPatchService:
             "4. Only create relationships supported by the evidence.",
             "5. Notes must be concise and evidence-oriented.",
             "6. For project context, return 3-5 synthesized cards in context_notes. These must explain the project's purpose, current state, key decisions, constraints, open items, or next focus. Never copy the incoming transcript and never create one note per message.",
-            "6. Use REMOVE operations only when removal is explicitly supported; otherwise use REVIEW_REQUIRED.",
-            "7. Use REQUEST_LAYOUT_ADJUSTMENT only when topology genuinely requires layout work.",
-            "8. Context-note identity is stable by section; the service will bind returned cards to context_purpose/context_current_state/context_key_decisions/context_constraints/context_open_items.",
-            "9. Do not include x, y, width, height, points, or raw Excalidraw JSON.",
+            "7. Use REMOVE operations only when removal is explicitly supported; otherwise use REVIEW_REQUIRED.",
+            "8. Use REQUEST_LAYOUT_ADJUSTMENT only when topology genuinely requires layout work.",
+            "9. Context-note identity is stable by section; the service will bind returned cards to context_purpose/context_current_state/context_key_decisions/context_constraints/context_open_items.",
+            "10. Do not include x, y, width, height, points, or raw Excalidraw JSON.",
             "",
             "INCOMING EVIDENCE:",
             text[:5000],
