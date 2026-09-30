@@ -1,8 +1,8 @@
 "use client";
 
 import React from "react";
-import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, FileText, PenTool } from "lucide-react";
-import { Conflict, ProjectState } from "@/lib/types";
+import { ArrowRight, BrainCircuit, CircleCheck, HelpCircle, PenTool } from "lucide-react";
+import { ProjectState } from "@/lib/types";
 
 interface OverviewViewProps {
   state: ProjectState | null;
@@ -20,77 +20,103 @@ interface OverviewViewProps {
 }
 
 export function OverviewView({ state, excalidraw = null, activityItems = [], onNavigateToTab }: OverviewViewProps) {
-  const requirementsCount = state?.requirements?.length ?? 0;
-  const decisionsCount = state?.decisions?.length ?? 0;
-  const questionsCount = state?.open_questions?.length ?? 0;
-  const currentVersion = state?.current_version ?? 1;
+  const requirements = state?.requirements?.length ?? 0;
+  const decisions = state?.decisions?.length ?? 0;
+  const questions = state?.open_questions?.length ?? 0;
+  const version = state?.current_version ?? 1;
 
   return (
     <div className="space-y-6">
-      <header>
-        <p className="text-[11px] uppercase tracking-wider font-semibold text-primary">Project overview</p>
-        <h1 className="text-xl font-semibold tracking-tight text-text-main mt-1">What is true right now?</h1>
-        <p className="text-xs text-text-muted mt-1 max-w-2xl">A single source of truth for current state, open questions, and the living workspace.</p>
+      <header className="flex flex-col gap-2">
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-primary/15 bg-primary-soft px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+          <BrainCircuit className="h-3.5 w-3.5" />
+          AI Autopilot
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight text-text-main">Project at a glance</h1>
+        <p className="max-w-2xl text-sm text-text-muted">
+          Synora continuously turns connected project information into current state, knowledge, and architecture.
+        </p>
       </header>
 
-      <section className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+      <section className="grid grid-cols-3 gap-3">
         {[
-          ["Requirements", requirementsCount],
-          ["Decisions", decisionsCount],
-          ["Open questions", questionsCount],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="p-4 rounded-lg bg-surface border border-border">
-            <div className="text-2xl font-semibold font-mono text-text-main">{String(value).padStart(2, "0")}</div>
-            <div className="text-xs text-text-muted mt-1">{label}</div>
+          { label: "Requirements", value: requirements },
+          { label: "Decisions", value: decisions },
+          { label: "Open questions", value: questions },
+        ].map((item) => (
+          <div key={item.label} className="rounded-xl border border-border bg-surface p-4 shadow-xs">
+            <div className="text-2xl font-semibold tracking-tight text-text-main">{String(item.value).padStart(2, "0")}</div>
+            <div className="mt-1 text-xs text-text-muted">{item.label}</div>
           </div>
         ))}
       </section>
 
-      <div className="grid grid-cols-1 gap-4">
-        <section className="p-5 rounded-xl bg-surface border border-border">
-          <div className="flex items-center justify-between pb-3 border-b border-border">
-            <div>
-              <h2 className="text-sm font-semibold text-text-main">Current project state</h2>
-              <p className="text-[11px] text-text-muted mt-0.5">Authoritative state v{currentVersion}</p>
-            </div>
-            <button onClick={() => onNavigateToTab("state")} className="text-xs text-primary inline-flex items-center gap-1">View state <ArrowRight className="w-3 h-3" /></button>
+      <section className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-text-main">Current state</h2>
+            <p className="mt-0.5 text-[11px] text-text-muted">Authoritative snapshot • v{version}</p>
           </div>
-          <div className="space-y-3 pt-4">
-            <div>
-              <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">Vision</span>
-              <p className="text-sm text-text-main mt-1 leading-relaxed">{state?.vision || "No project vision recorded yet."}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <div className="p-3 rounded-lg bg-canvas border border-border">
-                <span className="text-[11px] text-text-muted">Latest requirement</span>
-                <p className="text-xs font-medium text-text-main mt-1 line-clamp-2">{(state?.requirements?.[0]?.title || state?.requirements?.[0]?.content) || "None yet"}</p>
-              </div>
-              <div className="p-3 rounded-lg bg-canvas border border-border">
-                <span className="text-[11px] text-text-muted">Latest decision</span>
-                <p className="text-xs font-medium text-text-main mt-1 line-clamp-2">{state?.decisions?.[0]?.text || "None yet"}</p>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <section className="p-5 rounded-xl bg-surface border border-border">
-        <div className="flex items-center justify-between pb-3 border-b border-border">
-          <div className="flex items-center gap-2"><PenTool className="w-4 h-4 text-primary" /><div><h2 className="text-sm font-semibold text-text-main">Living visual workspace</h2><p className="text-[11px] text-text-muted mt-0.5">Excalidraw reflects the authoritative project state visually.</p></div></div>
-          <button onClick={() => onNavigateToTab("excalidraw")} className="text-xs text-primary">Open workspace</button>
+          <button onClick={() => onNavigateToTab("state")} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary-soft">
+            View state <ArrowRight className="h-3.5 w-3.5" />
+          </button>
         </div>
-        <div className="pt-4 flex flex-wrap items-center gap-4 text-xs">
-          <span className="inline-flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${excalidraw ? "bg-success" : "bg-text-muted"}`} />{excalidraw ? "Synchronized" : "Not synced"}</span>
-          {excalidraw && <><span className="text-text-muted">v{excalidraw.version}</span><span className="text-text-muted">{excalidraw.decisionsCount} decisions</span><span className="text-text-muted">{excalidraw.requirementsCount} requirements</span>{excalidraw.pendingCount > 0 && <span className="text-warning font-medium">{excalidraw.pendingCount} awaiting review</span>}</>}
+        <div className="grid gap-5 p-5 lg:grid-cols-[1.3fr_0.7fr]">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-muted">Vision</div>
+            <p className="mt-2 text-sm leading-6 text-text-main">{state?.vision || "No project vision has been recorded yet."}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-canvas p-4">
+            <div className="flex items-center gap-2 text-[11px] font-semibold text-success">
+              <CircleCheck className="h-3.5 w-3.5" />
+              AI-synchronized
+            </div>
+            <div className="mt-2 text-[11px] leading-5 text-text-muted">
+              Routine project understanding and state maintenance happen automatically.
+            </div>
+          </div>
         </div>
       </section>
 
-      <section className="p-5 rounded-xl bg-surface border border-border">
-        <div className="flex items-center gap-2 pb-3 border-b border-border"><Clock3 className="w-4 h-4 text-primary" /><div><h2 className="text-sm font-semibold text-text-main">Recent activity</h2><p className="text-[11px] text-text-muted mt-0.5">Recent project and workspace activity.</p></div></div>
-        {activityItems.length ? <div className="divide-y divide-border">{activityItems.slice(0,6).map((item,idx)=><div key={idx} className="py-3 flex items-start gap-3 text-xs"><span className="font-mono text-text-muted shrink-0">{item.time}</span><span className="text-text-main">{item.text}</span></div>)}</div> : <p className="pt-4 text-xs text-text-muted">No recent activity.</p>}
+      <section className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div className="flex items-center gap-2">
+            <PenTool className="h-4 w-4 text-primary" />
+            <div>
+              <h2 className="text-sm font-semibold text-text-main">Architecture workspace</h2>
+              <p className="mt-0.5 text-[11px] text-text-muted">AI-maintained, database-backed Excalidraw workspace.</p>
+            </div>
+          </div>
+          <button onClick={() => onNavigateToTab("excalidraw")} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-text-main hover:bg-canvas">
+            Open <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-5 px-5 py-4 text-xs">
+          <span className="inline-flex items-center gap-2 text-text-main"><span className="h-2 w-2 rounded-full bg-success" />{excalidraw ? "Synchronized" : "Initializing"}</span>
+          <span className="text-text-muted">Diagram v{excalidraw?.version || 1}</span>
+          <span className="text-text-muted">{excalidraw?.requirementsCount || requirements} requirements</span>
+          <span className="text-text-muted">{excalidraw?.decisionsCount || decisions} decisions</span>
+          <span className="text-text-muted">PostgreSQL-backed</span>
+        </div>
       </section>
 
-      <div className="text-[11px] text-text-muted inline-flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" />Evidence remains available from state details.</div>
+      <section className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-border px-5 py-4">
+          <HelpCircle className="h-4 w-4 text-primary" />
+          <div>
+            <h2 className="text-sm font-semibold text-text-main">Recent AI activity</h2>
+            <p className="mt-0.5 text-[11px] text-text-muted">Latest automated project activity.</p>
+          </div>
+        </div>
+        <div className="divide-y divide-border">
+          {(activityItems.length ? activityItems.slice(0, 6) : [{ time: "—", text: "No recent activity yet." }]).map((item, index) => (
+            <div key={index} className="flex items-center gap-4 px-5 py-3 text-xs">
+              <span className="w-16 shrink-0 font-mono text-[10px] text-text-muted">{item.time}</span>
+              <span className="text-text-main">{item.text}</span>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
