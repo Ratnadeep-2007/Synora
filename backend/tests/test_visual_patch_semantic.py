@@ -137,3 +137,18 @@ def test_three_way_merge_preserves_unrelated_human_canvas_edits():
     assert next(e for e in merged if e["id"] == "txt_context_current_state")["text"] == "[PROJECT_CONTEXT]\nHuman-edited state"
     assert conflicts
     assert not applied
+
+
+def test_project_visual_update_entrypoints_do_not_compile_or_replace_full_scene():
+    import inspect
+    from app.services.excalidraw_service import ExcalidrawService
+
+    source = inspect.getsource(ExcalidrawService._create_semantic_visual_proposal)
+    source += inspect.getsource(ExcalidrawService.generate_proposal_from_state)
+    source += inspect.getsource(ExcalidrawService.generate_ai_visual_architecture)
+    source += inspect.getsource(ExcalidrawService.generate_diagram_from_text)
+
+    assert "ExcalidrawCompiler" not in source
+    assert "artifact.elements_json = json.dumps(proposed_elements)" not in source
+    assert "artifact.elements_json = json.dumps(compiled_elements)" not in source
+    assert "VisualPatchService" in source
