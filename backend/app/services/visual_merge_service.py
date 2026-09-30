@@ -470,7 +470,20 @@ class VisualMergeService:
 
         if note_id in element_map:
             existing = element_map[note_id]
-            existing["text"] = content
+            bound_text_id = next(
+                (
+                    item.get("id")
+                    for item in (existing.get("boundElements") or [])
+                    if item.get("type") == "text" and item.get("id")
+                ),
+                f"txt_{note_id}",
+            )
+            visible_text = f"[{op.category.value if op.category else 'DECISION'}]\n{content[:480]}"
+            text_el = element_map.get(bound_text_id)
+            if text_el:
+                text_el["text"] = visible_text
+                text_el["originalText"] = visible_text
+            existing["note_content"] = content
             applied_ops.append({**op.model_dump(), "note": "Updated existing note instead of duplicating"})
             return
         category = op.category.value if op.category else "DECISION"
