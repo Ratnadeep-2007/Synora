@@ -151,7 +151,7 @@ export default function Home() {
     refreshAll();
     const interval = setInterval(() => {
       refreshAll();
-    }, 3000);
+    }, 1000);
     return () => clearInterval(interval);
   }, [refreshAll]);
 
