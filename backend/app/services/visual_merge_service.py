@@ -1,4 +1,5 @@
 import copy
+import json
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -71,11 +72,41 @@ class VisualMergeService:
         conflicts: List[str] = []
         applied_ops: List[Dict[str, Any]] = []
 
-        # Map current user elements by ID
+        # BASE is the common ancestor; USER is the current local state.
+        base_map = {
+            str(el["id"]): copy.deepcopy(el)
+            for el in base_elements
+            if isinstance(el, dict) and el.get("id")
+        }
         element_map: Dict[str, Dict[str, Any]] = {}
         for el in user_elements:
             if isinstance(el, dict) and el.get("id"):
                 element_map[str(el["id"])] = copy.deepcopy(el)
+
+        def semantic_signature(el: Optional[Dict[str, Any]]) -> str:
+            if not el:
+                return ""
+            return json.dumps(
+                {
+                    "type": el.get("type"),
+                    "text": el.get("text"),
+                    "semantic_id": el.get("semantic_id"),
+                    "semantic_type": el.get("semantic_type"),
+                    "startBinding": el.get("startBinding"),
+                    "endBinding": el.get("endBinding"),
+                },
+                sort_keys=True,
+                default=str,
+            )
+
+        def user_changed_target(target_id: str) -> bool:
+            base_el = base_map.get(target_id)
+            user_el = element_map.get(target_id)
+            if base_el is None:
+                return False
+            if user_el is None:
+                return True
+            return semantic_signature(base_el) != semantic_signature(user_el)
 
         # Build index of existing semantic labels and node rectangles
         label_to_id: Dict[str, str] = {}
@@ -105,8 +136,16 @@ class VisualMergeService:
                 if op.op_type == VisualPatchOpType.ADD_NODE:
                     self._apply_add_node(op, element_map, label_to_id, occupied_boxes, applied_ops, conflicts)
                 elif op.op_type == VisualPatchOpType.UPDATE_NODE:
+                    target = op.target_id if op.target_id.startswith("node_") else f"node_{op.target_id}"
+                    if user_changed_target(target):
+                        conflicts.append(f"AI update skipped because the user changed or removed {target} after the patch base.")
+                        continue
                     self._apply_update_node(op, element_map, label_to_id, applied_ops, conflicts)
                 elif op.op_type == VisualPatchOpType.REMOVE_NODE:
+                    target = op.target_id if op.target_id.startswith("node_") else f"node_{op.target_id}"
+                    if user_changed_target(target):
+                        conflicts.append(f"AI removal skipped because the user changed or removed {target} after the patch base.")
+                        continue
                     self._apply_remove_node(op, element_map, patch.safety_classification, applied_ops, conflicts)
                 elif op.op_type == VisualPatchOpType.ADD_EDGE:
                     self._apply_add_edge(op, element_map, label_to_id, applied_ops, conflicts)
