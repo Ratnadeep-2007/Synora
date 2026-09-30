@@ -46,13 +46,11 @@ export default function Home() {
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
-  const [unknownBoard, setUnknownBoard] = useState<any>(null);
   const [atlasData, setAtlasData] = useState<WorkspaceAtlasData | null>(null);
 
   // Event-driven pipeline state
   const [meetSubscriptions, setMeetSubscriptions] = useState<any[]>([]);
   const [meetEvents, setMeetEvents] = useState<any[]>([]);
-  const [unassignedMeetings, setUnassignedMeetings] = useState<MeetingItem[]>([]);
   const [unknownPendingCount, setUnknownPendingCount] = useState<number>(0);
 
   // Evidence Drawer State
@@ -120,10 +118,8 @@ export default function Home() {
         api.getSourceConnections(),
         api.getExcalidrawArtifact(activeId),
         api.getExcalidrawProposals(activeId),
-        api.getUnknownBoard().catch(() => null),
         api.listMeetSubscriptions().catch(() => []),
         api.listMeetEvents(undefined, 20).catch(() => []),
-        api.listUnassignedMeetings(20).catch(() => []),
         api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
         currentTab === "excalidraw" ? api.getWorkspaceAtlas() : Promise.resolve(null),
       ]);
@@ -138,10 +134,8 @@ export default function Home() {
       if (connsData.status === "fulfilled") setConnections(connsData.value);
       if (excalData.status === "fulfilled") setExcalArtifact(excalData.value);
       if (propsData.status === "fulfilled") setExcalProposals(propsData.value);
-      if (unknownBoardData.status === "fulfilled") setUnknownBoard(unknownBoardData.value);
       if (subsData.status === "fulfilled") setMeetSubscriptions(subsData.value);
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
-      if (unassignedData.status === "fulfilled") setUnassignedMeetings(unassignedData.value);
       if (unknownSummaryData.status === "fulfilled") {
         setUnknownPendingCount(unknownSummaryData.value?.pending || 0);
       }
@@ -228,7 +222,6 @@ export default function Home() {
       setAtlasData(null);
       setMeetSubscriptions([]);
       setMeetEvents([]);
-      setUnassignedMeetings([]);
       setUnknownPendingCount(0);
       setAtlasData(null);
 
