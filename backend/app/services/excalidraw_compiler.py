@@ -1,4 +1,6 @@
+import hashlib
 import logging
+from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.exceptions import SynesisException
@@ -23,9 +25,13 @@ DEFAULT_STYLE = NODE_STYLES["service"]
 
 NODE_WIDTH = 220
 NODE_HEIGHT = 92
-H_GAP = 110
-V_GAP = 70
+H_GAP = 140
+V_GAP = 90
 COLUMN_WRAP = 4
+GROUP_PAD_X = 36
+GROUP_PAD_TOP = 44
+GROUP_PAD_BOTTOM = 32
+GROUP_GAP = 70
 BASE_X = 80
 BASE_Y = 80
 
@@ -50,6 +56,10 @@ class ExcalidrawCompiler:
         elements: List[Dict[str, Any]] = []
         node_element_ids: Dict[str, str] = {}
 
+        # Draw subtle group frames first so the architecture reads as sections.
+        group_frames = self._group_frames(plan, positions)
+        elements.extend(group_frames)
+
         for node in plan.nodes:
             x, y = positions[node.id]
             style = NODE_STYLES.get(node.node_type, DEFAULT_STYLE)
@@ -60,6 +70,8 @@ class ExcalidrawCompiler:
             elements.append(
                 {
                     "id": rect_id,
+                    "semantic_id": node.id,
+                    "semantic_type": "node",
                     "type": "rectangle",
                     "x": x,
                     "y": y,
@@ -89,6 +101,8 @@ class ExcalidrawCompiler:
             elements.append(
                 {
                     "id": text_id,
+                    "semantic_id": node.id,
+                    "semantic_type": "node_label",
                     "type": "text",
                     "x": x + 12,
                     "y": txt_y,
@@ -162,135 +176,246 @@ class ExcalidrawCompiler:
             dst_pos = positions.get(rel.target)
             elements.append(self._arrow(rel, src, dst, index, src_pos, dst_pos))
 
-        # First-class architectural sticky notes from plan.notes
-        if plan.notes:
+        # Architectural notes remain compact; conversation history is a separate vertical stream.
+        if plan.notes or plan.conversation_notes:
             max_y = max(pos[1] for pos in positions.values())
-            notes_hdr_y = max_y + NODE_HEIGHT + 45
-            header_id = f"lbl_notes_hdr_{abs(hash(plan.title)) % 100000}"
-            elements.append(
-                {
-                    "id": header_id,
-                    "type": "text",
-                    "x": BASE_X,
-                    "y": notes_hdr_y,
-                    "width": 500,
-                    "height": 22,
-                    "text": "📌 ARCHITECTURAL NOTES & DIRECTIVES",
-                    "originalText": "📌 ARCHITECTURAL NOTES & DIRECTIVES",
-                    "fontSize": 13,
-                    "fontFamily": 1,
-                    "textAlign": "left",
-                    "verticalAlign": "top",
-                    "containerId": None,
-                    "lineHeight": 1.25,
-                    "baseline": 12,
-                    "autoResize": True,
-                    "strokeColor": "#854d0e",
-                    "backgroundColor": "transparent",
-                    "fillStyle": "solid",
-                    "strokeWidth": 1,
-                    "strokeStyle": "solid",
-                    "roughness": 1,
-                    "opacity": 100,
-                    "angle": 0,
-                    "groupIds": [],
-                    "isDeleted": False,
-                }
-            )
+            notes_hdr_y = max_y + NODE_HEIGHT + 55
 
-            cards_start_y = notes_hdr_y + 32
-            NOTE_W = 320
-            NOTE_H = 110
-            NOTE_GAP_X = 35
-            NOTE_GAP_Y = 25
-            NOTES_PER_ROW = 3
+            if plan.notes:
+                elements.extend(self._render_note_section(
+                    header="ARCHITECTURAL NOTES",
+                    notes=plan.notes[:6],
+                    start_y=notes_hdr_y,
+                    prefix="arch_note",
+                    category_label="ARCHITECTURE",
+                    width=540,
+                ))
+                notes_hdr_y = notes_hdr_y + 150 + min(len(plan.notes[:6]), 6) * 108
 
-            for n_idx, note_text in enumerate(plan.notes[:6]):
-                col = n_idx % NOTES_PER_ROW
-                row = n_idx // NOTES_PER_ROW
-                nx = BASE_X + col * (NOTE_W + NOTE_GAP_X)
-                ny = cards_start_y + row * (NOTE_H + NOTE_GAP_Y)
+            if plan.conversation_notes:
+                elements.extend(self._render_note_section(
+                    header="CONVERSATION NOTES",
+                    notes=plan.conversation_notes[:8],
+                    start_y=notes_hdr_y,
+                    prefix="conversation_note",
+                    category_label="CONVERSATION",
+                    width=760,
+                ))
 
-                clean_text = str(note_text).strip()
-                if not any(clean_text.startswith(p) for p in ("📌", "💡", "⚡", "📋", "⚠️", "✅")):
-                    clean_text = f"📌 {clean_text}"
-
-                card_id = f"sticky_note_{n_idx}"
-                text_id = f"sticky_text_{n_idx}"
-
-                elements.append(
-                    {
-                        "id": card_id,
-                        "type": "rectangle",
-                        "x": nx,
-                        "y": ny,
-                        "width": NOTE_W,
-                        "height": NOTE_H,
-                        "angle": 0,
-                        "strokeColor": "#ca8a04",
-                        "backgroundColor": "#fef9c3",
-                        "fillStyle": "solid",
-                        "strokeWidth": 2,
-                        "roughness": 1,
-                        "opacity": 100,
-                        "groupIds": ["architectural_notes"],
-                        "roundness": {"type": 3},
-                        "boundElements": [{"type": "text", "id": text_id}],
-                        "isDeleted": False,
-                    }
-                )
-                elements.append(
-                    {
-                        "id": text_id,
-                        "type": "text",
-                        "x": nx + 14,
-                        "y": ny + 12,
-                        "width": NOTE_W - 28,
-                        "height": NOTE_H - 24,
-                        "text": clean_text,
-                        "originalText": clean_text,
-                        "fontSize": 12,
-                        "fontFamily": 1,
-                        "textAlign": "left",
-                        "verticalAlign": "top",
-                        "containerId": card_id,
-                        "lineHeight": 1.35,
-                        "baseline": 12,
-                        "autoResize": True,
-                        "strokeColor": "#713f12",
-                        "backgroundColor": "transparent",
-                        "fillStyle": "solid",
-                        "strokeWidth": 1,
-                        "strokeStyle": "solid",
-                        "roughness": 1,
-                        "opacity": 100,
-                        "angle": 0,
-                        "groupIds": ["architectural_notes"],
-                        "isDeleted": False,
-                    }
-                )
 
         self.validate_scene(elements)
+        return elements
+
+    def _group_frames(
+        self, plan: VisualPlan, positions: Dict[str, Tuple[float, float]]
+    ) -> List[Dict[str, Any]]:
+        groups: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+        for node in plan.nodes:
+            if node.group and node.id in positions:
+                groups[node.group].append(positions[node.id])
+
+        frames: List[Dict[str, Any]] = []
+        for idx, (group_name, coords) in enumerate(sorted(groups.items())):
+            min_x = min(x for x, _ in coords) - GROUP_PAD_X
+            min_y = min(y for _, y in coords) - GROUP_PAD_TOP
+            max_x = max(x for x, _ in coords) + NODE_WIDTH + GROUP_PAD_X
+            max_y = max(y for _, y in coords) + NODE_HEIGHT + GROUP_PAD_BOTTOM
+            frame_id = f"group_frame_{self._stable_token(group_name)}"
+            label_id = f"group_label_{self._stable_token(group_name)}"
+            frames.append({
+                "id": frame_id,
+                "semantic_id": frame_id,
+                "semantic_type": "group_frame",
+                "type": "rectangle",
+                "x": min_x,
+                "y": min_y,
+                "width": max_x - min_x,
+                "height": max_y - min_y,
+                "angle": 0,
+                "strokeColor": "#94a3b8",
+                "backgroundColor": "#f8fafc",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "strokeStyle": "dashed",
+                "roughness": 1,
+                "opacity": 45,
+                "roundness": {"type": 3},
+                "boundElements": [{"type": "text", "id": label_id}],
+                "isDeleted": False,
+            })
+            frames.append({
+                "id": label_id,
+                "semantic_id": frame_id,
+                "semantic_type": "group_label",
+                "type": "text",
+                "x": min_x + 12,
+                "y": min_y + 10,
+                "width": min(420, max_x - min_x - 24),
+                "height": 20,
+                "text": str(group_name).upper(),
+                "fontSize": 11,
+                "fontFamily": 1,
+                "textAlign": "left",
+                "verticalAlign": "top",
+                "strokeColor": "#64748b",
+                "backgroundColor": "transparent",
+                "lineHeight": 1.2,
+                "containerId": frame_id,
+                "autoResize": True,
+                "isDeleted": False,
+            })
+        return frames
+
+    @staticmethod
+    def _stable_token(value: str) -> str:
+        return hashlib.sha1(str(value).encode("utf-8")).hexdigest()[:12]
+
+    def _render_note_section(
+        self,
+        header: str,
+        notes: List[str],
+        start_y: float,
+        prefix: str,
+        category_label: str,
+        width: int,
+    ) -> List[Dict[str, Any]]:
+        elements: List[Dict[str, Any]] = []
+        header_id = f"{prefix}_header"
+        elements.append({
+            "id": header_id,
+            "semantic_id": prefix,
+            "semantic_type": "note_section",
+            "type": "text",
+            "x": BASE_X,
+            "y": start_y,
+            "width": width,
+            "height": 24,
+            "text": header,
+            "fontSize": 13,
+            "fontFamily": 1,
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "strokeColor": "#475569",
+            "backgroundColor": "transparent",
+            "lineHeight": 1.2,
+            "isDeleted": False,
+        })
+
+        note_y = start_y + 34
+        note_h = 92 if category_label == "CONVERSATION" else 96
+        for index, note in enumerate(notes):
+            clean = str(note).strip()
+            if not clean:
+                continue
+            token = self._stable_token(clean)
+            card_id = f"{prefix}_{token}"
+            text_id = f"{card_id}_text"
+            meta = f"{category_label}  •  {index + 1:02d}"
+            elements.append({
+                "id": card_id,
+                "semantic_id": card_id,
+                "semantic_type": "note",
+                "type": "rectangle",
+                "x": BASE_X,
+                "y": note_y,
+                "width": width,
+                "height": note_h,
+                "angle": 0,
+                "strokeColor": "#cbd5e1",
+                "backgroundColor": "#ffffff",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 1,
+                "roundness": {"type": 3},
+                "opacity": 100,
+                "groupIds": [prefix],
+                "boundElements": [{"type": "text", "id": text_id}],
+                "isDeleted": False,
+            })
+            elements.append({
+                "id": text_id,
+                "semantic_id": card_id,
+                "semantic_type": "note_text",
+                "type": "text",
+                "x": BASE_X + 16,
+                "y": note_y + 12,
+                "width": width - 32,
+                "height": note_h - 24,
+                "text": meta + "\n" + clean[:650],
+                "fontSize": 12,
+                "fontFamily": 1,
+                "textAlign": "left",
+                "verticalAlign": "top",
+                "strokeColor": "#334155",
+                "backgroundColor": "transparent",
+                "lineHeight": 1.35,
+                "containerId": card_id,
+                "autoResize": True,
+                "isDeleted": False,
+            })
+            note_y += note_h + 18
         return elements
 
     # ------------------------------------------------------------------
     # Layout
     # ------------------------------------------------------------------
     def _layout(self, plan: VisualPlan) -> Dict[str, Tuple[float, float]]:
-        """Deterministic grid layout with stable ordering and spacing."""
+        """Deterministic dependency-aware layered layout.
+
+        Horizontal plans use graph depth (roots -> downstream systems) rather than
+        array order. Vertical plans remain chronological. Layout is stable for the
+        same semantic plan.
+        """
+        if not plan.nodes:
+            return {}
+
+        if plan.layout_direction != "horizontal":
+            return {
+                node.id: (BASE_X, BASE_Y + index * (NODE_HEIGHT + V_GAP))
+                for index, node in enumerate(plan.nodes)
+            }
+
+        node_ids = [node.id for node in plan.nodes]
+        node_index = {node.id: i for i, node in enumerate(plan.nodes)}
+        children: Dict[str, List[str]] = defaultdict(list)
+        indegree: Dict[str, int] = {nid: 0 for nid in node_ids}
+
+        for rel in plan.relationships:
+            if rel.source in indegree and rel.target in indegree:
+                children[rel.source].append(rel.target)
+                indegree[rel.target] += 1
+
+        depth: Dict[str, int] = {nid: 0 for nid in node_ids}
+        queue = deque(sorted((nid for nid, d in indegree.items() if d == 0), key=node_index.get))
+
+        while queue:
+            src = queue.popleft()
+            for dst in children.get(src, []):
+                depth[dst] = max(depth.get(dst, 0), depth[src] + 1)
+                indegree[dst] -= 1
+                if indegree[dst] == 0:
+                    queue.append(dst)
+
+        # Cyclic/disconnected nodes remain stable and are placed in a final deterministic layer.
+        max_depth = max(depth.values(), default=0)
+        for nid, deg in indegree.items():
+            if deg > 0:
+                depth[nid] = max_depth + 1
+
+        layers: Dict[int, List[str]] = defaultdict(list)
+        for nid in node_ids:
+            layers[depth[nid]].append(nid)
+
         positions: Dict[str, Tuple[float, float]] = {}
-        horizontal = plan.layout_direction == "horizontal"
-        for index, node in enumerate(plan.nodes):
-            if horizontal:
-                col = index % COLUMN_WRAP
-                row = index // COLUMN_WRAP
-                x = BASE_X + col * (NODE_WIDTH + H_GAP)
-                y = BASE_Y + row * (NODE_HEIGHT + V_GAP)
-            else:
-                row = index
-                x = BASE_X
-                y = BASE_Y + row * (NODE_HEIGHT + V_GAP)
-            positions[node.id] = (x, y)
+        for layer_idx in sorted(layers):
+            ids = sorted(layers[layer_idx], key=node_index.get)
+            total_height = len(ids) * NODE_HEIGHT + max(0, len(ids) - 1) * V_GAP
+            y0 = BASE_Y
+            for idx, nid in enumerate(ids):
+                x = BASE_X + layer_idx * (NODE_WIDTH + H_GAP)
+                y = y0 + idx * (NODE_HEIGHT + V_GAP)
+                positions[nid] = (x, y)
+
         return positions
 
     def _arrow(
