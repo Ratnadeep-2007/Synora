@@ -101,10 +101,8 @@ export default function Home() {
         connsData,
         excalData,
         propsData,
-        unknownBoardData,
         subsData,
         eventsData,
-        unassignedData,
         unknownSummaryData,
         atlasDataResult,
       ] = await Promise.allSettled([
