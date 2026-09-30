@@ -284,12 +284,86 @@ class UnknownContextService:
 
         self._move_evidence(item, project.id, db)
 
+        # A human routing decision should teach the resolver and continue the
+        # normal downstream automation without requiring another manual action.
+        try:
+            from app.services.context_feedback_service import ContextFeedbackService
+            ContextFeedbackService(db).record_feedback(
+                selected_project_id=project.id,
+                original_predicted_project_id=(
+                    next((m.candidate_project_id for m in item.matches if m.recommendation == "review"), None)
+                    if item.matches else None
+                ),
+                action="assigned",
+                actor_id=actor_id,
+                reason=note or "Human resolved Unknown Context routing.",
+                text_snippet=item.content,
+                source_event_id=item.source_event_id,
+                resolution_id=item.context_resolution_id,
+                evidence_id=item.evidence_id,
+                tenant_id=tenant_id,
+                workspace_id=project.workspace_id or "ws_default",
+            )
+        except Exception as exc:
+            logger.warning("unknown_context_feedback_record_failed: %s", exc)
+
+        try:
+            from app.services.knowledge_intelligence import KnowledgeIntelligenceService
+            evidence = (
+                db.query(Evidence)
+                .filter(Evidence.id == item.evidence_id)
+                .first()
+                if item.evidence_id else None
+            )
+            if evidence:
+                extraction = KnowledgeIntelligenceService().extract_items([evidence], item.source)
+                KnowledgeIntelligenceService().persist_candidates(
+                    extraction,
+                    project_id=project.id,
+                    db=db,
+                    meeting_id=item.meeting_id,
+                )
+        except Exception as exc:
+            logger.warning("unknown_context_downstream_knowledge_failed: %s", exc)
+
+        try:
+            from app.services.project_semantic_profile_service import ProjectSemanticProfileService
+            ProjectSemanticProfileService().rebuild_profile(
+                project,
+                db,
+                tenant_id=tenant_id,
+            )
+        except Exception as exc:
+            logger.warning("unknown_context_profile_refresh_failed: %s", exc)
+
         item.status = UnknownItemStatus.ASSIGNED.value
         item.assigned_project_id = project.id
         item.assigned_by = actor_id
         item.assigned_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(item)
+
+        # Context assignment is a low-risk visual update: add/adjust semantic
+        # notes through the existing three-way merge engine so user placement is
+        # preserved and the project canvas reflects the newly classified evidence.
+        try:
+            from app.services.visual_patch_service import VisualPatchService
+            patch = VisualPatchService().generate_patch_from_evidence(
+                project_id=project.id,
+                text=item.content,
+                db=db,
+                evidence_ids=[item.evidence_id] if item.evidence_id else [],
+                tenant_id=tenant_id,
+            )
+            VisualPatchService().apply_patch(
+                project_id=project.id,
+                patch=patch,
+                db=db,
+                actor_id="synora_agent",
+                tenant_id=tenant_id,
+            )
+        except Exception as exc:
+            logger.warning("unknown_context_visual_refresh_failed: %s", exc)
 
         self.audit_service.record_event(
             action="unknown_context_assigned",
