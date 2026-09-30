@@ -31,7 +31,20 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Create all database tables."""
+    """Create all database tables and reconcile any legacy prototype schema drift."""
     # Import all models so Base has metadata registered
     import app.models  # noqa: F401
+    
+    # Check for legacy schema drift in SQLite
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(engine)
+        if "whatsapp_batch_items" in inspector.get_table_names():
+            columns = [col["name"] for col in inspector.get_columns("whatsapp_batch_items")]
+            if "batch_id" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("DROP TABLE whatsapp_batch_items"))
+    except Exception:
+        pass
+
     Base.metadata.create_all(bind=engine)
