@@ -209,7 +209,7 @@ export function Shell({
           </div>
         </div>
 
-        {/* Navigation list — exactly the 10 enterprise entries */}
+        {/* Primary navigation */}
         <nav className="p-3 flex-1 overflow-y-auto" aria-label="Primary">
           <div className="space-y-1">
             {NAV_ITEMS.map((item) => {
@@ -442,8 +442,12 @@ export function Shell({
 
           <div className="flex-1" />
 
-          {/* Right: Global search, Activity, Help, User menu */}
+          {/* Right: AI status, Activity, Help, User menu */}
           <div className="flex items-center gap-2">
+            <div className="hidden lg:inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary-soft px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+              <Sparkles className="h-3 w-3" />
+              AI Autopilot
+            </div>
             <div className="relative">
               <button
                 onClick={() => {
@@ -623,7 +627,7 @@ export function Shell({
         </div>
       )}
 
-      {/* Modal: Create Project — focused 5-step flow */}
+      {/* Modal: Create Project — focused 4-step flow */}
       {isNewProjectModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl bg-surface border border-border shadow-2xl p-6 space-y-5">
@@ -707,7 +711,7 @@ export function Shell({
 
               {createStep === 3 && (
                 <div className="space-y-2">
-                  <span className="text-xs font-semibold text-text-main block">4. Connect tools</span>
+                  <span className="text-xs font-semibold text-text-main block">3. Connect tools</span>
                   {[
                     { id: "google_meet", label: "Google Meet — meeting transcripts" },
                     { id: "whatsapp", label: "WhatsApp — group chat via Baileys" },
