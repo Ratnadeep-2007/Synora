@@ -231,6 +231,10 @@ export function ExcalidrawCanvas({
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
   const [isEditable, setIsEditable] = useState(!readOnly);
+
+  useEffect(() => {
+    if (readOnly) setIsEditable(false);
+  }, [readOnly]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -292,14 +296,14 @@ export function ExcalidrawCanvas({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && isFullscreen) setIsFullscreen(false);
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && onSaveCanvas) {
+      if (!readOnly && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && onSaveCanvas) {
         event.preventDefault();
         handleSave();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isFullscreen, handleSave, onSaveCanvas]);
+  }, [isFullscreen, handleSave, onSaveCanvas, readOnly]);
 
   return (
     <div
@@ -333,26 +337,28 @@ export function ExcalidrawCanvas({
           )}
 
           {/* Mode toggle */}
-          <button
-            onClick={() => setIsEditable((val) => !val)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-muted hover:bg-canvas hover:text-text-main transition-colors"
-            title={isEditable ? "Switch to read-only preview mode" : "Switch to editable canvas mode"}
-          >
-            {isEditable ? (
-              <>
-                <Eye className="h-3.5 w-3.5 text-primary" />
-                <span className="hidden sm:inline">Preview</span>
-              </>
-            ) : (
-              <>
-                <PenTool className="h-3.5 w-3.5 text-primary" />
-                <span className="hidden sm:inline">Edit Mode</span>
-              </>
-            )}
-          </button>
+          {!readOnly && (
+            <button
+              onClick={() => setIsEditable((val) => !val)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-muted hover:bg-canvas hover:text-text-main transition-colors"
+              title={isEditable ? "Switch to read-only preview mode" : "Switch to editable canvas mode"}
+            >
+              {isEditable ? (
+                <>
+                  <Eye className="h-3.5 w-3.5 text-primary" />
+                  <span className="hidden sm:inline">Preview</span>
+                </>
+              ) : (
+                <>
+                  <PenTool className="h-3.5 w-3.5 text-primary" />
+                  <span className="hidden sm:inline">Edit Mode</span>
+                </>
+              )}
+            </button>
+          )}
 
           {/* Save Diagram button */}
-          {onSaveCanvas && (
+          {onSaveCanvas && !readOnly && (
             <button
               onClick={handleSave}
               disabled={isSaving}
@@ -399,7 +405,7 @@ export function ExcalidrawCanvas({
         <CanvasErrorBoundary onReset={center}>
           <Excalidraw
             excalidrawAPI={(api) => setExcalidrawAPI(api)}
-            viewModeEnabled={!isEditable}
+            viewModeEnabled={readOnly || !isEditable}
             initialData={{
               elements: initialScene,
               appState: initialAppState || {
@@ -428,7 +434,9 @@ export function ExcalidrawCanvas({
       <div className="flex items-center justify-between gap-4 border-t border-border bg-surface/60 px-4 py-2 text-[10px] text-text-muted">
         <span className="inline-flex items-center gap-1.5">
           <Info className="h-3 w-3 text-primary" />
-          {isEditable
+          {readOnly
+            ? "Atlas is AI-maintained and database-backed. Use the Context Inbox below for the only human routing step."
+            : isEditable
             ? "Live editing enabled. Draw, add shapes, or modify components freely and click 'Save' (or Ctrl+S) to persist."
             : "Synora automatically updates this visual workspace from governed project information."}
         </span>
