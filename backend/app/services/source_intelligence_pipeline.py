@@ -208,37 +208,6 @@ class SourceIntelligencePipeline:
                 context_result = context_future.result()
                 extraction = knowledge_future.result()
 
-                # Exhaustive extreme: if still UNKNOWN/AMBIGUOUS, retry the
-                # semantic pass once more (model gets a second chance with the
-                # same full context). Only if both attempts fail do we fall to
-                # Unknown Context. This keeps project talk in-project to the
-                # model's limit.
-                if (
-                    not getattr(context_result, "is_casual", False)
-                    and context_result.decision != ContextDecision.CASUAL_IGNORED.value
-                    and context_result.decision != ContextDecision.RESOLVED.value
-                ):
-                    retry = self.context_service.resolve_with_corpus(
-                        text,
-                        corpus,
-                        det_signals,
-                        continuity_context,
-                        visual_context,
-                    )
-                    if retry.decision == ContextDecision.RESOLVED.value:
-                        logger.info(
-                            "source_routing_resolved_on_retry: source=%s project_id=%s",
-                            source,
-                            retry.project_id,
-                        )
-                        context_result = retry
-                    else:
-                        logger.info(
-                            "source_routing_exhausted: source=%s decision=%s reason=%s",
-                            source,
-                            context_result.decision,
-                            context_result.reason,
-                        )
 
         # Casual conversation gate: purge completely to prevent platform pollution.
         # Drops banter whether caught by semantic AI intelligence or deterministic regex.
@@ -374,86 +343,6 @@ class SourceIntelligencePipeline:
 
         digest = hashlib.sha256(f"{source}:{text}".encode("utf-8")).hexdigest()[:24]
         return f"{source}_{digest}"
-
-    # ------------------------------------------------------------------
-    # Zero-human-loop auto-assignment
-    # ------------------------------------------------------------------
-    def _auto_assign_best_candidate(
-        self,
-        item_id: str,
-        text: str,
-        suggestions: ContextResolutionResult,
-        evidence_id: Optional[str],
-        source_event_id: Optional[str],
-        source: str,
-        actor_id: Optional[str],
-        db: Session,
-        tenant_id: str,
-    ) -> Optional[str]:
-        """Agent auto-assigns an Unknown Context item to its best project.
-
-        No human verification: the top candidate (if any exists) wins,
-        evidence is re-homed to that project, and the note lands on that
-        project's Excalidraw board. Items with zero candidates keep living
-        in Unknown Context, which has its own Excalidraw board.
-        """
-        candidates = list(getattr(suggestions, "candidate_projects", None) or [])
-        if not candidates:
-            try:
-                from app.services.unknown_context_visual import (
-                    render_unknown_context_board,
-                )
-
-                render_unknown_context_board(db, tenant_id=tenant_id)
-            except Exception as exc:
-                logger.warning("unknown_board_render_skipped: %s", exc)
-            return None
-
-        best = max(candidates, key=lambda c: float(getattr(c, "confidence", 0.0) or 0.0))
-        target_id = getattr(best, "project_id", None)
-        if not target_id:
-            return None
-        try:
-            self.unknown_service.assign_to_project(
-                item_id, target_id, db, actor_id or "synora_agent", tenant_id
-            )
-        except Exception as exc:
-            logger.warning("auto_assign_failed: item=%s error=%s", item_id, exc)
-            return None
-
-        reasons = list(getattr(best, "reasons", None) or [])[:3]
-        note_lines = [
-            f"Auto-assigned note ({source}):",
-            (text or "")[:400],
-        ]
-        if reasons:
-            note_lines.append("Why this project: " + "; ".join(reasons))
-        note = "\n".join(note_lines)
-        try:
-            from app.services.excalidraw_service import ExcalidrawService
-
-            ExcalidrawService().generate_diagram_from_text(
-                project_id=target_id,
-                text=note,
-                db=db,
-                tenant_id=tenant_id,
-                auto_apply=True,
-                actor_id="synora_agent",
-                title="Agent note",
-            )
-        except Exception as exc:
-            logger.warning(
-                "auto_assign_visual_failed: item=%s project=%s error=%s",
-                item_id,
-                target_id,
-                exc,
-            )
-        logger.info(
-            "unknown_context_auto_assigned: item=%s project=%s",
-            item_id,
-            target_id,
-        )
-        return target_id
 
     def _persist_suggestions(
         self, item_id: str, resolution: ContextResolutionResult, db: Session
