@@ -357,32 +357,45 @@ class ProjectAgentService:
         db: Session,
         tenant_id: str = "default_tenant",
     ) -> ExcalidrawArtifact:
-        """
-        Continuously maintains the project's living Excalidraw visual workspace.
-        Renders decisions, evidence references, requirements, and architecture pipeline nodes.
+        """Synchronize the project canvas through the semantic visual patch pipeline.
+
+        This compatibility method never rebuilds the entire Excalidraw scene.
+        It derives semantic changes from current Project State and merges them
+        with the existing living workspace.
         """
         agent = self.get_or_provision_project_agent(project_id, db)
         state = self.state_service.get_or_create_state(project_id, db)
-        artifact = self.excal_service.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
 
-        workflow = json.loads(state.agent_workflow_json) if state.agent_workflow_json else ["User", "BA", "Project", "Functional", "Tech", "Frappe"]
-        decisions = json.loads(state.decisions_json) if state.decisions_json else []
-        requirements = json.loads(state.requirements_json) if state.requirements_json else []
-
-        new_elements = self.excal_service._build_living_workspace_elements(
-            node_names=workflow,
-            decisions=decisions,
-            requirements=requirements,
+        context_payload = {
+            "project": project_id,
+            "vision": state.vision,
+            "requirements": self.excal_service._json_list(state.requirements_json),
+            "architecture": self.excal_service._json_list(state.architecture_json),
+            "decisions": self.excal_service._json_list(state.decisions_json),
+            "constraints": self.excal_service._json_list(state.constraints_json),
+            "open_questions": self.excal_service._json_list(state.open_questions_json),
+        }
+        self.excal_service._create_semantic_visual_proposal(
+            project_id=project_id,
+            context_text=json.dumps(context_payload, default=str),
+            db=db,
+            tenant_id=tenant_id,
+            state_version=state.current_version,
+            reason="Incremental Project Agent visual synchronization",
+            auto_apply=True,
+            actor_id=agent.id,
         )
 
-        artifact.elements_json = json.dumps(new_elements)
-        artifact.extracted_nodes_json = json.dumps(workflow)
-        artifact.version += 1
-        artifact.updated_at = datetime.now(timezone.utc)
-
-        db.commit()
-        db.refresh(artifact)
-        logger.info(f"Project Agent synced living Excalidraw workspace for '{project_id}' to v{artifact.version}")
+        artifact = self.excal_service.get_or_create_artifact(
+            project_id=project_id,
+            db=db,
+            tenant_id=tenant_id,
+        )
+        logger.info(
+            "Project Agent incrementally synced living Excalidraw workspace for '%s' to v%d",
+            project_id,
+            artifact.version,
+        )
         return artifact
 
     def format_project_agent_read(self, agent: ProjectAgent, db: Session) -> ProjectAgentRead:
