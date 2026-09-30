@@ -456,7 +456,7 @@ class GeminiLLMClient(LLMClient):
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-3.5-flash-lite",
+        model_name: str = "gemini-3.8-flash",
         base_url: str = "https://generativelanguage.googleapis.com/v1beta",
         timeout_seconds: float = 20.0,
         fallback_client: Optional[LLMClient] = None,
@@ -491,7 +491,6 @@ class GeminiLLMClient(LLMClient):
                 "parts": [{"text": system_instruction}]
             },
             "generationConfig": {
-                "temperature": 0.1,
                 "responseMimeType": "application/json",
             },
         }
