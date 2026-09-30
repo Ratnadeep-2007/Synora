@@ -257,10 +257,12 @@ class ExcalidrawService:
         db: Session,
         tenant_id: str = "default_tenant",
         reason: Optional[str] = None,
+        auto_apply: bool = False,
+        actor_id: str = "state_synchronizer",
     ) -> ExcalidrawProposal:
         """
-        Role B (Output): Generates a structured Excalidraw change proposal from an approved Project State.
-        Computes a visual diff preview without modifying the authoritative artifact.
+        Role B (Output): Generates an Excalidraw change proposal from an approved Project State.
+        When auto_apply=True, directly updates the authoritative artifact and commits an immutable revision.
         """
         artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
 
@@ -278,6 +280,7 @@ class ExcalidrawService:
         from app.services.excalidraw_compiler import ExcalidrawCompiler
         from app.services.visual_critique_service import VisualCritiqueService
         from app.services.visual_plan_service import VisualPlanService
+        from app.services.visual_revision_service import VisualRevisionService
 
         state_summary = {
             "title": state.title,
@@ -323,23 +326,61 @@ class ExcalidrawService:
             f"Removed nodes: {', '.join(nodes_removed) if nodes_removed else 'None'}."
         )
 
-        proposal = ExcalidrawProposal(
-            artifact_id=artifact.id,
-            project_id=project_id,
-            tenant_id=tenant_id,
-            derived_from_state_version=state_version,
-            status=ExcalidrawProposalStatus.PENDING.value,
-            reason=summary_reason,
-            proposed_elements_json=json.dumps(proposed_elements),
-            diff_preview_json=json.dumps(diff_preview),
-            evidence_ids_json="[]",
-        )
-        db.add(proposal)
-        db.commit()
-        db.refresh(proposal)
+        now = datetime.now(timezone.utc)
+        if auto_apply:
+            artifact.elements_json = json.dumps(proposed_elements)
+            artifact.extracted_nodes_json = json.dumps(nodes_after)
+            artifact.version += 1
+            artifact.updated_at = now
 
-        logger.info(f"Created Excalidraw proposal '{proposal.id}' for project '{project_id}' from state v{state_version}")
-        return proposal
+            VisualRevisionService(audit_service=self.audit_service).commit_revision(
+                project_id=project_id,
+                scene=proposed_elements,
+                db=db,
+                tenant_id=tenant_id,
+                app_state=json.loads(artifact.app_state_json) if artifact.app_state_json else {"viewBackgroundColor": "#ffffff", "gridSize": 20},
+                operations=[{"op_type": "update", "payload": {"action": "state_auto_align", "nodes": nodes_after}}],
+                actor_id=actor_id,
+                reason=summary_reason,
+            )
+
+            proposal = ExcalidrawProposal(
+                artifact_id=artifact.id,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                derived_from_state_version=state_version,
+                status=ExcalidrawProposalStatus.APPROVED.value,
+                approved_at=now,
+                approved_by=actor_id,
+                reason=summary_reason,
+                proposed_elements_json=json.dumps(proposed_elements),
+                diff_preview_json=json.dumps(diff_preview),
+                evidence_ids_json="[]",
+            )
+            db.add(proposal)
+            db.commit()
+            db.refresh(artifact)
+            db.refresh(proposal)
+            logger.info("Auto-applied Excalidraw diagram for project '%s' from state v%s (version=%d)", project_id, state_version, artifact.version)
+            return proposal
+        else:
+            proposal = ExcalidrawProposal(
+                artifact_id=artifact.id,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                derived_from_state_version=state_version,
+                status=ExcalidrawProposalStatus.PENDING.value,
+                reason=summary_reason,
+                proposed_elements_json=json.dumps(proposed_elements),
+                diff_preview_json=json.dumps(diff_preview),
+                evidence_ids_json="[]",
+            )
+            db.add(proposal)
+            db.commit()
+            db.refresh(proposal)
+
+            logger.info(f"Created Excalidraw proposal '{proposal.id}' for project '{project_id}' from state v{state_version}")
+            return proposal
 
     def generate_ai_visual_architecture(
         self,
@@ -347,16 +388,15 @@ class ExcalidrawService:
         db: Session,
         tenant_id: str = "default_tenant",
         focus_prompt: Optional[str] = None,
-        direct_apply: bool = False,
+        direct_apply: bool = True,
         actor_id: str = "visual_planner",
         visual_plan_service=None,
     ) -> tuple[ExcalidrawProposal, Optional[ExcalidrawArtifact]]:
-        """Plan -> compile -> critique -> PENDING proposal.
+        """Plan -> compile -> critique -> auto-apply (or proposal).
 
-        Architectural/visual changes are ALWAYS proposal-first. ``direct_apply``
-        is accepted for API compatibility but intentionally ignored for
-        consequential visual changes: only a human approval may advance the
-        living workspace, and that approval appends a new immutable revision.
+        When direct_apply=True (default), automatically advances the living workspace:
+        updates authoritative artifact, appends an immutable revision, and marks
+        the proposal as APPROVED for full auditability.
 
         The AI produces a structured VisualPlan; the deterministic compiler owns
         all geometry. Raw model JSON is never written to Excalidraw.
@@ -364,6 +404,7 @@ class ExcalidrawService:
         from app.services.excalidraw_compiler import ExcalidrawCompiler
         from app.services.visual_critique_service import VisualCritiqueService
         from app.services.visual_plan_service import VisualPlanService
+        from app.services.visual_revision_service import VisualRevisionService
 
         artifact = self.get_or_create_artifact(project_id, db, tenant_id=tenant_id)
         state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
@@ -424,32 +465,78 @@ class ExcalidrawService:
         if plan.notes:
             reason += f" Notes: {'; '.join(plan.notes[:2])}"
 
-        proposal = ExcalidrawProposal(
-            artifact_id=artifact.id,
-            project_id=project_id,
-            tenant_id=tenant_id,
-            derived_from_state_version=state_version,
-            status=ExcalidrawProposalStatus.PENDING.value,
-            reason=reason,
-            proposed_elements_json=json.dumps(proposed_elements),
-            diff_preview_json=json.dumps(diff_preview),
-            evidence_ids_json="[]",
-        )
-        db.add(proposal)
-        db.commit()
-        db.refresh(proposal)
+        now = datetime.now(timezone.utc)
+        if direct_apply:
+            artifact.elements_json = json.dumps(proposed_elements)
+            artifact.extracted_nodes_json = json.dumps(nodes_after)
+            artifact.version += 1
+            artifact.updated_at = now
 
-        logger.info(
-            "visual_plan_proposed: project=%s proposal=%s planner=%s nodes=%d "
-            "critique_ok=%s issues=%d",
-            project_id,
-            proposal.id,
-            ai_status,
-            len(plan.nodes),
-            critique.ok,
-            len(critique.issues),
-        )
-        return proposal, None
+            VisualRevisionService(audit_service=self.audit_service).commit_revision(
+                project_id=project_id,
+                scene=proposed_elements,
+                db=db,
+                tenant_id=tenant_id,
+                app_state=json.loads(artifact.app_state_json) if artifact.app_state_json else {"viewBackgroundColor": "#ffffff", "gridSize": 20},
+                operations=[{"op_type": "update", "payload": {"action": "ai_visual_architecture", "nodes": nodes_after}}],
+                actor_id=actor_id,
+                reason=reason,
+            )
+
+            proposal = ExcalidrawProposal(
+                artifact_id=artifact.id,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                derived_from_state_version=state_version,
+                status=ExcalidrawProposalStatus.APPROVED.value,
+                approved_at=now,
+                approved_by=actor_id,
+                reason=reason,
+                proposed_elements_json=json.dumps(proposed_elements),
+                diff_preview_json=json.dumps(diff_preview),
+                evidence_ids_json="[]",
+            )
+            db.add(proposal)
+            db.commit()
+            db.refresh(artifact)
+            db.refresh(proposal)
+
+            logger.info(
+                "visual_plan_auto_applied: project=%s proposal=%s planner=%s nodes=%d version=%d",
+                project_id,
+                proposal.id,
+                ai_status,
+                len(plan.nodes),
+                artifact.version,
+            )
+            return proposal, artifact
+        else:
+            proposal = ExcalidrawProposal(
+                artifact_id=artifact.id,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                derived_from_state_version=state_version,
+                status=ExcalidrawProposalStatus.PENDING.value,
+                reason=reason,
+                proposed_elements_json=json.dumps(proposed_elements),
+                diff_preview_json=json.dumps(diff_preview),
+                evidence_ids_json="[]",
+            )
+            db.add(proposal)
+            db.commit()
+            db.refresh(proposal)
+
+            logger.info(
+                "visual_plan_proposed: project=%s proposal=%s planner=%s nodes=%d "
+                "critique_ok=%s issues=%d",
+                project_id,
+                proposal.id,
+                ai_status,
+                len(plan.nodes),
+                critique.ok,
+                len(critique.issues),
+            )
+            return proposal, None
 
     def generate_diagram_from_text(
         self,
@@ -791,7 +878,27 @@ class ExcalidrawService:
 
     def _normalize_element(self, el: Dict[str, Any], idx: int = 1) -> Dict[str, Any]:
         """Ensures an Excalidraw element contains all standard properties required by Excalidraw renderers."""
+        el_type = str(el.get("type", "rectangle"))
+        w = el.get("width")
+        h = el.get("height")
+        if el_type in ("arrow", "line"):
+            width = float(w) if isinstance(w, (int, float)) else 0.0
+            height = float(h) if isinstance(h, (int, float)) else 0.0
+        else:
+            width = float(w) if isinstance(w, (int, float)) and w > 0 else (120.0 if el_type == "text" else 160.0)
+            height = float(h) if isinstance(h, (int, float)) and h > 0 else (24.0 if el_type == "text" else 70.0)
+
+        x_val = el.get("x")
+        y_val = el.get("y")
+        x = float(x_val) if isinstance(x_val, (int, float)) else 0.0
+        y = float(y_val) if isinstance(y_val, (int, float)) else 0.0
+
         defaults = {
+            "type": el_type,
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
             "angle": 0,
             "strokeColor": "#1e1e1e",
             "backgroundColor": "transparent",
@@ -812,8 +919,16 @@ class ExcalidrawService:
             "link": None,
             "locked": False,
         }
-        defaults.update(el)
-        return defaults
+        res = dict(defaults)
+        res.update(el)
+        res["x"] = x
+        res["y"] = y
+        res["width"] = width
+        res["height"] = height
+        r = res.get("roundness")
+        if r is not None and (not isinstance(r, dict) or "type" not in r):
+            res["roundness"] = None
+        return res
 
     def _build_ai_architecture_scene(
         self,

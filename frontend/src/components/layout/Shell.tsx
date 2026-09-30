@@ -6,11 +6,7 @@ import {
   Layers,
   PenTool,
   Video,
-  FileText,
-  CheckCircle2,
-  AlertTriangle,
   Inbox,
-  Bot,
   Plug,
   Settings as SettingsIcon,
   Bell,
@@ -30,11 +26,7 @@ export type NavTab =
   | "state"
   | "excalidraw"
   | "meetings"
-  | "evidence"
-  | "decisions"
-  | "conflicts"
   | "unknown-context"
-  | "agent"
   | "sources"
   | "settings";
 
@@ -77,11 +69,7 @@ const NAV_ITEMS: Array<{
   { id: "state", label: "Project State", icon: Layers },
   { id: "excalidraw", label: "Excalidraw", icon: PenTool },
   { id: "meetings", label: "Meetings", icon: Video },
-  { id: "evidence", label: "Evidence", icon: FileText },
-  { id: "decisions", label: "Decisions", icon: CheckCircle2 },
-  { id: "conflicts", label: "Conflicts", icon: AlertTriangle },
   { id: "unknown-context", label: "Unknown Context", icon: Inbox },
-  { id: "agent", label: "Agent", icon: Bot },
   { id: "sources", label: "Sources", icon: Plug },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -216,11 +204,6 @@ export function Shell({
                     <Icon className={`w-4 h-4 ${isActive ? "text-primary" : "text-text-muted"}`} />
                     <span>{item.label}</span>
                   </div>
-                  {item.id === "conflicts" && openConflictsCount > 0 && (
-                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-warning/10 text-warning border-warning/20">
-                      {openConflictsCount}
-                    </span>
-                  )}
                   {item.id === "unknown-context" && unknownContextCount > 0 && (
                     <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-warning/10 text-warning border-warning/20">
                       {unknownContextCount}

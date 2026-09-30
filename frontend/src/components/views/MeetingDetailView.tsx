@@ -5,15 +5,8 @@ import {
   ArrowLeft,
   Clock,
   User,
-  CheckCircle2,
-  AlertTriangle,
-  HelpCircle,
-  ListTodo,
-  FileText,
-  Sparkles,
-  ArrowRight,
 } from "lucide-react";
-import { CandidateKnowledgeItem, EvidenceItem } from "@/lib/types";
+import { CandidateKnowledgeItem } from "@/lib/types";
 
 interface MeetingDetailViewProps {
   meetingId: string;
@@ -21,7 +14,6 @@ interface MeetingDetailViewProps {
   candidates: CandidateKnowledgeItem[];
   onBack: () => void;
   onOpenEvidence: (title: string, contextType: string, evidenceIds: string[]) => void;
-  onNavigateToTab: (tab: any) => void;
 }
 
 export function MeetingDetailView({
@@ -30,7 +22,6 @@ export function MeetingDetailView({
   candidates,
   onBack,
   onOpenEvidence,
-  onNavigateToTab,
 }: MeetingDetailViewProps) {
   const [intelligenceFilter, setIntelligenceFilter] = useState<string>("all");
 
@@ -54,26 +45,16 @@ export function MeetingDetailView({
           <span>Back to Meetings</span>
         </button>
 
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-primary px-2 py-0.5 rounded bg-primary-soft border border-primary/20">
-                Conference Detail
-              </span>
-              <span className="text-xs font-mono text-text-muted">ID: {meetingId}</span>
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-text-main">
-              {meeting.title || "Project Architecture Sync"}
-            </h1>
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-primary px-2 py-0.5 rounded bg-primary-soft border border-primary/20">
+              Conference Detail
+            </span>
+            <span className="text-xs font-mono text-text-muted">ID: {meetingId}</span>
           </div>
-
-          <button
-            onClick={() => onNavigateToTab("conflicts")}
-            className="px-3.5 py-1.5 rounded-md bg-warning text-surface text-xs font-semibold shadow-xs flex items-center gap-1.5 hover:bg-warning/90 transition-colors"
-          >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>Check Conflict Center</span>
-          </button>
+          <h1 className="text-2xl font-semibold tracking-tight text-text-main">
+            {meeting.title || "Project Architecture Sync"}
+          </h1>
         </div>
       </div>
 

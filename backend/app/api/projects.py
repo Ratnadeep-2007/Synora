@@ -1055,6 +1055,8 @@ async def generate_excalidraw_proposal(
         db=db,
         tenant_id=tenant_id,
         reason=reason,
+        auto_apply=True,
+        actor_id=current_user.id,
     )
     return excal_service.format_proposal_read(proposal)
 
@@ -1073,7 +1075,7 @@ async def ai_generate_excalidraw_diagram(
 ):
     tenant_id = getattr(current_user, "tenant_id", "default_tenant")
     focus = body.focus_prompt if body else None
-    direct = body.direct_apply if body else False
+    direct = body.direct_apply if (body and body.direct_apply is not None) else True
 
     proposal, artifact = excal_service.generate_ai_visual_architecture(
         project_id=project_id,

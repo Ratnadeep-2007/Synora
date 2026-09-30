@@ -7,10 +7,6 @@ import { ProjectStateView } from "@/components/views/ProjectStateView";
 import { ArchitectureView } from "@/components/views/ArchitectureView";
 import { MeetingsView } from "@/components/views/MeetingsView";
 import { MeetingDetailView } from "@/components/views/MeetingDetailView";
-import { EvidenceView } from "@/components/views/EvidenceView";
-import { ConflictCenterView } from "@/components/views/ConflictCenterView";
-import { DecisionsView } from "@/components/views/DecisionsView";
-import { AgentView } from "@/components/views/AgentView";
 import { UnknownContextView } from "@/components/views/UnknownContextView";
 import { SourcesView } from "@/components/views/SourcesView";
 import { SettingsView } from "@/components/views/SettingsView";
@@ -272,7 +268,7 @@ export default function Home() {
     }
   };
 
-  const handleAiGenerateVisuals = async (focusPrompt?: string, directApply: boolean = false) => {
+  const handleAiGenerateVisuals = async (focusPrompt?: string, directApply: boolean = true) => {
     const projectId = requireProject();
     if (!projectId) return;
     try {
@@ -421,12 +417,6 @@ export default function Home() {
 
   const notifications: NotificationItem[] = useMemo(() => {
     const items: NotificationItem[] = [];
-    if (openConflictsCount > 0) {
-      items.push({
-        title: `${openConflictsCount} conflict${openConflictsCount === 1 ? "" : "s"} require${openConflictsCount === 1 ? "s" : ""} review`,
-        detail: "Open the Conflict Center to approve or reject proposed changes.",
-      });
-    }
     if (pendingExcalProposals > 0) {
       items.push({
         title: `${pendingExcalProposals} Excalidraw proposal${pendingExcalProposals === 1 ? "" : "s"} pending review`,
@@ -440,7 +430,7 @@ export default function Home() {
       });
     }
     return items;
-  }, [openConflictsCount, pendingExcalProposals, googleConn]);
+  }, [pendingExcalProposals, googleConn]);
 
   const agentActivity = useMemo(() => {
     const rawEvents: Array<{ timestamp: number; time: string; text: string }> = [];
@@ -563,7 +553,6 @@ export default function Home() {
       {currentTab === "overview" && (
         <OverviewView
           state={state}
-          conflicts={conflicts}
           excalidraw={
             excalArtifact
               ? {
@@ -578,7 +567,6 @@ export default function Home() {
           }
           activityItems={agentActivity}
           onNavigateToTab={(tab: NavTab) => setCurrentTab(tab)}
-          onSelectConflict={() => setCurrentTab("conflicts")}
         />
       )}
 
@@ -630,57 +618,12 @@ export default function Home() {
             )}
             onBack={() => setSelectedMeetingId(null)}
             onOpenEvidence={handleOpenEvidence}
-            onNavigateToTab={(tab: NavTab) => setCurrentTab(tab)}
           />
         ))}
-
-      {/* Evidence Screen */}
-      {currentTab === "evidence" && (
-        <EvidenceView
-          evidence={allEvidence}
-          onOpenEvidenceDetail={(item) =>
-            handleOpenEvidence(item.content.slice(0, 80), "Evidence", [item.id])
-          }
-          onOpenMeeting={handleOpenMeetingFromEvidence}
-          onNavigateToState={() => setCurrentTab("state")}
-        />
-      )}
-
-      {/* Decisions Screen */}
-      {currentTab === "decisions" && (
-        <DecisionsView
-          state={state}
-          conflicts={conflicts}
-          onOpenEvidence={handleOpenEvidence}
-          onReviewConflict={handleReviewConflict}
-        />
-      )}
-
-      {/* Conflict Center Screen */}
-      {currentTab === "conflicts" && (
-        <ConflictCenterView
-          conflicts={conflicts}
-          onReviewConflict={handleReviewConflict}
-          onOpenEvidence={handleOpenEvidence}
-        />
-      )}
 
       {/* Unknown Context triage */}
       {currentTab === "unknown-context" && (
         <UnknownContextView projects={projects} onChanged={refreshAll} />
-      )}
-
-      {/* Agent Screen */}
-      {currentTab === "agent" && (
-        <AgentView
-          projectName={activeProject?.name || "Synora"}
-          stateVersion={state?.current_version || 1}
-          workspaceStatus={excalSyncStatus === "pending" ? "Pending review" : "Synchronized"}
-          activity={agentActivity}
-          pendingProposal={excalProposals.find((p) => p.status === "pending") || null}
-          onReviewProposal={() => setCurrentTab("excalidraw")}
-          onViewEvidence={() => setCurrentTab("evidence")}
-        />
       )}
 
       {/* Sources Screen */}

@@ -6,7 +6,7 @@ import { Conflict, ProjectState } from "@/lib/types";
 
 interface OverviewViewProps {
   state: ProjectState | null;
-  conflicts: Conflict[];
+  conflicts?: unknown[];
   excalidraw?: {
     name: string;
     version: number;
@@ -17,31 +17,27 @@ interface OverviewViewProps {
   } | null;
   activityItems?: Array<{ time: string; text: string }>;
   onNavigateToTab: (tab: any) => void;
-  onSelectConflict: (conflict: Conflict) => void;
 }
 
-export function OverviewView({ state, conflicts, excalidraw = null, activityItems = [], onNavigateToTab, onSelectConflict }: OverviewViewProps) {
-  const openConflicts = conflicts.filter((c) => c.status === "open" || c.status === "under_review");
+export function OverviewView({ state, excalidraw = null, activityItems = [], onNavigateToTab }: OverviewViewProps) {
   const requirementsCount = state?.requirements?.length ?? 0;
   const decisionsCount = state?.decisions?.length ?? 0;
   const questionsCount = state?.open_questions?.length ?? 0;
   const currentVersion = state?.current_version ?? 1;
-  const topConflict = openConflicts[0];
 
   return (
     <div className="space-y-6">
       <header>
         <p className="text-[11px] uppercase tracking-wider font-semibold text-primary">Project overview</p>
         <h1 className="text-xl font-semibold tracking-tight text-text-main mt-1">What is true right now?</h1>
-        <p className="text-xs text-text-muted mt-1 max-w-2xl">A single source of truth for current state, open questions, conflicts, and the living workspace.</p>
+        <p className="text-xs text-text-muted mt-1 max-w-2xl">A single source of truth for current state, open questions, and the living workspace.</p>
       </header>
 
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <section className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         {[
           ["Requirements", requirementsCount],
           ["Decisions", decisionsCount],
           ["Open questions", questionsCount],
-          ["Conflicts", openConflicts.length],
         ].map(([label, value]) => (
           <div key={String(label)} className="p-4 rounded-lg bg-surface border border-border">
             <div className="text-2xl font-semibold font-mono text-text-main">{String(value).padStart(2, "0")}</div>
@@ -50,7 +46,7 @@ export function OverviewView({ state, conflicts, excalidraw = null, activityItem
         ))}
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1.25fr_0.75fr] gap-4">
+      <div className="grid grid-cols-1 gap-4">
         <section className="p-5 rounded-xl bg-surface border border-border">
           <div className="flex items-center justify-between pb-3 border-b border-border">
             <div>
@@ -76,25 +72,6 @@ export function OverviewView({ state, conflicts, excalidraw = null, activityItem
             </div>
           </div>
         </section>
-
-        <section className={`p-5 rounded-xl border ${topConflict ? "bg-warning/5 border-warning/30" : "bg-surface border-border"}`}>
-          <div className="flex items-center justify-between pb-3 border-b border-border/70">
-            <div className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-warning" /><h2 className="text-sm font-semibold text-text-main">Needs attention</h2></div>
-            <span className="text-[11px] text-text-muted">{openConflicts.length} open</span>
-          </div>
-          {topConflict ? (
-            <div className="pt-4 space-y-3">
-              <h3 className="text-sm font-semibold text-text-main">{topConflict.title}</h3>
-              <p className="text-xs text-text-muted leading-relaxed line-clamp-4">{topConflict.description}</p>
-              <button onClick={() => { onSelectConflict(topConflict); onNavigateToTab("conflicts"); }} className="px-3 py-1.5 rounded-md bg-warning text-white text-xs font-semibold inline-flex items-center gap-1.5">Review conflict <ArrowRight className="w-3 h-3" /></button>
-            </div>
-          ) : (
-            <div className="pt-8 text-center">
-              <CheckCircle2 className="w-5 h-5 text-success mx-auto" />
-              <p className="text-xs text-text-muted mt-2">Nothing needs review right now.</p>
-            </div>
-          )}
-        </section>
       </div>
 
       <section className="p-5 rounded-xl bg-surface border border-border">
@@ -113,7 +90,7 @@ export function OverviewView({ state, conflicts, excalidraw = null, activityItem
         {activityItems.length ? <div className="divide-y divide-border">{activityItems.slice(0,6).map((item,idx)=><div key={idx} className="py-3 flex items-start gap-3 text-xs"><span className="font-mono text-text-muted shrink-0">{item.time}</span><span className="text-text-main">{item.text}</span></div>)}</div> : <p className="pt-4 text-xs text-text-muted">No recent activity.</p>}
       </section>
 
-      <div className="text-[11px] text-text-muted inline-flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" />Evidence remains available from state, decision, and conflict details.</div>
+      <div className="text-[11px] text-text-muted inline-flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" />Evidence remains available from state details.</div>
     </div>
   );
 }

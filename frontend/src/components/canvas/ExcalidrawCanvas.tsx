@@ -13,7 +13,119 @@ import {
   CheckCircle2,
   Layers,
   Info,
+  AlertTriangle,
 } from "lucide-react";
+
+// Robust sanitizer ensuring element geometry never passes NaN, null, or undefined to RoughJS / path-data-parser
+export function sanitizeExcalidrawElements(elements: any[]): any[] {
+  if (!Array.isArray(elements)) return [];
+  return elements
+    .map((el, idx) => {
+      if (!el || typeof el !== "object") return null;
+      const sanitized = { ...el };
+
+      sanitized.id = String(sanitized.id || `el_${idx}_${Date.now()}`);
+      sanitized.type = String(sanitized.type || "rectangle");
+
+      // Validate numeric coordinates
+      sanitized.x = Number.isFinite(Number(sanitized.x)) ? Number(sanitized.x) : 0;
+      sanitized.y = Number.isFinite(Number(sanitized.y)) ? Number(sanitized.y) : 0;
+
+      if (sanitized.type === "arrow" || sanitized.type === "line") {
+        sanitized.width = Number.isFinite(Number(sanitized.width)) ? Number(sanitized.width) : 0;
+        sanitized.height = Number.isFinite(Number(sanitized.height)) ? Number(sanitized.height) : 0;
+        if (!Array.isArray(sanitized.points) || sanitized.points.length === 0) {
+          sanitized.points = [[0, 0], [100, 0]];
+        } else {
+          sanitized.points = sanitized.points.map((pt: any) =>
+            Array.isArray(pt) && Number.isFinite(Number(pt[0])) && Number.isFinite(Number(pt[1]))
+              ? [Number(pt[0]), Number(pt[1])]
+              : [0, 0]
+          );
+        }
+      } else {
+        const w = Number(sanitized.width);
+        const h = Number(sanitized.height);
+        sanitized.width = Number.isFinite(w) && w >= 0 ? w : (sanitized.type === "text" ? 120 : 160);
+        sanitized.height = Number.isFinite(h) && h >= 0 ? h : (sanitized.type === "text" ? 24 : 70);
+      }
+
+      // Validate roundness object
+      if (sanitized.roundness) {
+        if (
+          typeof sanitized.roundness !== "object" ||
+          sanitized.roundness === null ||
+          !Number.isFinite(Number(sanitized.roundness.type))
+        ) {
+          sanitized.roundness = null;
+        } else {
+          sanitized.roundness = {
+            type: Number(sanitized.roundness.type),
+            ...(Number.isFinite(Number(sanitized.roundness.value)) ? { value: Number(sanitized.roundness.value) } : {}),
+          };
+        }
+      }
+
+      sanitized.angle = Number.isFinite(Number(sanitized.angle)) ? Number(sanitized.angle) : 0;
+      sanitized.roughness = Number.isFinite(Number(sanitized.roughness)) ? Number(sanitized.roughness) : 1;
+      sanitized.opacity = Number.isFinite(Number(sanitized.opacity)) ? Number(sanitized.opacity) : 100;
+      sanitized.isDeleted = Boolean(sanitized.isDeleted);
+      sanitized.groupIds = Array.isArray(sanitized.groupIds) ? sanitized.groupIds : [];
+
+      return sanitized;
+    })
+    .filter(Boolean);
+}
+
+// React error boundary isolating Excalidraw runtime/rendering exceptions
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class CanvasErrorBoundary extends React.Component<
+  { children: React.ReactNode; onReset?: () => void },
+  ErrorBoundaryState
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Excalidraw runtime error caught by boundary:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="w-full h-full min-h-[580px] flex flex-col items-center justify-center bg-canvas p-6 text-center border border-border rounded-xl">
+          <div className="w-12 h-12 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center mb-3">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-semibold text-text-main mb-1">Canvas Render Issue Encountered</h3>
+          <p className="text-xs text-text-muted max-w-md mb-4">
+            An element shape or drawing path could not be parsed by the canvas engine. The scene has been protected from corruption.
+          </p>
+          <button
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              if (this.props.onReset) this.props.onReset();
+            }}
+            className="px-3.5 py-1.5 text-xs font-medium bg-primary text-white hover:bg-primary/90 rounded-lg transition-colors shadow-2xs"
+          >
+            Reload Canvas
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Dynamically import Excalidraw with SSR disabled since it relies heavily on browser Canvas & window APIs
 const Excalidraw = dynamic(
@@ -72,7 +184,15 @@ export function ExcalidrawCanvas({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const visibleElements = compareMode ? compareElements : initialElements;
+  const rawVisibleElements = compareMode ? compareElements : initialElements;
+  const visibleElements = React.useMemo(
+    () => sanitizeExcalidrawElements(rawVisibleElements),
+    [rawVisibleElements]
+  );
+  const sanitizedInitialElements = React.useMemo(
+    () => sanitizeExcalidrawElements(initialElements),
+    [initialElements]
+  );
   const [elementCount, setElementCount] = useState(visibleElements?.length || 0);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastRenderedKeyRef = useRef<string>("");
@@ -245,28 +365,30 @@ export function ExcalidrawCanvas({
           height: isFullscreen ? "calc(100vh - 54px)" : "620px",
         }}
       >
-        <Excalidraw
-          excalidrawAPI={(api) => setExcalidrawAPI(api)}
-          initialData={{
-            elements: initialElements,
-            appState: initialAppState || {
-              viewBackgroundColor: "#ffffff",
-              gridSize: 20,
-              theme: "light",
-            },
-            scrollToContent: true,
-          }}
-          UIOptions={{
-            canvasActions: {
-              changeViewBackgroundColor: true,
-              clearCanvas: true,
-              export: false,
-              loadScene: false,
-              saveToActiveFile: false,
-              toggleTheme: true,
-            },
-          }}
-        />
+        <CanvasErrorBoundary onReset={handleCenterView}>
+          <Excalidraw
+            excalidrawAPI={(api) => setExcalidrawAPI(api)}
+            initialData={{
+              elements: sanitizedInitialElements,
+              appState: initialAppState || {
+                viewBackgroundColor: "#ffffff",
+                gridSize: 20,
+                theme: "light",
+              },
+              scrollToContent: true,
+            }}
+            UIOptions={{
+              canvasActions: {
+                changeViewBackgroundColor: true,
+                clearCanvas: true,
+                export: false,
+                loadScene: false,
+                saveToActiveFile: false,
+                toggleTheme: true,
+              },
+            }}
+          />
+        </CanvasErrorBoundary>
       </div>
 
       {/* Canvas Footnote */}

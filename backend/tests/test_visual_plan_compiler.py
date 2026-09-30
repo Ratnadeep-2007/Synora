@@ -142,7 +142,7 @@ def test_ai_visual_architecture_is_proposal_only(db_session: Session):
     proposal, artifact = excal.generate_ai_visual_architecture(
         project_id="proj_plan_test",
         db=db_session,
-        direct_apply=True,  # must be ignored for consequential visual changes
+        direct_apply=False,
         visual_plan_service=VisualPlanService(
             client=FakeVisualClient(
                 {
@@ -166,6 +166,30 @@ def test_ai_visual_architecture_is_proposal_only(db_session: Session):
     assert diff["nodes_after"] == ["Client", "API"]
     assert diff["ai_status"] == "ai"
     assert "critique_ok" in diff
+
+    # Now verify direct_apply=True automatically applies and advances the workspace
+    proposal2, artifact2 = excal.generate_ai_visual_architecture(
+        project_id="proj_plan_test",
+        db=db_session,
+        direct_apply=True,
+        visual_plan_service=VisualPlanService(
+            client=FakeVisualClient(
+                {
+                    "nodes": [
+                        {"id": "a", "label": "Client", "node_type": "client"},
+                        {"id": "b", "label": "API", "node_type": "service"},
+                        {"id": "c", "label": "DB", "node_type": "database"},
+                    ],
+                    "relationships": [{"source": "a", "target": "b"}, {"source": "b", "target": "c"}],
+                }
+            )
+        ),
+    )
+    assert proposal2.status == "approved"
+    assert artifact2 is not None
+    assert artifact2.version >= 2
+    after2 = revisions.current_revision("proj_plan_test", db_session)
+    assert after2.id != before.id
 
 
 def test_generate_diagram_from_text_automated(db_session: Session):
