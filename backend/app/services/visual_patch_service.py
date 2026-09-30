@@ -4,6 +4,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.models.project import Project
@@ -23,6 +24,13 @@ from app.services.visual_merge_service import VisualMergeService
 from app.services.visual_revision_service import VisualRevisionService
 
 logger = logging.getLogger(__name__)
+
+
+class VisualPatchIntent(BaseModel):
+    """LLM-generated semantic intent; contains no raw Excalidraw geometry."""
+    operations: List[VisualPatchOperation] = Field(default_factory=list)
+    safety_classification: PatchSafetyClassification = PatchSafetyClassification.REVIEW_REQUIRED
+    reason: str = ""
 
 
 class VisualPatchService:
@@ -110,31 +118,148 @@ class VisualPatchService:
         state: Dict[str, Any],
         current_rev: Optional[VisualRevision],
     ) -> Tuple[List[VisualPatchOperation], PatchSafetyClassification, str]:
-        """Generate high-level semantic operations with stable semantic IDs."""
-        lower_text = text.lower()
+        """Generate semantic operations with the configured reasoning model."""
+        existing_elements: List[Dict[str, Any]] = []
+        if current_rev and current_rev.scene_json:
+            try:
+                raw = json.loads(current_rev.scene_json)
+                existing_elements = raw if isinstance(raw, list) else raw.get("elements", [])
+            except Exception:
+                existing_elements = []
+
+        existing_nodes: List[Dict[str, Any]] = []
+        existing_notes: List[Dict[str, Any]] = []
+        existing_edges: List[Dict[str, Any]] = []
+
+        for el in existing_elements:
+            if not isinstance(el, dict):
+                continue
+            if el.get("type") == "rectangle" and (
+                str(el.get("id", "")).startswith("node_")
+                or el.get("semantic_type") == "node"
+            ):
+                existing_nodes.append({
+                    "id": el.get("semantic_id") or el.get("id"),
+                    "label": el.get("text") or el.get("boundText") or "",
+                })
+            elif el.get("semantic_type") == "note" or str(el.get("id", "")).startswith("note_"):
+                existing_notes.append({
+                    "id": el.get("semantic_id") or el.get("id"),
+                    "content": el.get("text") or "",
+                })
+            elif el.get("type") == "arrow":
+                existing_edges.append({
+                    "id": el.get("semantic_id") or el.get("id"),
+                    "source": (el.get("startBinding") or {}).get("elementId"),
+                    "target": (el.get("endBinding") or {}).get("elementId"),
+                })
+
+        prompt = "\n".join([
+            "You are Synora's semantic visual architecture planner.",
+            "Return ONLY structured data matching the VisualPatchIntent schema.",
+            "Decide WHAT should change. Never return coordinates, dimensions, raw Excalidraw JSON, authorization decisions, or revision metadata.",
+            "",
+            f"PROJECT_ID: {project_id}",
+            "PROJECT STATE:",
+            json.dumps(state or {}, default=str)[:5000],
+            "",
+            "CURRENT VISUAL NODES:",
+            json.dumps(existing_nodes, default=str)[:5000],
+            "",
+            "CURRENT VISUAL NOTES:",
+            json.dumps(existing_notes, default=str)[:3000],
+            "",
+            "CURRENT VISUAL EDGES:",
+            json.dumps(existing_edges, default=str)[:3000],
+            "",
+            "PATCH RULES:",
+            "1. Reuse an existing semantic node whenever it represents the same concept.",
+            "2. Prefer UPDATE_NODE over ADD_NODE when the concept already exists.",
+            "3. Never invent unrelated architecture.",
+            "4. Only create relationships supported by the evidence.",
+            "5. Notes must be concise and evidence-oriented.",
+            "6. Use REMOVE operations only when removal is explicitly supported; otherwise use REVIEW_REQUIRED.",
+            "7. Use REQUEST_LAYOUT_ADJUSTMENT only when topology genuinely requires layout work.",
+            "8. Do not include x, y, width, height, points, or raw Excalidraw JSON.",
+            "",
+            "INCOMING EVIDENCE:",
+            text[:5000],
+        ])
+
+        try:
+            intent = self.llm_client.generate_structured(prompt, VisualPatchIntent)
+            operations = list(intent.operations or [])
+
+            if not operations:
+                return self._deterministic_fallback_operations(text)
+
+            sanitized: List[VisualPatchOperation] = []
+            for op in operations:
+                if not op.target_id or not op.op_type:
+                    continue
+                op.evidence_ids = list(op.evidence_ids or [])
+
+                if op.op_type == VisualPatchOpType.ADD_NODE and not op.label:
+                    continue
+                if (
+                    op.op_type == VisualPatchOpType.ADD_EDGE
+                    and (not op.source or not op.target)
+                ):
+                    continue
+
+                sanitized.append(op)
+
+            if not sanitized:
+                return self._deterministic_fallback_operations(text)
+
+            has_destructive = any(
+                op.op_type in (
+                    VisualPatchOpType.REMOVE_NODE,
+                    VisualPatchOpType.REMOVE_EDGE,
+                    VisualPatchOpType.REMOVE_NOTE,
+                    VisualPatchOpType.REMOVE_GROUP,
+                )
+                for op in sanitized
+            )
+
+            safety = (
+                PatchSafetyClassification.REVIEW_REQUIRED
+                if has_destructive
+                else (
+                    intent.safety_classification
+                    or PatchSafetyClassification.SAFE_AUTO_APPLY
+                )
+            )
+
+            return (
+                sanitized,
+                safety,
+                intent.reason
+                or "Semantic visual intent generated by the configured reasoning model.",
+            )
+        except Exception as exc:
+            logger.warning(
+                "visual_patch_llm_generation_failed: project=%s error=%s",
+                project_id,
+                exc,
+            )
+            return self._deterministic_fallback_operations(text)
+
+    def _deterministic_fallback_operations(
+        self, text: str
+    ) -> Tuple[List[VisualPatchOperation], PatchSafetyClassification, str]:
+        """Conservative offline fallback; never performs destructive operations."""
+        lower_text = (text or "").lower()
         ops: List[VisualPatchOperation] = []
 
-        # Domain heuristic parsing (ensures 100% deterministic test reproducibility)
-        # DineIn domain concepts
-        if "qr" in lower_text or "table ordering" in lower_text:
-            qr_node_id = make_stable_semantic_id("node", "Table QR Ordering")
+        if "qr" in lower_text and ("table" in lower_text or "order" in lower_text):
+            node_id = make_stable_semantic_id("node", "Table QR Ordering")
             ops.append(
                 VisualPatchOperation(
                     op_type=VisualPatchOpType.ADD_NODE,
-                    target_id=qr_node_id,
+                    target_id=node_id,
                     label="Table QR Ordering",
                     node_type="client",
-                    emphasis="primary",
-                )
-            )
-            # Add relationship if ordering service or web app exists
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_EDGE,
-                    target_id=f"edge_{qr_node_id}_ordering_app",
-                    source=qr_node_id,
-                    target="Ordering Web App",
-                    style="solid",
                 )
             )
             ops.append(
@@ -142,69 +267,39 @@ class VisualPatchService:
                     op_type=VisualPatchOpType.ADD_NOTE,
                     target_id=make_stable_semantic_id("note", "table_qr_ordering"),
                     category=VisualNoteCategory.REQUIREMENT,
-                    content="Customers initiate orders through table QR code scanning.",
+                    content="Customers initiate orders through table QR scanning.",
                 )
             )
-
-        if "kds" in lower_text or "kitchen" in lower_text:
-            kds_node_id = make_stable_semantic_id("node", "Kitchen Display System")
+        elif "kds" in lower_text or "kitchen display" in lower_text:
+            node_id = make_stable_semantic_id("node", "Kitchen Display System")
             ops.append(
                 VisualPatchOperation(
                     op_type=VisualPatchOpType.ADD_NODE,
-                    target_id=kds_node_id,
+                    target_id=node_id,
                     label="Kitchen Display System",
                     node_type="service",
-                    emphasis="primary",
                 )
             )
             ops.append(
                 VisualPatchOperation(
                     op_type=VisualPatchOpType.ADD_NOTE,
                     target_id=make_stable_semantic_id("note", "realtime_kds"),
-                    category=VisualNoteCategory.DECISION,
-                    content="Orders must reach KDS in realtime.",
+                    category=VisualNoteCategory.REQUIREMENT,
+                    content="Orders should reach the kitchen display in realtime.",
                 )
+            )
+        else:
+            return (
+                [],
+                PatchSafetyClassification.REVIEW_REQUIRED,
+                "Visual reasoning unavailable; no deterministic patch was safe to infer.",
             )
 
-        if "pos" in lower_text or "billing" in lower_text:
-            pos_node_id = make_stable_semantic_id("node", "POS Integration Service")
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NODE,
-                    target_id=pos_node_id,
-                    label="POS Integration Service",
-                    node_type="service",
-                    emphasis="normal",
-                )
-            )
-
-        # Fallback if no domain keyword matched: generic high-level component
-        if not ops:
-            clean_title = text[:35].strip()
-            node_id = make_stable_semantic_id("node", clean_title)
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NODE,
-                    target_id=node_id,
-                    label=clean_title,
-                    node_type="service",
-                    emphasis="normal",
-                )
-            )
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NOTE,
-                    target_id=make_stable_semantic_id("note", clean_title),
-                    category=VisualNoteCategory.ACTION,
-                    content=text[:80],
-                )
-            )
-
-        # Classify safety: additions are safe; deletions or major rewrites require review
-        has_remove = any(op.op_type in (VisualPatchOpType.REMOVE_NODE, VisualPatchOpType.REMOVE_GROUP) for op in ops)
-        safety = PatchSafetyClassification.REVIEW_REQUIRED if has_remove else PatchSafetyClassification.SAFE_AUTO_APPLY
-        reason = f"Derived {len(ops)} semantic operations from evidence."
-        return ops, safety, reason
+        return (
+            ops,
+            PatchSafetyClassification.SAFE_AUTO_APPLY,
+            "Deterministic fallback visual intent.",
+        )
 
     def apply_patch(
         self,
@@ -217,6 +312,17 @@ class VisualPatchService:
     ) -> VisualRevision:
         """Apply patch to the current visual scene and commit a new immutable VisualRevision."""
         current_rev = self.revision_service.current_revision(project_id, db)
+
+        if (
+            current_rev is not None
+            and patch.base_revision_number is not None
+            and current_rev.revision_number != patch.base_revision_number
+        ):
+            raise RuntimeError(
+                f"Visual patch base revision {patch.base_revision_number} is stale; "
+                f"current revision is {current_rev.revision_number}. Rebase/merge required."
+            )
+
         base_elements = []
         if current_rev and current_rev.scene_json:
             try:
@@ -247,6 +353,7 @@ class VisualPatchService:
             app_state=app_state,
             operations=applied_ops,
             evidence_ids=patch.evidence_ids,
+            parent_revision_id=current_rev.id if current_rev else None,
             actor_id=actor_id,
             reason=patch.reason or f"Applied visual patch {patch.patch_id}",
         )
