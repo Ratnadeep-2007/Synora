@@ -64,9 +64,9 @@ class Settings(BaseSettings):
     GOOGLE_REFRESH_TOKEN: str = ""
 
     # Context Intelligence routing gate thresholds.
-    # The Agent auto-routes almost everything: only genuinely hard-to-classify
-    # content (nothing remotely plausible) stays in Unknown Context. A single
-    # weak-but-plausible candidate is enough for automatic assignment.
+    # Automatic assignment requires a strong semantic match AND sufficient
+    # separation from competing candidates. Ambiguous or weak matches remain
+    # in Unknown Context.
     CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.72)
     CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.08)
     CONTEXT_RESOLUTION_AUTO_ASSIGN_MIN_CONFIDENCE: float = Field(default=0.72)
