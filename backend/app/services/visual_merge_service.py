@@ -29,6 +29,7 @@ NOTE_CATEGORY_STYLES: Dict[str, Dict[str, str]] = {
     "OPEN_QUESTION": {"background": "#eff6ff", "stroke": "#2563eb", "text": "#1e40af"},
     "ARCHITECTURE_PRINCIPLE": {"background": "#f8fafc", "stroke": "#475569", "text": "#1e293b"},
     "CONVERSATION": {"background": "#ffffff", "stroke": "#94a3b8", "text": "#334155"},
+    "PROJECT_CONTEXT": {"background": "#ffffff", "stroke": "#64748b", "text": "#0f172a"},
 }
 
 
@@ -489,15 +490,15 @@ class VisualMergeService:
         category = op.category.value if op.category else "DECISION"
         style = NOTE_CATEGORY_STYLES.get(category, NOTE_CATEGORY_STYLES["DECISION"])
 
-        note_w = 620 if category == "CONVERSATION" else 260
-        note_h = 132 if category == "CONVERSATION" else 80
+        note_w = 760 if category == "PROJECT_CONTEXT" else (620 if category == "CONVERSATION" else 260)
+        note_h = 108 if category == "PROJECT_CONTEXT" else (132 if category == "CONVERSATION" else 80)
 
-        if category == "CONVERSATION":
-            # Conversation cards form a strict chronological vertical stream.
-            conversation_cards = [
+        if category in ("PROJECT_CONTEXT", "CONVERSATION"):
+            prefix = "context_" if category == "PROJECT_CONTEXT" else "conversation_note_"
+            stack_cards = [
                 el for el in element_map.values()
                 if isinstance(el, dict) and el.get("semantic_type") == "note"
-                and str(el.get("id", "")).startswith("conversation_note_")
+                and str(el.get("id", "")).startswith(prefix)
             ]
             node_right = max(
                 [
@@ -512,7 +513,7 @@ class VisualMergeService:
                 default=BASE_X + NODE_WIDTH,
             )
             x = node_right + 80
-            y = BASE_Y + len(conversation_cards) * (note_h + 18)
+            y = BASE_Y + len(stack_cards) * (note_h + 18)
             occupied_boxes.append((x, y, x + note_w, y + note_h))
         else:
             x, y = self._find_free_slot(None, None, note_w, note_h, occupied_boxes)
@@ -573,7 +574,10 @@ class VisualMergeService:
         applied_ops: List[Dict[str, Any]],
         conflicts: List[str],
     ) -> None:
-        note_id = op.target_id if op.target_id.startswith("note_") else f"note_{op.target_id}"
+        if op.target_id.startswith(("note_", "context_")):
+            note_id = op.target_id
+        else:
+            note_id = f"note_{op.target_id}"
         text_id = f"txt_{note_id}"
 
         if op.op_type == VisualPatchOpType.REMOVE_NOTE:
