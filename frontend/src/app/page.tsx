@@ -68,12 +68,15 @@ export default function Home() {
   });
 
   // Reload everything for the active project
-  const refreshAll = useCallback(async () => {
+  const refreshAll = useCallback(async (preferredProjectId?: string | null) => {
     try {
       const projListData = await api.getProjects().catch(() => [] as Project[]);
       setProjects(projListData);
 
-      const activeId = currentProjectId || projListData[0]?.id || null;
+      const activeId =
+        preferredProjectId !== undefined
+          ? preferredProjectId
+          : currentProjectId || projListData[0]?.id || null;
       if (!activeId) {
         setState(null);
         setHistory([]);
@@ -184,9 +187,41 @@ export default function Home() {
       const newProj = await api.createProject(name, description, undefined, sources);
       setCurrentProjectId(newProj.id);
       setCurrentTab("excalidraw");
-      await refreshAll();
+      await refreshAll(newProj.id);
     } catch (err: any) {
       alert(`Project creation failed: ${err.message}`);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    try {
+      await api.deleteProject(projectId);
+
+      const remaining = projects.filter((p) => p.id !== projectId);
+      const nextProjectId = remaining[0]?.id || null;
+
+      setProjects(remaining);
+      setCurrentProjectId(nextProjectId);
+      setCurrentTab("overview");
+      setSelectedMeetingId(null);
+
+      setState(null);
+      setHistory([]);
+      setConflicts([]);
+      setMeetings([]);
+      setCandidates([]);
+      setAllEvidence([]);
+      setAgents([]);
+      setExcalArtifact(null);
+      setExcalProposals([]);
+      setMeetSubscriptions([]);
+      setMeetEvents([]);
+      setUnassignedMeetings([]);
+      setUnknownPendingCount(0);
+
+      await refreshAll(nextProjectId);
+    } catch (err: any) {
+      throw new Error(err.message || "Project deletion failed");
     }
   };
 
@@ -548,6 +583,7 @@ export default function Home() {
         setCurrentProjectId(pId);
       }}
       onCreateProject={handleCreateProject}
+      onDeleteProject={handleDeleteProject}
     >
       {/* Overview Screen */}
       {currentTab === "overview" && (
