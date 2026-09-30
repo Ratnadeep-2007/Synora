@@ -38,7 +38,9 @@ ARCH_H = 670
 NOTES_Y = ARCH_Y + ARCH_H + 70
 NOTE_GAP = 26
 NOTE_W = int((COLUMN_WIDTH - (ARCH_X_PAD * 2) - NOTE_GAP) / 2)
-NOTE_H = 132
+NOTE_H = 182
+MINI_W = 190
+MINI_H = 112
 
 UNKNOWN_CARD_H = 146
 
@@ -538,7 +540,7 @@ class WorkspaceAtlasService:
         decs = len(self._json_list(state.decisions_json if state else "[]"))
         questions = len(self._json_list(state.open_questions_json if state else "[]"))
         rows = max(2, (min(8, reqs + decs + questions + 1) + 1) // 2)
-        return NOTES_Y + 52 + rows * (NOTE_H + NOTE_GAP) + 70
+        return NOTES_Y + 52 + rows * (NOTE_H + NOTE_GAP) + 90
 
     # ------------------------------------------------------------------
     # Architecture helpers
@@ -791,6 +793,7 @@ class WorkspaceAtlasService:
         x: float,
         y: float,
     ) -> List[Dict[str, Any]]:
+        """Render a knowledge note as text + a tiny explanatory diagram."""
         category = str(note["category"]).upper()
         style_key = {
             "DECISION": "decision",
@@ -814,7 +817,7 @@ class WorkspaceAtlasService:
             }
         }
 
-        return [
+        elements: List[Dict[str, Any]] = [
             self._rect(
                 card_id,
                 x,
@@ -829,21 +832,37 @@ class WorkspaceAtlasService:
             self._text(
                 text_id,
                 x + 18,
-                y + 16,
+                y + 14,
                 NOTE_W - 36,
-                20,
+                18,
                 f"{'◆' if category == 'DECISION' else '✓' if category == 'REQUIREMENT' else '?' if category == 'OPEN QUESTION' else '⚠'}  {category}",
-                11,
+                10,
                 style["text"],
                 bold=True,
                 custom_data=custom,
             ),
+        ]
+
+        elements.extend(
+            self._place_mini_visual(
+                project_id=project_id,
+                note_id=card_id,
+                sequence=self._mini_visual_sequence(category, note["title"]),
+                x=x + 18,
+                y=y + 42,
+                width=MINI_W,
+                height=MINI_H,
+                custom_data=custom,
+            )
+        )
+
+        elements.extend([
             self._text(
                 f"{card_id}:title",
-                x + 18,
-                y + 41,
-                NOTE_W - 36,
-                28,
+                x + MINI_W + 36,
+                y + 42,
+                NOTE_W - MINI_W - 54,
+                32,
                 note["title"][:70],
                 14,
                 "#1f2937",
@@ -852,27 +871,150 @@ class WorkspaceAtlasService:
             ),
             self._text(
                 f"{card_id}:content",
-                x + 18,
-                y + 70,
-                NOTE_W - 36,
-                42,
-                note["content"][:180],
+                x + MINI_W + 36,
+                y + 79,
+                NOTE_W - MINI_W - 54,
+                52,
+                note["content"][:120],
                 11,
                 "#4b5563",
                 custom_data=custom,
             ),
             self._text(
                 meta_id,
-                x + 18,
-                y + 114,
-                NOTE_W - 36,
-                12,
+                x + MINI_W + 36,
+                y + 145,
+                NOTE_W - MINI_W - 54,
+                13,
                 f"Evidence {len(note['evidence_ids'])}" if note["evidence_ids"] else "State knowledge",
                 9,
                 "#768176",
                 custom_data=custom,
             ),
-        ]
+        ])
+        return elements
+
+    def _mini_visual_sequence(self, category: str, title: str) -> List[str]:
+        """Return three compact explanatory stages for a knowledge item."""
+        key = category.upper()
+        middle = (title or key.title()).strip()[:20] or key.title()
+        if key == "DECISION":
+            return ["Context", middle, "Impact"]
+        if key == "REQUIREMENT":
+            return ["User need", middle, "System"]
+        if key == "ACTION":
+            return ["Input", middle, "Verify"]
+        if key == "OPEN QUESTION":
+            return ["Known", "?", "Answer"]
+        if key == "CONSTRAINT":
+            return ["Boundary", middle, "Impact"]
+        return ["Context", middle, "Outcome"]
+
+    def _place_mini_visual(
+        self,
+        project_id: str,
+        note_id: str,
+        sequence: List[str],
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        custom_data: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Render a tiny left-to-right explainer flow inside a knowledge card."""
+        box_gap = 8
+        box_width = max(42, int((width - box_gap * 2) / 3))
+        box_height = 52
+        box_y = y + 18
+        elements: List[Dict[str, Any]] = []
+
+        for index, label in enumerate(sequence[:3]):
+            bx = x + index * (box_width + box_gap)
+            stage_data = {
+                **custom_data,
+                "atlas": {
+                    **custom_data.get("atlas", {}),
+                    "type": "knowledge_mini_visual",
+                    "stage": index,
+                },
+            }
+            elements.append(
+                self._rect(
+                    self._id(note_id, f"mini_box_{index}"),
+                    bx,
+                    box_y,
+                    box_width,
+                    box_height,
+                    {
+                        "stroke": "#b8c6bb",
+                        "background": "#ffffff",
+                    },
+                    opacity=100,
+                    roundness=3,
+                    custom_data=stage_data,
+                )
+            )
+            elements.append(
+                self._text(
+                    self._id(note_id, f"mini_label_{index}"),
+                    bx + 5,
+                    box_y + 14,
+                    box_width - 10,
+                    24,
+                    label,
+                    9,
+                    "#334238",
+                    bold=index == 1,
+                    custom_data=stage_data,
+                )
+            )
+
+            if index < 2:
+                ax = bx + box_width + 2
+                ay = box_y + box_height / 2
+                elements.append(
+                    self._arrow(
+                        self._id(note_id, f"mini_arrow_{index}"),
+                        ax,
+                        ay,
+                        ax + box_gap - 4,
+                        ay,
+                        custom_data=stage_data,
+                    )
+                )
+
+        return elements
+
+    @staticmethod
+    def _arrow(
+        element_id: str,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        custom_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "id": element_id,
+            "type": "arrow",
+            "x": x1,
+            "y": y1,
+            "width": max(1.0, x2 - x1),
+            "height": max(1.0, y2 - y1),
+            "angle": 0,
+            "strokeColor": "#738177",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "points": [[0, 0], [max(1.0, x2 - x1), y2 - y1]],
+            "startArrowhead": None,
+            "endArrowhead": "arrow",
+            "isDeleted": False,
+            "customData": custom_data or {},
+        }
 
     # ------------------------------------------------------------------
     # Unknown Context column
