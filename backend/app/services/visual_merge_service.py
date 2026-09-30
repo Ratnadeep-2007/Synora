@@ -160,6 +160,16 @@ class VisualMergeService:
                 elif op.op_type == VisualPatchOpType.ADD_NOTE:
                     self._apply_add_note(op, element_map, occupied_boxes, applied_ops, conflicts)
                 elif op.op_type in (VisualPatchOpType.UPDATE_NOTE, VisualPatchOpType.REMOVE_NOTE):
+                    note_target = (
+                        op.target_id
+                        if op.target_id.startswith(("note_", "context_"))
+                        else f"note_{op.target_id}"
+                    )
+                    if user_changed_target(note_target):
+                        conflicts.append(
+                            f"AI note mutation skipped because the user changed or removed {note_target} after the patch base."
+                        )
+                        continue
                     self._apply_note_mutation(op, element_map, applied_ops, conflicts)
                 else:
                     applied_ops.append(op_dict)
@@ -588,5 +598,10 @@ class VisualMergeService:
             txt_el = element_map.get(text_id)
             if txt_el and op.content:
                 category = op.category.value if op.category else "DECISION"
-                txt_el["text"] = f"[{category}]\n{op.content[:90]}"
+                visible = f"[{category}]\n{op.content[:480]}"
+                txt_el["text"] = visible
+                txt_el["originalText"] = visible
+                note_el = element_map.get(note_id)
+                if note_el is not None:
+                    note_el["note_content"] = op.content[:650]
             applied_ops.append(op.model_dump())
