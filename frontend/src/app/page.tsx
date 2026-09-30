@@ -10,6 +10,7 @@ import { MeetingsView } from "@/components/views/MeetingsView";
 import { MeetingDetailView } from "@/components/views/MeetingDetailView";
 import { SourcesView } from "@/components/views/SourcesView";
 import { SettingsView } from "@/components/views/SettingsView";
+import { WorkspaceAtlasView } from "@/components/views/WorkspaceAtlasView";
 import { EvidenceDrawer } from "@/components/common/EvidenceDrawer";
 import { api, getFrontendUserId } from "@/lib/api";
 import {
@@ -25,6 +26,7 @@ import {
   ProjectState,
   ProjectStateVersion,
   SourceConnection,
+  WorkspaceAtlasData,
 } from "@/lib/types";
 
 export default function Home() {
@@ -47,6 +49,7 @@ export default function Home() {
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
   const [unknownBoard, setUnknownBoard] = useState<any>(null);
+  const [atlasData, setAtlasData] = useState<WorkspaceAtlasData | null>(null);
 
   // Event-driven pipeline state
   const [meetSubscriptions, setMeetSubscriptions] = useState<any[]>([]);
@@ -107,6 +110,7 @@ export default function Home() {
         eventsData,
         unassignedData,
         unknownSummaryData,
+        atlasDataResult,
       ] = await Promise.allSettled([
         api.getProjectState(activeId),
         api.getProjectHistory(activeId),
@@ -123,6 +127,7 @@ export default function Home() {
         api.listMeetEvents(undefined, 20).catch(() => []),
         api.listUnassignedMeetings(20).catch(() => []),
         api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
+        currentTab === "excalidraw" ? api.getWorkspaceAtlas() : Promise.resolve(null),
       ]);
 
       if (stateData.status === "fulfilled") setState(stateData.value);
@@ -142,16 +147,19 @@ export default function Home() {
       if (unknownSummaryData.status === "fulfilled") {
         setUnknownPendingCount(unknownSummaryData.value?.pending || 0);
       }
+      if (atlasDataResult.status === "fulfilled" && atlasDataResult.value) {
+        setAtlasData(atlasDataResult.value);
+      }
     } catch (err) {
       console.error("Failed to load project context:", err);
     }
-  }, [currentProjectId]);
+  }, [currentProjectId, currentTab]);
 
   useEffect(() => {
     refreshAll();
     const interval = setInterval(() => {
       refreshAll();
-    }, 1000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [refreshAll]);
 
@@ -191,6 +199,7 @@ export default function Home() {
       const newProj = await api.createProject(name, description, undefined, sources);
       setCurrentProjectId(newProj.id);
       setCurrentTab("excalidraw");
+      await api.syncWorkspaceAtlas().catch(() => null);
       await refreshAll(newProj.id);
     } catch (err: any) {
       alert(`Project creation failed: ${err.message}`);
@@ -218,11 +227,14 @@ export default function Home() {
       setAgents([]);
       setExcalArtifact(null);
       setExcalProposals([]);
+      setAtlasData(null);
       setMeetSubscriptions([]);
       setMeetEvents([]);
       setUnassignedMeetings([]);
       setUnknownPendingCount(0);
+      setAtlasData(null);
 
+      await api.syncWorkspaceAtlas().catch(() => null);
       await refreshAll(nextProjectId);
     } catch (err: any) {
       throw new Error(err.message || "Project deletion failed");
@@ -623,25 +635,16 @@ export default function Home() {
         />
       )}
 
-      {/* Excalidraw Screen — REPLACES per selected project, plus agent Unknown board */}
+      {/* Project Atlas — one infinite, database-backed Excalidraw workspace */}
       {currentTab === "excalidraw" && (
-        <ArchitectureView
-          key={currentProjectId || "no-project"}
-          projectId={currentProjectId}
-          projectName={activeProject?.name}
-          artifact={excalArtifact}
-          proposals={excalProposals}
-          currentStateVersion={state?.current_version || 1}
-          decisions={state?.decisions || []}
-          syncStatus={excalSyncStatus}
-          lastSyncAt={excalArtifact?.updated_at || null}
-          unknownBoard={unknownBoard}
-          onRetrySync={handleSyncLivingWorkspace}
-          onGenerateProposal={handleGenerateExcalProposal}
-          onReviewProposal={handleReviewExcalProposal}
-          onIngestScene={handleIngestScene}
-          onSyncLivingWorkspace={handleSyncLivingWorkspace}
-          onAiGenerateVisuals={handleAiGenerateVisuals}
+        <WorkspaceAtlasView
+          atlas={atlasData}
+          projects={projects}
+          activeProjectId={currentProjectId}
+          onChanged={async () => {
+            await api.syncWorkspaceAtlas().catch(() => null);
+            await refreshAll();
+          }}
         />
       )}
 
