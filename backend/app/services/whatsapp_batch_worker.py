@@ -4,13 +4,16 @@ import logging
 import time
 
 from app.core.config import settings
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, init_db
 from app.services.whatsapp_batch_service import WhatsAppBatchService
 
 logger = logging.getLogger(__name__)
 
 
 def run_forever() -> None:
+    # Keep the dedicated worker safe when it starts independently from the API.
+    # This also reconciles the legacy SQLite WhatsApp batch schema.
+    init_db()
     service = WhatsAppBatchService()
     logger.info(
         "whatsapp_batch_worker_started interval=%ss poll=%ss",
