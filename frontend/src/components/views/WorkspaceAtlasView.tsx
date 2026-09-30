@@ -69,7 +69,7 @@ export function WorkspaceAtlasView({
           <div>
             <h2 className="text-sm font-semibold text-text-main">Infinite project canvas</h2>
             <p className="mt-0.5 text-[11px] text-text-muted">
-              Context Inbox → projects → architecture → visual knowledge explainers
+              Context Inbox → project intent → architecture → evidence-backed context stories
             </p>
           </div>
           <div className="inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/5 px-2.5 py-1 text-[10px] font-semibold text-success">
@@ -105,9 +105,9 @@ export function WorkspaceAtlasView({
 
       <div className="grid gap-2 sm:grid-cols-3">
         {[
-          ["Decision", "Context → choice → impact"],
-          ["Requirement", "User need → system response"],
-          ["Question", "Known → unknown → answer"],
+          ["Decision", "Situation → choice → basis → consequence"],
+          ["Requirement", "Need → requirement → behaviour → validation"],
+          ["Question", "Known → gap → evidence → resolution"],
         ].map(([label, flow]) => (
           <div key={label} className="rounded-lg border border-border bg-canvas px-3 py-2.5">
             <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-muted">{label}</div>
