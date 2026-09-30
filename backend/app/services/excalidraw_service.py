@@ -466,7 +466,6 @@ class ExcalidrawService:
                 for note in conversation_notes
                 if str(note).strip()
             ][:8]
-        )
 
         compiler = ExcalidrawCompiler()
         proposed_elements = compiler.compile(plan)
