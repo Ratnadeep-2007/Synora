@@ -29,7 +29,7 @@ COLUMN_GUTTER = int(round(COLUMN_GUTTER_CM * CM))
 ATLAS_PADDING_X = 80
 ATLAS_PADDING_Y = 60
 
-HEADER_H = 150
+HEADER_H = 174
 ARCH_X_PAD = 70
 ARCH_Y = ATLAS_PADDING_Y + HEADER_H
 ARCH_W = COLUMN_WIDTH - (ARCH_X_PAD * 2)
@@ -467,15 +467,32 @@ class WorkspaceAtlasService:
         questions = self._json_list(state.open_questions_json if state else "[]")
         constraints = self._json_list(state.constraints_json if state else "[]")
 
+        intent = self._project_intent(state)
+        if intent:
+            scene.append(
+                self._text(
+                    self._id(project.id, "intent"),
+                    origin_x + 46,
+                    ATLAS_PADDING_Y + 108,
+                    COLUMN_WIDTH - 92,
+                    34,
+                    f"INTENT  •  {intent}",
+                    10,
+                    "#506353",
+                    bold=False,
+                    custom_data={"atlas": {"type": "project_intent", "project_id": project.id}},
+                )
+            )
+
         scene.append(
             self._text(
                 self._id(project.id, "metrics"),
                 origin_x + 46,
-                ATLAS_PADDING_Y + 110,
+                ATLAS_PADDING_Y + 151,
                 COLUMN_WIDTH - 92,
                 18,
-                f"STATE v{state_version}   •   {len(reqs)} requirements   •   {len(decs)} decisions",
-                11,
+                f"STATE v{state_version}   •   {len(reqs)} requirements   •   {len(decs)} decisions   •   {len(questions)} questions   •   {len(constraints)} constraints",
+                10,
                 "#66736a",
                 custom_data={"atlas": {"type": "project_metrics", "project_id": project.id}},
             )
@@ -502,7 +519,7 @@ class WorkspaceAtlasService:
                 NOTES_Y,
                 COLUMN_WIDTH - (ARCH_X_PAD * 2),
                 26,
-                "PROJECT KNOWLEDGE",
+                "CONTEXT & KNOWLEDGE",
                 14,
                 "#3b4a3f",
                 bold=True,
@@ -1427,6 +1444,13 @@ class WorkspaceAtlasService:
             "points": [[0, 0], [x2 - x1, y2 - y1]],
             "isDeleted": False,
         }
+
+    @staticmethod
+    def _project_intent(state: Optional[ProjectState]) -> str:
+        if not state:
+            return ""
+        vision = (state.vision or "").replace("\\n", " ").strip()
+        return " ".join(vision.split())[:150]
 
     @staticmethod
     def _project_domain(project: Project, db: Session, tenant_id: str) -> str:
