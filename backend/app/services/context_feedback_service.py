@@ -109,6 +109,7 @@ class ContextFeedbackService:
         candidate_project_ids: Optional[List[str]] = None,
         limit_per_project: int = 3,
         db: Optional[Session] = None,
+        tenant_id: str = "default_tenant",
     ) -> List[Dict[str, Any]]:
         """Format historical human decisions as prompt guidance for the semantic reranker."""
         session = db or self.db
@@ -123,8 +124,8 @@ class ContextFeedbackService:
         rows = (
             session.query(ContextFeedback)
             .filter(
-                ContextFeedback.tenant_id == getattr(session.get_bind(), "tenant_id", "default_tenant")
-                if False else ContextFeedback.selected_project_id.in_(pids),
+                ContextFeedback.tenant_id == tenant_id,
+                ContextFeedback.selected_project_id.in_(pids),
                 ContextFeedback.action.in_(["assigned", "project_created"]),
             )
             .order_by(ContextFeedback.created_at.desc())
