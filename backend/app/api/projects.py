@@ -174,6 +174,117 @@ async def list_projects(
     return results
 
 
+@router.delete(
+    "/{project_id}",
+    summary="Delete Project and Project Data",
+    description="Permanently deletes a user project and its project-scoped database records. The reserved Unknown Context system project cannot be deleted.",
+)
+async def delete_project(
+    project_id: str,
+    workspace_id: str = Query("ws_default", description="Workspace ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Hard-delete a user project while preserving the reserved system project."""
+    from app.models.context_resolution import (
+        ContextResolution,
+        PossibleProjectMatch,
+        UnknownContextItem,
+        UnknownItemStatus,
+    )
+    from app.models.evidence import Evidence
+    from app.models.excalidraw import ExcalidrawArtifact
+    from app.models.intelligence import AgentRun, CandidateKnowledge
+    from app.models.meeting import Meeting
+    from app.models.meet_event_record import MeetEventRecord
+    from app.models.meet_subscription import MeetSubscription
+    from app.models.project_domain import ProjectDomainProfile
+    from app.models.project_state import ProjectState
+    from app.models.source_event import SourceEvent
+    from app.models.task_job import TaskJob
+    from app.models.visual_revision import VisualWorkspace
+
+    if project_id == "proj_unknown_context":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The reserved Unknown Context system project cannot be deleted.",
+        )
+
+    project = (
+        db.query(Project)
+        .filter(Project.id == project_id, Project.workspace_id == workspace_id, Project.is_system.is_(False))
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+    project_name = project.name
+
+    try:
+        # Unknown Context is a system quarantine. Clear recommendations that
+        # point to the deleted project, then return those items to reviewable state.
+        db.query(PossibleProjectMatch).filter(
+            PossibleProjectMatch.candidate_project_id == project_id
+        ).delete(synchronize_session=False)
+        db.query(UnknownContextItem).filter(
+            UnknownContextItem.assigned_project_id == project_id
+        ).update(
+            {
+                UnknownContextItem.assigned_project_id: None,
+                UnknownContextItem.assigned_by: None,
+                UnknownContextItem.assigned_at: None,
+                UnknownContextItem.status: UnknownItemStatus.PENDING.value,
+            },
+            synchronize_session=False,
+        )
+
+        # Delete project-scoped rows that use loose project_id ownership.
+        db.query(Evidence).filter(Evidence.project_id == project_id).delete(synchronize_session=False)
+        db.query(CandidateKnowledge).filter(CandidateKnowledge.project_id == project_id).delete(synchronize_session=False)
+        db.query(AgentRun).filter(AgentRun.project_id == project_id).delete(synchronize_session=False)
+        db.query(AgentExecution).filter(AgentExecution.project_id == project_id).delete(synchronize_session=False)
+        db.query(Conflict).filter(Conflict.project_id == project_id).delete(synchronize_session=False)
+        db.query(ContextResolution).filter(ContextResolution.project_id == project_id).delete(synchronize_session=False)
+        db.query(SourceEvent).filter(SourceEvent.project_id == project_id).delete(synchronize_session=False)
+        db.query(TaskJob).filter(TaskJob.project_id == project_id).delete(synchronize_session=False)
+        db.query(MeetEventRecord).filter(MeetEventRecord.project_id == project_id).delete(synchronize_session=False)
+        db.query(MeetSubscription).filter(MeetSubscription.project_id == project_id).delete(synchronize_session=False)
+        db.query(ProjectDomainProfile).filter(ProjectDomainProfile.project_id == project_id).delete(synchronize_session=False)
+
+        # ORM deletes preserve child cascades for meeting and visual trees.
+        for meeting in db.query(Meeting).filter(Meeting.project_id == project_id).all():
+            db.delete(meeting)
+
+        for workspace in db.query(VisualWorkspace).filter(VisualWorkspace.project_id == project_id).all():
+            db.delete(workspace)
+
+        for artifact in db.query(ExcalidrawArtifact).filter(ExcalidrawArtifact.project_id == project_id).all():
+            db.delete(artifact)
+
+        # ProjectState owns versions and state changes through ORM cascades.
+        project_state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
+        if project_state:
+            db.delete(project_state)
+
+        db.flush()
+        db.delete(project)
+        db.commit()
+
+        return {
+            "success": True,
+            "project_id": project_id,
+            "project_name": project_name,
+            "message": f"Project '{project_name}' and its project-scoped data were permanently deleted.",
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Project deletion failed for {project_id}: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Project deletion failed: {str(exc)}",
+        )
+
+
 @router.get(
     "/{project_id}/agent",
     response_model=ProjectAgentRead,
