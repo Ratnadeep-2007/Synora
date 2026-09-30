@@ -162,6 +162,7 @@ def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
         decs=[{"title": "Use realtime KDS", "content": "Kitchen tickets are pushed immediately."}],
         questions=[{"title": "Offline mode", "content": "What happens when the tablet loses connectivity?"}],
         constraints=[{"title": "POS constraint", "content": "Settlement must stay consistent."}],
+        assumptions=[{"title": "Stable network", "content": "Connected devices are available during normal operations."}],
     )
 
     service = WorkspaceAtlasService()
