@@ -100,8 +100,9 @@ class WorkspaceAtlasService:
             .all()
         )
 
-        fingerprint = self._fingerprint(projects, db, tenant_id)
         app_state = self._json_dict(artifact.app_state_json)
+        slot_map = self._assign_slots(projects, app_state.get("atlas_slots") or {})
+        fingerprint = self._fingerprint(projects, db, tenant_id, slot_map)
 
         if app_state.get("atlas_fingerprint") != fingerprint:
             scene, metadata = self._build_scene(
@@ -120,6 +121,7 @@ class WorkspaceAtlasService:
                     "gridSize": 20,
                     "theme": "light",
                     "atlas_fingerprint": fingerprint,
+                    "atlas_slots": slot_map,
                     "atlas_versioned_at": now.isoformat(),
                 }
             )
@@ -175,6 +177,7 @@ class WorkspaceAtlasService:
                     "name": p.name,
                     "state_version": self._state_version(p.id, db),
                     "diagram_version": self._diagram_version(p.id, db, tenant_id),
+                    "atlas_slot": slot_map.get(p.id),
                 }
                 for p in projects
             ],
@@ -224,11 +227,26 @@ class WorkspaceAtlasService:
     # ------------------------------------------------------------------
     # Fingerprinting / efficiency
     # ------------------------------------------------------------------
+    def _assign_slots(self, projects: List[Project], existing: Dict[str, Any]) -> Dict[str, int]:
+        """Assign stable horizontal slots; deleted projects keep their historical slot."""
+        slots: Dict[str, int] = {}
+        for pid, slot in (existing or {}).items():
+            try:
+                slots[str(pid)] = int(slot)
+            except (TypeError, ValueError):
+                continue
+        next_slot = max(slots.values(), default=0) + 1
+        for project in projects:
+            if project.id not in slots:
+                slots[project.id] = next_slot
+                next_slot += 1
+        return slots
     def _fingerprint(
         self,
         projects: List[Project],
         db: Session,
         tenant_id: str,
+        slot_map: Dict[str, int],
     ) -> str:
         unknown = (
             db.query(UnknownContextItem)
@@ -257,6 +275,7 @@ class WorkspaceAtlasService:
                     "id": item.id,
                     "updated": item.created_at.isoformat() if item.created_at else None,
                     "status": item.status,
+                    "matches": [m.candidate_project_id for m in db.query(PossibleProjectMatch).filter(PossibleProjectMatch.unknown_item_id == item.id).order_by(PossibleProjectMatch.created_at.desc()).limit(2).all()],
                 }
                 for item in unknown
             ],
@@ -311,8 +330,25 @@ class WorkspaceAtlasService:
         # Column 0 is always Context Inbox.
         scene.extend(self._unknown_column(unknown_items, db, workspace_id))
 
-        for idx, project in enumerate(projects, start=1):
-            x = ATLAS_PADDING_X + idx * (COLUMN_WIDTH + COLUMN_GUTTER)
+        app = self._json_dict(
+            db.query(ExcalidrawArtifact)
+            .filter(
+                ExcalidrawArtifact.project_id == SYSTEM_WORKSPACE_ATLAS_PROJECT_ID,
+                ExcalidrawArtifact.tenant_id == tenant_id,
+            )
+            .first().app_state_json
+            if db.query(ExcalidrawArtifact)
+            .filter(
+                ExcalidrawArtifact.project_id == SYSTEM_WORKSPACE_ATLAS_PROJECT_ID,
+                ExcalidrawArtifact.tenant_id == tenant_id,
+            )
+            .first()
+            else "{}"
+        )
+        slot_map = self._assign_slots(projects, app.get("atlas_slots") or {})
+        for project in projects:
+            slot = slot_map.get(project.id, 1)
+            x = ATLAS_PADDING_X + slot * (COLUMN_WIDTH + COLUMN_GUTTER)
             scene.extend(
                 self._project_column(
                     project=project,
