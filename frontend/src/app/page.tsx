@@ -430,8 +430,6 @@ export default function Home() {
     (c) => c.status === "open" || c.status === "under_review"
   ).length;
 
-  const pendingExcalProposals = excalProposals.filter((p) => p.status === "pending").length;
-
   const googleConn = connections.find((c) => c.provider === "google");
 
   const activeSubscriptions = meetSubscriptions.filter(
@@ -452,12 +450,6 @@ export default function Home() {
 
   const notifications: NotificationItem[] = useMemo(() => {
     const items: NotificationItem[] = [];
-    if (pendingExcalProposals > 0) {
-      items.push({
-        title: `${pendingExcalProposals} Excalidraw proposal${pendingExcalProposals === 1 ? "" : "s"} pending review`,
-        detail: "Visual workspace updates are awaiting human approval.",
-      });
-    }
     if (!googleConn || googleConn.status !== "active") {
       items.push({
         title: "Google Meet source not connected",
@@ -465,7 +457,7 @@ export default function Home() {
       });
     }
     return items;
-  }, [pendingExcalProposals, googleConn]);
+  }, [googleConn]);
 
   const agentActivity = useMemo(() => {
     const rawEvents: Array<{ timestamp: number; time: string; text: string }> = [];
@@ -597,7 +589,7 @@ export default function Home() {
                   updatedAt: excalArtifact.updated_at,
                   decisionsCount: state?.decisions?.length || 0,
                   requirementsCount: state?.requirements?.length || 0,
-                  pendingCount: pendingExcalProposals,
+                  pendingCount: 0,
                 }
               : null
           }
