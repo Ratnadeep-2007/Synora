@@ -1098,6 +1098,39 @@ class WorkspaceAtlasService:
             "Read left → right to understand the recorded context.",
         )
 
+    @staticmethod
+    def _arrow(
+        element_id: str,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        custom_data: Optional[Dict[str, Any]] = None,
+        stroke_color: str = "#738177",
+        stroke_width: int = 1,
+    ) -> Dict[str, Any]:
+        return {
+            "id": element_id,
+            "type": "arrow",
+            "x": x1,
+            "y": y1,
+            "width": max(1.0, x2 - x1),
+            "height": max(1.0, y2 - y1),
+            "angle": 0,
+            "strokeColor": stroke_color,
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
+            "strokeWidth": stroke_width,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "points": [[0, 0], [max(1.0, x2 - x1), y2 - y1]],
+            "startArrowhead": None,
+            "endArrowhead": "arrow",
+            "isDeleted": False,
+            "customData": custom_data or {},
+        }
+
     # ------------------------------------------------------------------
     # Unknown Context column
     # ------------------------------------------------------------------
