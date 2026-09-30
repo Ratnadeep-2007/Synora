@@ -381,3 +381,27 @@ export interface WhatsAppMessageItem {
   reasoning?: string;
 }
 
+
+export interface WorkspaceAtlasData {
+  artifact: ExcalidrawArtifact;
+  layout: {
+    column_width: number;
+    column_gutter: number;
+    padding_x: number;
+    project_columns: number;
+    unknown_context_column: number;
+  };
+  projects: Array<{
+    id: string;
+    name: string;
+    state_version: number;
+    diagram_version: number;
+  }>;
+  unknown_context: {
+    pending: number;
+  };
+  revision: {
+    number: number;
+    updated_at: string | null;
+  };
+}
