@@ -161,7 +161,7 @@ class VisualPlanService:
             '"client|service|datastore|actor|decision|requirement|group|note", '
             '"group": str|null, "emphasis": "normal|primary|muted", "annotations": [str]}], '
             '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed"}], '
-            '"preserve": [str], "add": [str], "change": [str], "remove": [str], "notes": [str]}'
+            '"preserve": [str], "add": [str], "change": [str], "remove": [str], "notes": [str], "conversation_notes": [str]}'
         )
         lines = [
             f"You are the Synora visual architecture planner for the project: '{project_title}'.",
@@ -173,6 +173,9 @@ class VisualPlanService:
             "3. HIGH-EFFICIENCY ARCHITECTURAL NOTES: You MUST provide 2 to 4 concise, high-signal, actionable notes in the 'notes' array. Each note must state a concrete architectural decision, integration specification, technical constraint, or operational scope (e.g. 'Event-driven message stream for real-time order dispatch', 'Autonomous table ordering with QR token verification'). Do NOT leave 'notes' empty.",
             "4. NODE LABELS: Keep node labels short, crisp, and professional (2-4 words, e.g. 'Table Ordering Agent', 'Kitchen Display API', 'Order DB', 'Customer Web App').",
             "5. RELATIONSHIPS: Connect components logically with directional data flow relationships.",
+            "6. CONVERSATION NOTES: Convert each relevant evidence snippet into one concise note. Preserve the meaning and speaker/source wording when available. Do not merge separate messages into one note. Return at most 8 notes, ordered chronologically as provided. These will be rendered one below another.",
+            "7. VISUAL HIERARCHY: Prefer a clear architecture flow with clients at the edge, core services in the middle, data/external systems downstream, and grouped sections where useful.",
+
             "",
             f"Respond with ONLY JSON matching: {schema}",
             "",
@@ -552,6 +555,7 @@ class VisualPlanService:
             relationships=relationships,
             preserve=[],
             notes=notes,
+            conversation_notes=[str(s).strip()[:280] for s in [text] if str(s).strip()][:8],
             model="deterministic",
             prompt_version="visual-plan-text-deterministic-v2",
         )
