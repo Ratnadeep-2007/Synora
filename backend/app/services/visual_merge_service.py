@@ -31,6 +31,22 @@ NOTE_CATEGORY_STYLES: Dict[str, Dict[str, str]] = {
 
 
 class VisualMergeService:
+    _CONCEPT_ALIASES = {
+        "kds": "kitchen display system",
+        "kitchen display": "kitchen display system",
+        "pos": "pos integration service",
+        "qr ordering": "table qr ordering",
+        "table qr": "table qr ordering",
+        "ordering app": "ordering web app",
+        "order app": "ordering web app",
+    }
+
+    @classmethod
+    def _canonical_concept_key(cls, value: Any) -> str:
+        import re
+        normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+        normalized = cls._CONCEPT_ALIASES.get(normalized, normalized)
+        return normalized
     """Three-Way Visual Merge Engine for Excalidraw scenes.
 
     Inputs:
@@ -65,11 +81,11 @@ class VisualMergeService:
         label_to_id: Dict[str, str] = {}
         for el in element_map.values():
             if el.get("type") == "text" and el.get("text"):
-                clean_lbl = str(el["text"]).strip().lower()
+                clean_lbl = self._canonical_concept_key(el["text"])
                 label_to_id[clean_lbl] = str(el["id"])
             elif el.get("type") == "rectangle" and "node_" in str(el.get("id", "")):
                 # Index by node ID suffix
-                suffix = str(el["id"]).replace("node_", "").strip().lower()
+                suffix = self._canonical_concept_key(str(el["id"]).replace("node_", ""))
                 label_to_id[suffix] = str(el["id"])
 
         # Occupied bounding boxes for collision avoidance
@@ -173,7 +189,7 @@ class VisualMergeService:
         label = op.label or op.target_id.replace("node_", "").replace("_", " ").title()
 
         # Deduplication check: if node already exists by ID or exact label, update it instead of duplicating
-        clean_lbl = label.strip().lower()
+        clean_lbl = self._canonical_concept_key(label)
         if rect_id in element_map or clean_lbl in label_to_id:
             existing_rect_id = rect_id if rect_id in element_map else label_to_id[clean_lbl]
             if existing_rect_id in element_map:
@@ -190,6 +206,8 @@ class VisualMergeService:
 
         rect_element = {
             "id": rect_id,
+            "semantic_id": rect_id,
+            "semantic_type": "node",
             "type": "rectangle",
             "x": x,
             "y": y,
@@ -215,6 +233,8 @@ class VisualMergeService:
 
         text_element = {
             "id": text_id,
+            "semantic_id": rect_id,
+            "semantic_type": "node_label",
             "type": "text",
             "x": x + 12,
             "y": txt_y,
@@ -329,6 +349,7 @@ class VisualMergeService:
             return
 
         edge_id = f"edge_{src_id.replace('node_', '')}_{dst_id.replace('node_', '')}"
+        canonical_edge_key = f"edge_{self._canonical_concept_key(src_id)}_{self._canonical_concept_key(dst_id)}"
         if edge_id in element_map:
             # Edge already exists, no duplicate needed
             return
@@ -359,6 +380,8 @@ class VisualMergeService:
 
         arrow_element = {
             "id": edge_id,
+            "semantic_id": canonical_edge_key,
+            "semantic_type": "edge",
             "type": "arrow",
             "x": start_x,
             "y": start_y,
@@ -394,6 +417,12 @@ class VisualMergeService:
         note_id = op.target_id if op.target_id.startswith("note_") else f"note_{op.target_id}"
         text_id = f"txt_{note_id}"
         content = op.content or op.label or "Architectural note"
+
+        if note_id in element_map:
+            existing = element_map[note_id]
+            existing["text"] = content
+            applied_ops.append({**op.model_dump(), "note": "Updated existing note instead of duplicating"})
+            return
         category = op.category.value if op.category else "DECISION"
         style = NOTE_CATEGORY_STYLES.get(category, NOTE_CATEGORY_STYLES["DECISION"])
 
@@ -403,6 +432,8 @@ class VisualMergeService:
 
         rect_element = {
             "id": note_id,
+            "semantic_id": note_id,
+            "semantic_type": "note",
             "type": "rectangle",
             "x": x,
             "y": y,
