@@ -144,12 +144,15 @@ class WhatsAppBatchService:
         tenant_id: Optional[str] = None,
         force: bool = False,
         max_batches: int = 20,
+        batch_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = datetime.now(timezone.utc)
         query = db.query(WhatsAppBatch).filter(WhatsAppBatch.status == "queued")
         if tenant_id:
             query = query.filter(WhatsAppBatch.tenant_id == tenant_id)
-        if not force:
+        if batch_id:
+            query = query.filter(WhatsAppBatch.id == batch_id)
+        elif not force:
             query = query.filter(WhatsAppBatch.due_at <= now)
 
         batches = (
