@@ -4,8 +4,6 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Shell, NavTab, NotificationItem } from "@/components/layout/Shell";
 import { OverviewView } from "@/components/views/OverviewView";
 import { ProjectStateView } from "@/components/views/ProjectStateView";
-import { ArchitectureView } from "@/components/views/ArchitectureView";
-import { UnknownBoardView } from "@/components/views/UnknownBoardView";
 import { MeetingsView } from "@/components/views/MeetingsView";
 import { MeetingDetailView } from "@/components/views/MeetingDetailView";
 import { SourcesView } from "@/components/views/SourcesView";
