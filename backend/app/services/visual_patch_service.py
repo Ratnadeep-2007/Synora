@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import uuid
+import hashlib
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
@@ -74,6 +75,22 @@ class VisualPatchService:
 
         # Call reasoning engine to generate patch operations
         operations, safety, reason = self._synthesize_operations(project_id, text, state_summary, current_rev)
+
+        # Preserve each incoming conversation as its own immutable visual note.
+        # Use evidence identity when available so replaying the same evidence is idempotent.
+        conversation_key = (evidence_ids or [text])[-1]
+        conversation_note_id = make_stable_semantic_id(
+            "conversation_note",
+            str(conversation_key),
+        )
+        conversation_note = VisualPatchOperation(
+            op_type=VisualPatchOpType.ADD_NOTE,
+            target_id=conversation_note_id,
+            category=VisualNoteCategory.CONVERSATION,
+            content=f"CONVERSATION\n{text[:650].strip()}",
+            evidence_ids=list(evidence_ids or []),
+        )
+        operations = [conversation_note] + operations
 
         patch = VisualPatch(
             patch_id=patch_id,
