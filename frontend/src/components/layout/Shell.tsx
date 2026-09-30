@@ -17,6 +17,8 @@ import {
   X,
   Sparkles,
   FolderPlus,
+  Trash2,
+  AlertTriangle,
   User as UserIcon,
 } from "lucide-react";
 import { Project } from "@/lib/types";
@@ -57,6 +59,7 @@ interface ShellProps {
   notifications?: NotificationItem[];
   onSelectProject?: (projectId: string) => void;
   onCreateProject?: (name: string, description?: string, sources?: string[]) => Promise<void>;
+  onDeleteProject?: (projectId: string) => Promise<void>;
   children: React.ReactNode;
 }
 
@@ -89,6 +92,7 @@ export function Shell({
   notifications = [],
   onSelectProject,
   onCreateProject,
+  onDeleteProject,
   children,
 }: ShellProps) {
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
@@ -102,6 +106,9 @@ export function Shell({
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isDeleteProjectModalOpen, setIsDeleteProjectModalOpen] = useState(false);
+  const [deleteProjectConfirmation, setDeleteProjectConfirmation] = useState("");
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
 
   const selectedProject = activeProject || projects.find((p) => p.id === currentProjectId) || null;
 
@@ -143,6 +150,28 @@ export function Shell({
     setNewProjectContext("");
     setNewProjectTools(["google_meet", "whatsapp", "excalidraw"]);
     setIsNewProjectModalOpen(false);
+  };
+
+  const resetDeleteModal = () => {
+    setDeleteProjectConfirmation("");
+    setIsDeleteProjectModalOpen(false);
+  };
+
+  const handleDeleteProjectSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProject || !onDeleteProject) return;
+    if (deleteProjectConfirmation.trim().toUpperCase() !== "DELETE") return;
+
+    try {
+      setIsDeletingProject(true);
+      await onDeleteProject(selectedProject.id);
+      resetDeleteModal();
+      setIsProjectDropdownOpen(false);
+    } catch (err: any) {
+      alert(`Failed to delete project: ${err.message}`);
+    } finally {
+      setIsDeletingProject(false);
+    }
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -222,6 +251,19 @@ export function Shell({
 
         {/* Footer info */}
         <div className="p-4 border-t border-border bg-surface-soft">
+          {selectedProject && (
+            <div className="mb-3 rounded-xl border border-border bg-surface p-3 shadow-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Active project</span>
+                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success" />
+                  Live
+                </span>
+              </div>
+              <div className="mt-2 text-xs font-semibold text-text-main truncate">{selectedProject.name}</div>
+              <div className="mt-0.5 text-[10px] text-text-muted font-mono truncate">{selectedProject.id}</div>
+            </div>
+          )}
           <div className="text-[11px] text-text-muted">
             <span className="font-medium text-text-main">Authoritative Engine</span>
             <div className="font-mono text-[10px] mt-0.5">PostgreSQL • v{projectVersion}</div>
@@ -373,6 +415,20 @@ export function Shell({
                   >
                     Switch project
                   </button>
+
+                  {selectedProject && onDeleteProject && (
+                    <button
+                      onClick={() => {
+                        setIsProjectDropdownOpen(false);
+                        setDeleteProjectConfirmation("");
+                        setIsDeleteProjectModalOpen(true);
+                      }}
+                      className="w-full py-1.5 px-3 rounded-md text-xs font-medium text-danger hover:bg-danger/10 border border-transparent hover:border-danger/20 transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete current project
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -496,7 +552,78 @@ export function Shell({
         </main>
       </div>
 
-      {/* Modal: Create Project — focused 5-step flow */}
+      {/* Modal: Delete Project — explicit destructive confirmation */}
+      {isDeleteProjectModalOpen && selectedProject && (
+        <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-surface border border-danger/20 shadow-2xl overflow-hidden">
+            <div className="p-6 space-y-5">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-danger/10 text-danger flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-text-main">Delete project</h3>
+                  <p className="text-xs text-text-muted mt-1">This permanently removes the project and its DB-backed project data.</p>
+                </div>
+                <button
+                  onClick={resetDeleteModal}
+                  disabled={isDeletingProject}
+                  className="ml-auto text-text-muted hover:text-text-main p-1 rounded-md disabled:opacity-50"
+                  aria-label="Close delete dialog"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-danger/20 bg-danger/5 p-4 space-y-2">
+                <div className="text-[10px] uppercase tracking-wider font-bold text-danger">Destructive action</div>
+                <div className="text-sm font-semibold text-text-main">{selectedProject.name}</div>
+                <div className="text-[11px] text-text-muted font-mono">{selectedProject.id}</div>
+                <p className="text-xs text-text-muted leading-relaxed">
+                  Project State, evidence, AI execution history, meetings, visual revisions, and Excalidraw data will be removed. The reserved Unknown Context area is preserved.
+                </p>
+              </div>
+
+              <form onSubmit={handleDeleteProjectSubmit} className="space-y-3">
+                <label htmlFor="delete-project-confirmation" className="text-xs font-semibold text-text-main block">
+                  Type <span className="font-mono text-danger">DELETE</span> to continue
+                </label>
+                <input
+                  id="delete-project-confirmation"
+                  value={deleteProjectConfirmation}
+                  onChange={(e) => setDeleteProjectConfirmation(e.target.value)}
+                  placeholder="DELETE"
+                  autoComplete="off"
+                  autoFocus
+                  disabled={isDeletingProject}
+                  className="w-full px-3 py-2.5 text-xs rounded-lg bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-danger/40 focus:border-danger text-text-main placeholder:text-text-muted"
+                />
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={resetDeleteModal}
+                    disabled={isDeletingProject}
+                    className="px-3.5 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-lg hover:bg-canvas transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isDeletingProject || deleteProjectConfirmation.trim().toUpperCase() !== "DELETE"}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-danger hover:bg-danger/90 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {isDeletingProject ? "Deleting…" : "Delete project"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Create Project — focused 5-step flow */
       {isNewProjectModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl bg-surface border border-border shadow-2xl p-6 space-y-5">
