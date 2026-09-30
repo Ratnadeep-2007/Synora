@@ -63,7 +63,6 @@ class WhatsAppIntelligenceService:
         tenant_id: str = "default_tenant",
         continuity_override: Optional[str] = None,
         skip_visual: bool = False,
-        auto_apply_override: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         End-to-end processing of a WhatsApp group chat message.
@@ -157,18 +156,32 @@ class WhatsAppIntelligenceService:
                 outcome.unknown_item_id,
                 outcome.reason,
             )
+            # Zero-human-loop: the pipeline already auto-assigned the best
+            # candidate project (if one existed) and wrote the note to that
+            # project's board. Surface the assignment so the sender sees it.
+            auto_project = None
+            if outcome.project_id and outcome.project_id != "proj_unknown_context":
+                auto_project = db.query(Project).filter(Project.id == outcome.project_id).first()
             return {
                 "ok": True,
                 "processed": True,
-                "status": "unknown_context",
+                "status": "auto_assigned" if auto_project else "unknown_context",
                 "reason": outcome.reason,
-                "matched_project": None,
+                "matched_project": (
+                    {"id": auto_project.id, "name": auto_project.name}
+                    if auto_project
+                    else None
+                ),
                 "unknown_item_id": outcome.unknown_item_id,
                 "evidence_id": outcome.evidence_id,
                 "confidence": 0.0,
-                "excalidraw_updated": False,
+                "excalidraw_updated": bool(auto_project),
                 "multimodal": multimodal_meta or None,
-                "message": "Message preserved in Unknown Context for human review.",
+                "message": (
+                    f"Agent auto-assigned to project '{auto_project.name}' and updated its Excalidraw notes."
+                    if auto_project
+                    else "Message preserved on the Unknown Context board for the agent."
+                ),
             }
 
         if outcome.outcome == "ignored":
@@ -212,16 +225,9 @@ class WhatsAppIntelligenceService:
         matched_project = db.query(Project).filter(Project.id == project_id).first()
         confidence = 1.0
 
-        auto_apply = (
-            bool(auto_apply_override)
-            if auto_apply_override is not None
-            else bool(
-                payload.get(
-                    "auto_apply_diagram",
-                    getattr(settings, "AUTO_APPLY_VISUAL_UPDATES", False),
-                )
-            )
-        )
+        # Zero-human-loop: every routed message writes its note to the
+        # project's Excalidraw board automatically. No approvals, no gates.
+        auto_apply = True
 
         proposal = None
         diagram_res = None
@@ -245,15 +251,6 @@ class WhatsAppIntelligenceService:
             except Exception as exc:
                 logger.error(f"Error auto-applying Excalidraw diagram from WhatsApp: {exc}")
                 excalidraw_updated = False
-        elif not skip_visual:
-            # Visual changes are proposal-first when auto_apply is False:
-            # the living workspace is not mutated without human review.
-            proposal = self._propose_visual_update(
-                project_id=project_id,
-                db=db,
-                tenant_id=tenant_id,
-                reason=f"WhatsApp update from '{sender_name}' in group '{group_name}'",
-            )
 
         self.audit_service.record_event(
             action="whatsapp_group_message_processed",
@@ -273,14 +270,12 @@ class WhatsAppIntelligenceService:
         )
 
         msg_str = (
-            f"Routed to project '{matched_project.name if matched_project else project_id}'."
+            f"Agent auto-assigned project '{matched_project.name if matched_project else project_id}'."
         )
         if skip_visual:
             msg_str += " Visual update deferred until the current WhatsApp batch completes."
         if excalidraw_updated:
-            msg_str += " Excalidraw whiteboard automatically updated with new architecture diagram."
-        elif proposal:
-            msg_str += " Visual changes are pending human review."
+            msg_str += " Excalidraw notes created automatically."
 
         return {
             "ok": True,
@@ -344,14 +339,13 @@ class WhatsAppIntelligenceService:
                     tenant_id=tenant_id,
                     continuity_override=batch_context,
                     skip_visual=True,
-                    auto_apply_override=False,
                 )
                 results.append(result)
 
                 matched = result.get("matched_project") or {}
                 project_id = matched.get("id")
                 text = str(message.get("text") or message.get("caption") or "").strip()
-                if project_id and text and result.get("status") not in ("unknown_context", "ignored"):
+                if project_id and text and result.get("status") not in ("ignored",):
                     project_messages.setdefault(project_id, []).append(text)
                     evidence_id = result.get("evidence_id")
                     if evidence_id:
@@ -394,6 +388,10 @@ class WhatsAppIntelligenceService:
                     },
                 )
                 visual_updates += 1
+                proj = db.query(Project).filter(Project.id == project_id).first()
+                proj_name = proj.name if proj else project_id
+                logger.info("🎯 [WhatsApp Batch %s] Living visual architecture updated for Project: %s (%s)", batch_id, proj_name, project_id)
+                print(f"🎯 [WhatsApp Batch] Living visual architecture updated for Project: {proj_name} ({project_id})")
             except Exception as exc:
                 logger.exception(
                     "whatsapp_batch_visual_failed batch=%s project=%s",

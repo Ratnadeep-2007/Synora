@@ -313,9 +313,18 @@ export async function connectToWhatsApp(): Promise<WASocket> {
 
 
 
-        if (result && result.matched_project) {
-          console.log(`  🎯 Discovered Project: ${result.matched_project.name} (${result.matched_project.id})`);
-          console.log(`  🧠 Confidence: ${(result.confidence * 100).toFixed(1)}% | Reason: ${result.reasoning}`);
+        const matched = result?.matched_project || result?.items?.[0]?.matched_project;
+        if (matched) {
+          console.log(`  🎯 Target / Updated Project: ${matched.name} (${matched.id})`);
+          if (typeof result.confidence === "number") {
+            console.log(`  🧠 Confidence: ${(result.confidence * 100).toFixed(1)}% | Reason: ${result.reasoning || "Context match"}`);
+          } else if (result.items?.[0]?.confidence) {
+            console.log(`  🧠 Confidence: ${(result.items[0].confidence * 100).toFixed(1)}% | Reason: ${result.items[0].reasoning || "Context match"}`);
+          }
+          if (result.status === "queued") {
+            const batchId = result.items?.[0]?.batch_id || result.batch_id || "";
+            console.log(`  ⏳ Queued for batch processing window (batch: ${batchId || "active"})`);
+          }
           if (result.visual_proposal_pending) {
             console.log(`  💡 Visual Architecture Proposal created: ${result.proposal_id} (pending review in UI)`);
           }

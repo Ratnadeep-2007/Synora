@@ -5,9 +5,9 @@ import { Shell, NavTab, NotificationItem } from "@/components/layout/Shell";
 import { OverviewView } from "@/components/views/OverviewView";
 import { ProjectStateView } from "@/components/views/ProjectStateView";
 import { ArchitectureView } from "@/components/views/ArchitectureView";
+import { UnknownBoardView } from "@/components/views/UnknownBoardView";
 import { MeetingsView } from "@/components/views/MeetingsView";
 import { MeetingDetailView } from "@/components/views/MeetingDetailView";
-import { UnknownContextView } from "@/components/views/UnknownContextView";
 import { SourcesView } from "@/components/views/SourcesView";
 import { SettingsView } from "@/components/views/SettingsView";
 import { EvidenceDrawer } from "@/components/common/EvidenceDrawer";
@@ -46,6 +46,7 @@ export default function Home() {
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
+  const [unknownBoard, setUnknownBoard] = useState<any>(null);
 
   // Event-driven pipeline state
   const [meetSubscriptions, setMeetSubscriptions] = useState<any[]>([]);
@@ -101,6 +102,7 @@ export default function Home() {
         connsData,
         excalData,
         propsData,
+        unknownBoardData,
         subsData,
         eventsData,
         unassignedData,
@@ -116,6 +118,7 @@ export default function Home() {
         api.getSourceConnections(),
         api.getExcalidrawArtifact(activeId),
         api.getExcalidrawProposals(activeId),
+        api.getUnknownBoard().catch(() => null),
         api.listMeetSubscriptions().catch(() => []),
         api.listMeetEvents(undefined, 20).catch(() => []),
         api.listUnassignedMeetings(20).catch(() => []),
@@ -132,6 +135,7 @@ export default function Home() {
       if (connsData.status === "fulfilled") setConnections(connsData.value);
       if (excalData.status === "fulfilled") setExcalArtifact(excalData.value);
       if (propsData.status === "fulfilled") setExcalProposals(propsData.value);
+      if (unknownBoardData.status === "fulfilled") setUnknownBoard(unknownBoardData.value);
       if (subsData.status === "fulfilled") setMeetSubscriptions(subsData.value);
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
       if (unassignedData.status === "fulfilled") setUnassignedMeetings(unassignedData.value);
@@ -573,7 +577,17 @@ export default function Home() {
       notifications={notifications}
       onSelectProject={(pId) => {
         setSelectedMeetingId(null);
+        if (pId === currentProjectId) return;
         setCurrentProjectId(pId);
+        // REPLACE (never replicate): clear the old project's canvas state so
+        // the newly selected project's Excalidraw file paints fresh.
+        setState(null);
+        setExcalArtifact(null);
+        setExcalProposals([]);
+        setCandidates([]);
+        setAllEvidence([]);
+        setHistory([]);
+        refreshAll(pId);
       }}
       onCreateProject={handleCreateProject}
       onDeleteProject={handleDeleteProject}
@@ -609,15 +623,19 @@ export default function Home() {
         />
       )}
 
-      {/* Excalidraw Screen */}
+      {/* Excalidraw Screen — REPLACES per selected project, plus agent Unknown board */}
       {currentTab === "excalidraw" && (
         <ArchitectureView
+          key={currentProjectId || "no-project"}
+          projectId={currentProjectId}
+          projectName={activeProject?.name}
           artifact={excalArtifact}
           proposals={excalProposals}
           currentStateVersion={state?.current_version || 1}
           decisions={state?.decisions || []}
           syncStatus={excalSyncStatus}
           lastSyncAt={excalArtifact?.updated_at || null}
+          unknownBoard={unknownBoard}
           onRetrySync={handleSyncLivingWorkspace}
           onGenerateProposal={handleGenerateExcalProposal}
           onReviewProposal={handleReviewExcalProposal}
@@ -649,11 +667,6 @@ export default function Home() {
             onOpenEvidence={handleOpenEvidence}
           />
         ))}
-
-      {/* Unknown Context triage */}
-      {currentTab === "unknown-context" && (
-        <UnknownContextView projects={projects} onChanged={refreshAll} />
-      )}
 
       {/* Sources Screen */}
       {currentTab === "sources" && (

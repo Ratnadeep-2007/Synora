@@ -2,10 +2,17 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { AlertTriangle, Info, Layers, Maximize2, Minimize2, ZoomIn } from "lucide-react";
+import { AlertTriangle, Check, Eye, Info, Layers, Maximize2, Minimize2, PenTool, Save, ZoomIn } from "lucide-react";
 
 export function sanitizeExcalidrawElements(elements: any[]): any[] {
   if (!Array.isArray(elements)) return [];
+  const elementMap = new Map<string, any>();
+  for (const el of elements) {
+    if (el && typeof el === "object" && el.id) {
+      elementMap.set(String(el.id), el);
+    }
+  }
+
   return elements.map((el, idx) => {
     if (!el || typeof el !== "object") return null;
     const sanitized = { ...el };
@@ -15,16 +22,57 @@ export function sanitizeExcalidrawElements(elements: any[]): any[] {
     sanitized.y = Number.isFinite(Number(sanitized.y)) ? Number(sanitized.y) : 0;
 
     if (sanitized.type === "arrow" || sanitized.type === "line") {
-      sanitized.width = Number.isFinite(Number(sanitized.width)) ? Number(sanitized.width) : 0;
-      sanitized.height = Number.isFinite(Number(sanitized.height)) ? Number(sanitized.height) : 0;
-      sanitized.points =
-        Array.isArray(sanitized.points) && sanitized.points.length > 0
-          ? sanitized.points.map((point: any) =>
-              Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
-                ? [Number(point[0]), Number(point[1])]
-                : [0, 0]
-            )
-          : [[0, 0], [100, 0]];
+      const srcId = sanitized.startBinding?.elementId;
+      const dstId = sanitized.endBinding?.elementId;
+      const srcEl = srcId ? elementMap.get(srcId) : null;
+      const dstEl = dstId ? elementMap.get(dstId) : null;
+
+      if (srcEl && dstEl && (sanitized.x === 0 || !sanitized.points || sanitized.points.length < 2)) {
+        const srcX = Number(srcEl.x) || 0;
+        const srcY = Number(srcEl.y) || 0;
+        const srcW = Number(srcEl.width) || 220;
+        const srcH = Number(srcEl.height) || 92;
+        const dstX = Number(dstEl.x) || 0;
+        const dstY = Number(dstEl.y) || 0;
+        const dstW = Number(dstEl.width) || 220;
+        const dstH = Number(dstEl.height) || 92;
+
+        let startX = srcX + srcW;
+        let startY = srcY + srcH / 2;
+        let endX = dstX;
+        let endY = dstY + dstH / 2;
+
+        if (dstX < srcX - 10) {
+          startX = srcX + srcW / 2;
+          startY = srcY + srcH;
+          endX = dstX + dstW / 2;
+          endY = dstY;
+        } else if (Math.abs(dstX - srcX) <= 10) {
+          startX = srcX + srcW / 2;
+          startY = srcY + srcH;
+          endX = dstX + dstW / 2;
+          endY = dstY;
+        }
+
+        const dx = endX - startX;
+        const dy = endY - startY;
+        sanitized.x = startX;
+        sanitized.y = startY;
+        sanitized.width = Math.max(1, Math.abs(dx));
+        sanitized.height = Math.max(1, Math.abs(dy));
+        sanitized.points = [[0, 0], [dx, dy]];
+      } else {
+        sanitized.width = Number.isFinite(Number(sanitized.width)) ? Number(sanitized.width) : 0;
+        sanitized.height = Number.isFinite(Number(sanitized.height)) ? Number(sanitized.height) : 0;
+        sanitized.points =
+          Array.isArray(sanitized.points) && sanitized.points.length > 0
+            ? sanitized.points.map((point: any) =>
+                Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
+                  ? [Number(point[0]), Number(point[1])]
+                  : [0, 0]
+              )
+            : [[0, 0], [100, 0]];
+      }
     } else {
       const width = Number(sanitized.width);
       const height = Number(sanitized.height);
@@ -32,11 +80,65 @@ export function sanitizeExcalidrawElements(elements: any[]): any[] {
       sanitized.height = Number.isFinite(height) && height >= 0 ? height : sanitized.type === "text" ? 24 : 70;
     }
 
+    if (sanitized.type === "text") {
+      sanitized.text = typeof sanitized.text === "string" ? sanitized.text : "";
+      sanitized.originalText =
+        typeof sanitized.originalText === "string" && sanitized.originalText
+          ? sanitized.originalText
+          : sanitized.text;
+      sanitized.fontSize =
+        Number.isFinite(Number(sanitized.fontSize)) && Number(sanitized.fontSize) > 0
+          ? Number(sanitized.fontSize)
+          : 16;
+      sanitized.fontFamily =
+        Number.isFinite(Number(sanitized.fontFamily)) ? Number(sanitized.fontFamily) : 1;
+      sanitized.textAlign =
+        typeof sanitized.textAlign === "string" && sanitized.textAlign
+          ? sanitized.textAlign
+          : "center";
+      sanitized.verticalAlign =
+        typeof sanitized.verticalAlign === "string" && sanitized.verticalAlign
+          ? sanitized.verticalAlign
+          : "middle";
+      sanitized.lineHeight =
+        Number.isFinite(Number(sanitized.lineHeight)) && Number(sanitized.lineHeight) > 0
+          ? Number(sanitized.lineHeight)
+          : 1.25;
+      sanitized.baseline =
+        Number.isFinite(Number(sanitized.baseline)) ? Number(sanitized.baseline) : 14;
+      sanitized.autoResize =
+        sanitized.autoResize !== undefined ? Boolean(sanitized.autoResize) : true;
+    }
+
     sanitized.angle = Number.isFinite(Number(sanitized.angle)) ? Number(sanitized.angle) : 0;
     sanitized.roughness = Number.isFinite(Number(sanitized.roughness)) ? Number(sanitized.roughness) : 1;
     sanitized.opacity = Number.isFinite(Number(sanitized.opacity)) ? Number(sanitized.opacity) : 100;
     sanitized.isDeleted = Boolean(sanitized.isDeleted);
     sanitized.groupIds = Array.isArray(sanitized.groupIds) ? sanitized.groupIds : [];
+
+    // Critical Excalidraw rendering and hit-testing properties:
+    // Excalidraw's isTransparent() calls element.backgroundColor.length. If undefined, it crashes fatally.
+    sanitized.backgroundColor =
+      typeof sanitized.backgroundColor === "string" && sanitized.backgroundColor.trim()
+        ? sanitized.backgroundColor
+        : "transparent";
+    sanitized.strokeColor =
+      typeof sanitized.strokeColor === "string" && sanitized.strokeColor.trim()
+        ? sanitized.strokeColor
+        : "#1e1e1e";
+    sanitized.fillStyle =
+      typeof sanitized.fillStyle === "string" && sanitized.fillStyle.trim()
+        ? sanitized.fillStyle
+        : "solid";
+    sanitized.strokeWidth =
+      Number.isFinite(Number(sanitized.strokeWidth)) && Number(sanitized.strokeWidth) > 0
+        ? Number(sanitized.strokeWidth)
+        : 1;
+    sanitized.strokeStyle =
+      typeof sanitized.strokeStyle === "string" && sanitized.strokeStyle.trim()
+        ? sanitized.strokeStyle
+        : "solid";
+
     return sanitized;
   }).filter(Boolean);
 }
@@ -94,6 +196,7 @@ const Excalidraw = dynamic(
 );
 
 interface ExcalidrawCanvasProps {
+  projectId?: string | null;
   projectName?: string;
   version?: number;
   initialElements?: any[];
@@ -108,9 +211,11 @@ interface ExcalidrawCanvasProps {
   compareChangedIds?: string[];
   compareFromRevision?: number | null;
   compareToRevision?: number | null;
+  readOnly?: boolean;
 }
 
 export function ExcalidrawCanvas({
+  projectId,
   projectName = "Project",
   version = 1,
   initialElements = [],
@@ -121,8 +226,13 @@ export function ExcalidrawCanvas({
   compareChangedIds = [],
   compareFromRevision = null,
   compareToRevision = null,
+  readOnly = false,
+  onSaveCanvas,
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
+  const [isEditable, setIsEditable] = useState(!readOnly);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const visibleElements = useMemo(
@@ -132,7 +242,7 @@ export function ExcalidrawCanvas({
   const initialScene = useMemo(() => sanitizeExcalidrawElements(initialElements), [initialElements]);
 
   useEffect(() => {
-    if (!excalidrawAPI || !visibleElements.length) return;
+    if (!excalidrawAPI) return;
     try {
       excalidrawAPI.updateScene({
         elements: visibleElements,
@@ -154,13 +264,42 @@ export function ExcalidrawCanvas({
     } catch {}
   }, [excalidrawAPI]);
 
+  const handleSave = useCallback(async () => {
+    if (!excalidrawAPI || !onSaveCanvas) return;
+    try {
+      setIsSaving(true);
+      const elements = excalidrawAPI.getSceneElements();
+      const appState = excalidrawAPI.getAppState();
+      await onSaveCanvas({
+        name: projectName,
+        elements: (elements || []).filter((el: any) => !el.isDeleted),
+        app_state: {
+          viewBackgroundColor: appState?.viewBackgroundColor || "#ffffff",
+          gridSize: appState?.gridSize || 20,
+          theme: appState?.theme || "light",
+        },
+      });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2500);
+    } catch (error) {
+      console.error("Failed to save Excalidraw diagram:", error);
+      alert("Failed to save diagram changes. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [excalidrawAPI, onSaveCanvas, projectName]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && isFullscreen) setIsFullscreen(false);
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && onSaveCanvas) {
+        event.preventDefault();
+        handleSave();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isFullscreen]);
+  }, [isFullscreen, handleSave, onSaveCanvas]);
 
   return (
     <div
@@ -186,12 +325,59 @@ export function ExcalidrawCanvas({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           {compareMode && compareFromRevision !== null && compareToRevision !== null && (
             <span className="hidden rounded-full border border-border bg-canvas px-2 py-1 text-[10px] font-medium text-text-muted sm:inline">
               r{compareFromRevision} → r{compareToRevision} • +{compareAddedIds.length} • ~{compareChangedIds.length}
             </span>
           )}
+
+          {/* Mode toggle */}
+          <button
+            onClick={() => setIsEditable((val) => !val)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-muted hover:bg-canvas hover:text-text-main transition-colors"
+            title={isEditable ? "Switch to read-only preview mode" : "Switch to editable canvas mode"}
+          >
+            {isEditable ? (
+              <>
+                <Eye className="h-3.5 w-3.5 text-primary" />
+                <span className="hidden sm:inline">Preview</span>
+              </>
+            ) : (
+              <>
+                <PenTool className="h-3.5 w-3.5 text-primary" />
+                <span className="hidden sm:inline">Edit Mode</span>
+              </>
+            )}
+          </button>
+
+          {/* Save Diagram button */}
+          {onSaveCanvas && (
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary px-3 py-1.5 text-xs font-medium text-white shadow-xs hover:bg-primary-hover disabled:opacity-50 transition-colors"
+              title="Save diagram changes to database (Ctrl+S)"
+            >
+              {isSaving ? (
+                <>
+                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  <span>Saving…</span>
+                </>
+              ) : saveSuccess ? (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Saved!</span>
+                </>
+              ) : (
+                <>
+                  <Save className="h-3.5 w-3.5" />
+                  <span>Save</span>
+                </>
+              )}
+            </button>
+          )}
+
           <button
             onClick={center}
             className="rounded-lg border border-border bg-surface p-1.5 text-text-muted hover:bg-canvas hover:text-text-main"
@@ -213,7 +399,7 @@ export function ExcalidrawCanvas({
         <CanvasErrorBoundary onReset={center}>
           <Excalidraw
             excalidrawAPI={(api) => setExcalidrawAPI(api)}
-            viewModeEnabled={true}
+            viewModeEnabled={!isEditable}
             initialData={{
               elements: initialScene,
               appState: initialAppState || {
@@ -225,9 +411,9 @@ export function ExcalidrawCanvas({
             }}
             UIOptions={{
               canvasActions: {
-                changeViewBackgroundColor: false,
+                changeViewBackgroundColor: true,
                 clearCanvas: false,
-                export: false,
+                export: true,
                 loadScene: false,
                 saveToActiveFile: false,
                 toggleTheme: true,
@@ -240,9 +426,20 @@ export function ExcalidrawCanvas({
       <div className="flex items-center justify-between gap-4 border-t border-border bg-surface/60 px-4 py-2 text-[10px] text-text-muted">
         <span className="inline-flex items-center gap-1.5">
           <Info className="h-3 w-3 text-primary" />
-          Synora automatically updates this visual workspace from governed project information.
+          {isEditable
+            ? "Live editing enabled. Draw, add shapes, or modify components freely and click 'Save' (or Ctrl+S) to persist."
+            : "Synora automatically updates this visual workspace from governed project information."}
         </span>
-        <span className="hidden font-mono sm:inline">View only</span>
+        <span className="hidden font-mono sm:inline">
+          {isEditable ? (
+            <span className="inline-flex items-center gap-1.5 font-semibold text-primary">
+              <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+              Editable
+            </span>
+          ) : (
+            <span className="text-text-muted">View only</span>
+          )}
+        </span>
       </div>
     </div>
   );

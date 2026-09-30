@@ -60,6 +60,11 @@ def test_compiler_produces_valid_scene():
     again = ExcalidrawCompiler().compile(plan)
     assert [e["id"] for e in again] == [e["id"] for e in scene]
 
+    # Every element must have backgroundColor and strokeColor to satisfy Excalidraw's isTransparent() hit-testing.
+    for el in scene:
+        assert isinstance(el.get("backgroundColor"), str) and el["backgroundColor"], f"Missing backgroundColor in {el}"
+        assert isinstance(el.get("strokeColor"), str) and el["strokeColor"], f"Missing strokeColor in {el}"
+
 
 def test_compiler_rejects_empty_plan():
     with pytest.raises(ExcalidrawCompileError):

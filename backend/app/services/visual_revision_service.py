@@ -156,6 +156,24 @@ class VisualRevisionService:
 
         workspace.current_revision_id = revision.id
         workspace.updated_at = datetime.now(timezone.utc)
+
+        # Keep authoritative ExcalidrawArtifact in sync with latest visual revision
+        from app.models.excalidraw import ExcalidrawArtifact
+        artifact = (
+            db.query(ExcalidrawArtifact)
+            .filter(
+                ExcalidrawArtifact.project_id == project_id,
+                ExcalidrawArtifact.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if artifact:
+            artifact.elements_json = json.dumps(scene or [])
+            if app_state:
+                artifact.app_state_json = json.dumps(app_state)
+            artifact.version = max(artifact.version or 1, next_number)
+            artifact.updated_at = datetime.now(timezone.utc)
+
         db.commit()
         db.refresh(revision)
         logger.info(

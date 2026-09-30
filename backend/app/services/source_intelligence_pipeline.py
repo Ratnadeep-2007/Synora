@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.models.context_resolution import ContextDecision
+from app.core.config import settings
 from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID, Project
 from app.models.source_event import SourceEvent
 from app.schemas.context import ContextResolutionResult
@@ -292,7 +293,78 @@ class SourceIntelligencePipeline:
                 reason=context_result.reason,
             )
 
-        # Unknown Context: evidence preserved, candidates NOT made authoritative.
+        # Zero-human-loop: Auto-assign best candidate project if any exists.
+        # Only truly hard-to-classify content (no candidates or sub-threshold)
+        # enters Unknown Context.
+        suggestions = self.context_service.resolve_with_corpus(
+            text, corpus, det_signals, continuity_context, visual_context
+        )
+        candidate_pool = list(getattr(suggestions, "candidate_projects", []) or getattr(context_result, "candidate_projects", []) or [])
+        best = max(
+            candidate_pool,
+            key=lambda c: float(getattr(c, "confidence", 0.0) or 0.0),
+            default=None,
+        ) if candidate_pool else None
+        auto_floor = float(
+            getattr(settings, "CONTEXT_RESOLUTION_AUTO_ASSIGN_MIN_CONFIDENCE", 0.20)
+        )
+
+        if best is not None and float(getattr(best, "confidence", 0.0) or 0.0) >= auto_floor:
+            resolved_project_id = self._route(
+                ContextResolutionResult(
+                    decision=ContextDecision.RESOLVED.value,
+                    project_id=best.project_id,
+                    confidence=float(best.confidence),
+                    margin=0.0,
+                    signals=suggestions.signals,
+                    candidate_projects=candidate_pool,
+                    reason="; ".join(list(best.reasons or [])[:3]) or "Best candidate auto-assigned",
+                    requires_human_review=False,
+                ),
+                authorized,
+                authorized_project_ids,
+            )
+            if resolved_project_id:
+                if source_event.project_id != resolved_project_id:
+                    source_event.project_id = resolved_project_id
+                    evidence.project_id = resolved_project_id
+                    db.commit()
+                candidates = self.knowledge_service.persist_candidates(
+                    extraction, project_id=resolved_project_id, db=db, meeting_id=meeting_id
+                )
+                try:
+                    from app.services.excalidraw_service import ExcalidrawService
+
+                    ExcalidrawService().generate_diagram_from_text(
+                        project_id=resolved_project_id,
+                        text=text[:2000],
+                        db=db,
+                        tenant_id=tenant_id,
+                        auto_apply=True,
+                        actor_id=actor_id or "synora_agent",
+                        title="Agent note",
+                    )
+                except Exception as exc:
+                    logger.warning("auto_assign_visual_failed: %s", exc)
+                logger.info(
+                    "source_routing_auto_assigned: source=%s project_id=%s candidates=%d",
+                    source,
+                    resolved_project_id,
+                    len(candidates),
+                )
+                return SourceEventOutcome(
+                    outcome=RoutingOutcome.RESOLVED.value,
+                    source=source,
+                    source_event_id=source_event.source_event_id,
+                    project_id=resolved_project_id,
+                    evidence_id=evidence.id,
+                    meeting_id=meeting_id,
+                    candidates_created=len(candidates),
+                    ai_status=extraction.ai_status,
+                    reason=f"Auto-assigned to '{best.project_name or resolved_project_id}' ({best.confidence:.2f}) without human approval",
+                )
+
+        # Genuinely hard-to-classify: evidence preserved in Unknown Context.
         item = self.unknown_service.create_item(
             source=source,
             payload=payload,
@@ -306,10 +378,16 @@ class SourceIntelligencePipeline:
             occurred_at=occurred_at,
             context_resolution_id=None,
         )
-        suggestions = self.context_service.resolve_with_corpus(
-            text, corpus, det_signals, continuity_context, visual_context
-        )
         self._persist_suggestions(item.id, suggestions, db)
+        try:
+            from app.services.unknown_context_visual import (
+                render_unknown_context_board,
+            )
+
+            render_unknown_context_board(db, tenant_id=tenant_id)
+        except Exception as exc:
+            logger.warning("unknown_board_render_skipped: %s", exc)
+
         logger.info(
             "source_routing_unknown_context: source=%s item=%s decision=%s",
             source,
@@ -326,7 +404,7 @@ class SourceIntelligencePipeline:
             unknown_item_id=item.id,
             candidates_created=0,
             ai_status=extraction.ai_status,
-            reason=context_result.reason,
+            reason=context_result.reason or "No matching project context found; held in Unknown Context",
         )
 
     # ------------------------------------------------------------------
@@ -365,6 +443,86 @@ class SourceIntelligencePipeline:
 
         digest = hashlib.sha256(f"{source}:{text}".encode("utf-8")).hexdigest()[:24]
         return f"{source}_{digest}"
+
+    # ------------------------------------------------------------------
+    # Zero-human-loop auto-assignment
+    # ------------------------------------------------------------------
+    def _auto_assign_best_candidate(
+        self,
+        item_id: str,
+        text: str,
+        suggestions: ContextResolutionResult,
+        evidence_id: Optional[str],
+        source_event_id: Optional[str],
+        source: str,
+        actor_id: Optional[str],
+        db: Session,
+        tenant_id: str,
+    ) -> Optional[str]:
+        """Agent auto-assigns an Unknown Context item to its best project.
+
+        No human verification: the top candidate (if any exists) wins,
+        evidence is re-homed to that project, and the note lands on that
+        project's Excalidraw board. Items with zero candidates keep living
+        in Unknown Context, which has its own Excalidraw board.
+        """
+        candidates = list(getattr(suggestions, "candidate_projects", None) or [])
+        if not candidates:
+            try:
+                from app.services.unknown_context_visual import (
+                    render_unknown_context_board,
+                )
+
+                render_unknown_context_board(db, tenant_id=tenant_id)
+            except Exception as exc:
+                logger.warning("unknown_board_render_skipped: %s", exc)
+            return None
+
+        best = max(candidates, key=lambda c: float(getattr(c, "confidence", 0.0) or 0.0))
+        target_id = getattr(best, "project_id", None)
+        if not target_id:
+            return None
+        try:
+            self.unknown_service.assign_to_project(
+                item_id, target_id, db, actor_id or "synora_agent", tenant_id
+            )
+        except Exception as exc:
+            logger.warning("auto_assign_failed: item=%s error=%s", item_id, exc)
+            return None
+
+        reasons = list(getattr(best, "reasons", None) or [])[:3]
+        note_lines = [
+            f"Auto-assigned note ({source}):",
+            (text or "")[:400],
+        ]
+        if reasons:
+            note_lines.append("Why this project: " + "; ".join(reasons))
+        note = "\n".join(note_lines)
+        try:
+            from app.services.excalidraw_service import ExcalidrawService
+
+            ExcalidrawService().generate_diagram_from_text(
+                project_id=target_id,
+                text=note,
+                db=db,
+                tenant_id=tenant_id,
+                auto_apply=True,
+                actor_id="synora_agent",
+                title="Agent note",
+            )
+        except Exception as exc:
+            logger.warning(
+                "auto_assign_visual_failed: item=%s project=%s error=%s",
+                item_id,
+                target_id,
+                exc,
+            )
+        logger.info(
+            "unknown_context_auto_assigned: item=%s project=%s",
+            item_id,
+            target_id,
+        )
+        return target_id
 
     def _persist_suggestions(
         self, item_id: str, resolution: ContextResolutionResult, db: Session

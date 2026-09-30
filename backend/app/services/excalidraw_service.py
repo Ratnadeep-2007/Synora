@@ -84,6 +84,25 @@ class ExcalidrawService:
 
         # Ensure the project's immutable visual revision history exists.
         self._ensure_visual_revision(artifact, db, tenant_id=tenant_id, name=name)
+
+        # Reconcile artifact elements with current visual revision if artifact is empty or behind
+        from app.services.visual_revision_service import VisualRevisionService
+        current_rev = VisualRevisionService(audit_service=self.audit_service).current_revision(project_id, db)
+        if current_rev and current_rev.scene_json:
+            try:
+                rev_elements = json.loads(current_rev.scene_json)
+                art_elements = json.loads(artifact.elements_json) if artifact.elements_json else []
+                if rev_elements and not art_elements:
+                    artifact.elements_json = current_rev.scene_json
+                    if current_rev.app_state_json:
+                        artifact.app_state_json = current_rev.app_state_json
+                    artifact.version = max(artifact.version, current_rev.revision_number)
+                    artifact.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    db.refresh(artifact)
+            except Exception as exc:
+                logger.warning(f"Failed to reconcile artifact with visual revision: {exc}")
+
         return artifact
 
     def _ensure_visual_revision(

@@ -282,13 +282,29 @@ async def whatsapp_webhook(
                 detail=f"WhatsApp batch queue error: {exc}",
             )
 
-    return {
+    primary_matched = None
+    primary_confidence = None
+    primary_reasoning = None
+    for item in queued:
+        if item.get("matched_project"):
+            primary_matched = item["matched_project"]
+            primary_confidence = item.get("confidence")
+            primary_reasoning = item.get("reasoning")
+            break
+
+    response_data: Dict[str, Any] = {
         "ok": True,
         "status": "queued",
         "enqueued": len(queued),
         "duplicates": duplicates,
         "items": queued,
     }
+    if primary_matched:
+        response_data["matched_project"] = primary_matched
+        response_data["confidence"] = primary_confidence
+        response_data["reasoning"] = primary_reasoning
+
+    return response_data
 
 
 @router.post("/whatsapp/simulate", summary="Simulate WhatsApp Group Chat Message")
@@ -307,7 +323,7 @@ def simulate_whatsapp_message(
         db=db,
         tenant_id=tenant_id,
     )
-    return {
+    res_payload = {
         "ok": True,
         "processed": False,
         "status": "queued",
@@ -316,6 +332,11 @@ def simulate_whatsapp_message(
         "processing_interval_seconds": settings.WHATSAPP_PROCESSING_INTERVAL_SECONDS,
         "message": "Simulated WhatsApp message queued for batch processing.",
     }
+    if result.get("matched_project"):
+        res_payload["matched_project"] = result["matched_project"]
+        res_payload["confidence"] = result.get("confidence")
+        res_payload["reasoning"] = result.get("reasoning")
+    return res_payload
 
 
 @router.post("/whatsapp/process-batches", summary="Process Due WhatsApp Batches")

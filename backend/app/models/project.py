@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 import uuid
 from typing import Any, Dict, List, Optional
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -152,6 +152,9 @@ class Project(Base):
     Synora has exactly one shared agent that operates inside a project context.
     """
     __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_projects_workspace_name"),
+    )
 
     id = Column(String(64), primary_key=True, default=generate_project_id)
     workspace_id = Column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False, default="ws_default")

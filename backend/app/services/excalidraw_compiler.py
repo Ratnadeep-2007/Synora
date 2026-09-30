@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 #: owns every visual property (colour, size, spacing, typography).
 NODE_STYLES: Dict[str, Dict[str, Any]] = {
     "client": {"background": "#e0f2fe", "stroke": "#0369a1"},
-    "service": {"background": "#ffffff", "stroke": "#173f35"},
+    "service": {"background": "#ffffff", "stroke": "#0f766e"},
     "datastore": {"background": "#fef3c7", "stroke": "#d97706"},
     "actor": {"background": "#ede9fe", "stroke": "#6d28d9"},
-    "decision": {"background": "#ecfdf5", "stroke": "#2f7154"},
+    "decision": {"background": "#ecfdf5", "stroke": "#16a34a"},
     "requirement": {"background": "#eef2ff", "stroke": "#4338ca"},
     "infrastructure": {"background": "#e0e7ff", "stroke": "#3730a3"},
     "group": {"background": "#f6f7f5", "stroke": "#68706a"},
-    "note": {"background": "#ffffff", "stroke": "#e7eae5"},
+    "note": {"background": "#fef9c3", "stroke": "#ca8a04"},
 }
 DEFAULT_STYLE = NODE_STYLES["service"]
 
@@ -78,20 +78,40 @@ class ExcalidrawCompiler:
                     "isDeleted": False,
                 }
             )
+
+            # Adaptive font and height for clean text rendering
+            is_long = len(node.label) > 22 or "\n" in node.label
+            font_sz = 13 if is_long or node.node_type == "note" else 15
+            txt_h = 36 if is_long else 24
+            txt_y = y + (NODE_HEIGHT - txt_h) / 2
+            txt_color = "#713f12" if node.node_type == "note" else "#1e1e1e"
+
             elements.append(
                 {
                     "id": text_id,
                     "type": "text",
                     "x": x + 12,
-                    "y": y + NODE_HEIGHT / 2 - 12,
+                    "y": txt_y,
                     "width": NODE_WIDTH - 24,
-                    "height": 24,
+                    "height": txt_h,
                     "text": node.label,
-                    "fontSize": 16,
+                    "originalText": node.label,
+                    "fontSize": font_sz,
                     "fontFamily": 1,
                     "textAlign": "center",
                     "verticalAlign": "middle",
                     "containerId": rect_id,
+                    "lineHeight": 1.25,
+                    "baseline": 12 if is_long else 14,
+                    "autoResize": True,
+                    "strokeColor": txt_color,
+                    "backgroundColor": "transparent",
+                    "fillStyle": "solid",
+                    "strokeWidth": 1,
+                    "strokeStyle": "solid",
+                    "roughness": 1,
+                    "opacity": 100,
+                    "angle": 0,
                     "groupIds": [],
                     "isDeleted": False,
                 }
@@ -107,9 +127,22 @@ class ExcalidrawCompiler:
                         "width": NODE_WIDTH - 24,
                         "height": 16,
                         "text": annotation,
+                        "originalText": annotation,
                         "fontSize": 11,
                         "fontFamily": 1,
                         "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "lineHeight": 1.25,
+                        "baseline": 10,
+                        "autoResize": True,
+                        "strokeColor": "#555555",
+                        "backgroundColor": "transparent",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "strokeStyle": "solid",
+                        "roughness": 1,
+                        "opacity": 100,
+                        "angle": 0,
                         "groupIds": [],
                         "isDeleted": False,
                     }
@@ -125,7 +158,117 @@ class ExcalidrawCompiler:
                     rel.target,
                 )
                 continue
-            elements.append(self._arrow(rel, src, dst, index))
+            src_pos = positions.get(rel.source)
+            dst_pos = positions.get(rel.target)
+            elements.append(self._arrow(rel, src, dst, index, src_pos, dst_pos))
+
+        # First-class architectural sticky notes from plan.notes
+        if plan.notes:
+            max_y = max(pos[1] for pos in positions.values())
+            notes_hdr_y = max_y + NODE_HEIGHT + 45
+            header_id = f"lbl_notes_hdr_{abs(hash(plan.title)) % 100000}"
+            elements.append(
+                {
+                    "id": header_id,
+                    "type": "text",
+                    "x": BASE_X,
+                    "y": notes_hdr_y,
+                    "width": 500,
+                    "height": 22,
+                    "text": "📌 ARCHITECTURAL NOTES & DIRECTIVES",
+                    "originalText": "📌 ARCHITECTURAL NOTES & DIRECTIVES",
+                    "fontSize": 13,
+                    "fontFamily": 1,
+                    "textAlign": "left",
+                    "verticalAlign": "top",
+                    "containerId": None,
+                    "lineHeight": 1.25,
+                    "baseline": 12,
+                    "autoResize": True,
+                    "strokeColor": "#854d0e",
+                    "backgroundColor": "transparent",
+                    "fillStyle": "solid",
+                    "strokeWidth": 1,
+                    "strokeStyle": "solid",
+                    "roughness": 1,
+                    "opacity": 100,
+                    "angle": 0,
+                    "groupIds": [],
+                    "isDeleted": False,
+                }
+            )
+
+            cards_start_y = notes_hdr_y + 32
+            NOTE_W = 320
+            NOTE_H = 110
+            NOTE_GAP_X = 35
+            NOTE_GAP_Y = 25
+            NOTES_PER_ROW = 3
+
+            for n_idx, note_text in enumerate(plan.notes[:6]):
+                col = n_idx % NOTES_PER_ROW
+                row = n_idx // NOTES_PER_ROW
+                nx = BASE_X + col * (NOTE_W + NOTE_GAP_X)
+                ny = cards_start_y + row * (NOTE_H + NOTE_GAP_Y)
+
+                clean_text = str(note_text).strip()
+                if not any(clean_text.startswith(p) for p in ("📌", "💡", "⚡", "📋", "⚠️", "✅")):
+                    clean_text = f"📌 {clean_text}"
+
+                card_id = f"sticky_note_{n_idx}"
+                text_id = f"sticky_text_{n_idx}"
+
+                elements.append(
+                    {
+                        "id": card_id,
+                        "type": "rectangle",
+                        "x": nx,
+                        "y": ny,
+                        "width": NOTE_W,
+                        "height": NOTE_H,
+                        "angle": 0,
+                        "strokeColor": "#ca8a04",
+                        "backgroundColor": "#fef9c3",
+                        "fillStyle": "solid",
+                        "strokeWidth": 2,
+                        "roughness": 1,
+                        "opacity": 100,
+                        "groupIds": ["architectural_notes"],
+                        "roundness": {"type": 3},
+                        "boundElements": [{"type": "text", "id": text_id}],
+                        "isDeleted": False,
+                    }
+                )
+                elements.append(
+                    {
+                        "id": text_id,
+                        "type": "text",
+                        "x": nx + 14,
+                        "y": ny + 12,
+                        "width": NOTE_W - 28,
+                        "height": NOTE_H - 24,
+                        "text": clean_text,
+                        "originalText": clean_text,
+                        "fontSize": 12,
+                        "fontFamily": 1,
+                        "textAlign": "left",
+                        "verticalAlign": "top",
+                        "containerId": card_id,
+                        "lineHeight": 1.35,
+                        "baseline": 12,
+                        "autoResize": True,
+                        "strokeColor": "#713f12",
+                        "backgroundColor": "transparent",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "strokeStyle": "solid",
+                        "roughness": 1,
+                        "opacity": 100,
+                        "angle": 0,
+                        "groupIds": ["architectural_notes"],
+                        "isDeleted": False,
+                    }
+                )
 
         self.validate_scene(elements)
         return elements
@@ -156,20 +299,56 @@ class ExcalidrawCompiler:
         source_element_id: str,
         target_element_id: str,
         index: int,
+        source_pos: Optional[Tuple[float, float]] = None,
+        target_pos: Optional[Tuple[float, float]] = None,
     ) -> Dict[str, Any]:
+        if source_pos and target_pos:
+            src_x, src_y = source_pos
+            dst_x, dst_y = target_pos
+            if dst_x > src_x + 10:
+                start_x = src_x + NODE_WIDTH
+                start_y = src_y + NODE_HEIGHT / 2
+                end_x = dst_x
+                end_y = dst_y + NODE_HEIGHT / 2
+            elif dst_x < src_x - 10:
+                start_x = src_x + NODE_WIDTH / 2
+                start_y = src_y + NODE_HEIGHT
+                end_x = dst_x + NODE_WIDTH / 2
+                end_y = dst_y
+            else:
+                start_x = src_x + NODE_WIDTH / 2
+                start_y = src_y + NODE_HEIGHT
+                end_x = dst_x + NODE_WIDTH / 2
+                end_y = dst_y
+            dx = end_x - start_x
+            dy = end_y - start_y
+            points = [[0, 0], [dx, dy]]
+            width = max(1, abs(dx))
+            height = max(1, abs(dy))
+        else:
+            start_x = 0
+            start_y = 0
+            width = NODE_WIDTH + H_GAP
+            height = 0
+            points = [[0, 0], [width, 0]]
+
         return {
             "id": f"edge_{index}_{rel.source}_{rel.target}",
             "type": "arrow",
-            "x": 0,
-            "y": 0,
-            "width": 0,
-            "height": 0,
-            "points": [[0, 0], [NODE_WIDTH + H_GAP, 0]],
+            "x": start_x,
+            "y": start_y,
+            "width": width,
+            "height": height,
+            "points": points,
             "strokeColor": "#173f35",
+            "backgroundColor": "transparent",
+            "fillStyle": "solid",
             "strokeWidth": 2,
             "strokeStyle": "dashed" if rel.style == "dashed" else "solid",
             "roughness": 1,
             "opacity": 100,
+            "angle": 0,
+            "groupIds": [],
             "startBinding": {"elementId": source_element_id, "focus": 0, "gap": 6},
             "endBinding": {"elementId": target_element_id, "focus": 0, "gap": 6},
             "endArrowhead": "arrow",

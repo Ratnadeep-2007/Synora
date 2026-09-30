@@ -6,14 +6,31 @@ import { ExcalidrawArtifact, ExcalidrawProposal } from "@/lib/types";
 import { api } from "@/lib/api";
 import { ExcalidrawCanvas } from "@/components/canvas/ExcalidrawCanvas";
 import { ExcalidrawSyncBar } from "@/components/common/ExcalidrawSyncBar";
+import { UnknownBoardView } from "@/components/views/UnknownBoardView";
 
 interface ArchitectureViewProps {
+  projectId?: string | null;
+  projectName?: string | null;
   artifact: ExcalidrawArtifact | null;
   proposals: ExcalidrawProposal[];
   currentStateVersion: number;
   decisions?: Array<{ id: string; text: string; date: string; evidence_ids?: string[]; approved_by?: string; detail?: string }>;
   syncStatus?: "synchronized" | "updating" | "pending" | "outdated" | "failed";
   lastSyncAt?: string | null;
+  unknownBoard?: {
+    version?: number;
+    elements?: any[];
+    app_state?: any;
+    pending_notes?: Array<{
+      item_id: string;
+      content: string;
+      sender: string;
+      source: string;
+      suggested_project: string;
+      reasons: string[];
+      created_at: string | null;
+    }>;
+  } | null;
   onRetrySync?: () => Promise<void>;
   onGenerateProposal: (stateVersion?: number) => Promise<void>;
   onReviewProposal: (proposalId: string, action: "approve" | "reject", reason?: string) => Promise<void>;
@@ -23,13 +40,17 @@ interface ArchitectureViewProps {
 }
 
 export function ArchitectureView({
+  projectId: propProjectId,
+  projectName,
   artifact,
   currentStateVersion,
   syncStatus = "synchronized",
   lastSyncAt = null,
+  unknownBoard = null,
   onRetrySync,
+  onIngestScene,
 }: ArchitectureViewProps) {
-  const projectId = artifact?.project_id;
+  const projectId = propProjectId || artifact?.project_id;
   const [revisionCount, setRevisionCount] = useState(0);
   const [currentRevision, setCurrentRevision] = useState<number | null>(null);
 
@@ -55,7 +76,9 @@ export function ArchitectureView({
               <BrainCircuit className="h-3.5 w-3.5" />
               AI-maintained workspace
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-text-main">Architecture</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-text-main">
+              Architecture{projectName ? ` — ${projectName}` : ""}
+            </h1>
             <p className="max-w-2xl text-sm text-text-muted">
               Synora turns current project knowledge into a living architecture diagram. The canvas is stored in the database.
             </p>
@@ -100,10 +123,11 @@ export function ArchitectureView({
             <PenTool className="h-4 w-4 text-primary" />
             <div>
               <h2 className="text-sm font-semibold text-text-main">
-                {artifact?.name || "System architecture"}
+                {projectName || artifact?.name || "System architecture"}
               </h2>
               <p className="text-[11px] text-text-muted">
                 {currentRevision ? "Current visual revision " + currentRevision : "Current visual workspace"}
+                {projectId ? ` • ${projectId}` : ""}
               </p>
             </div>
           </div>
@@ -115,16 +139,21 @@ export function ArchitectureView({
 
         <div className="p-2">
           <ExcalidrawCanvas
-            projectName={artifact?.name || "System Architecture"}
+            key={projectId || artifact?.id || "no-artifact"}
+            projectId={projectId}
+            projectName={projectName || artifact?.name || "System Architecture"}
             version={artifact?.version || 1}
             initialElements={artifact?.elements || []}
             initialAppState={artifact?.app_state}
             compareMode={false}
-            onSaveCanvas={undefined}
+            onSaveCanvas={onIngestScene}
             onExportJson={undefined}
           />
         </div>
       </section>
+
+      {/* Agent Unknown board — same Excalidraw page family, unassigned notes + suggested project */}
+      <UnknownBoardView board={unknownBoard} />
 
       <div className="flex items-center justify-center gap-2 text-[11px] text-text-muted">
         <Maximize2 className="h-3.5 w-3.5" />

@@ -95,11 +95,27 @@ class ProjectAgentService:
         sources: Optional[List[str]] = None,
     ) -> Project:
         """Retrieves or creates a Project, guaranteeing Project Agent provisioning."""
+        from sqlalchemy import func
+
         self.get_or_create_workspace(workspace_id, db)
 
+        # 1. Lookup by ID first
         proj = db.query(Project).filter(Project.id == project_id).first()
+
+        # 2. Check if a project with the same name already exists in workspace (deduplication)
+        clean_name = name.strip() if name else None
+        if not proj and clean_name:
+            proj = (
+                db.query(Project)
+                .filter(
+                    Project.workspace_id == workspace_id,
+                    func.lower(Project.name) == func.lower(clean_name),
+                )
+                .first()
+            )
+
         if not proj:
-            project_name = name or f"Project {project_id}"
+            project_name = clean_name or f"Project {project_id}"
             proj = Project(
                 id=project_id,
                 workspace_id=workspace_id,
@@ -109,11 +125,11 @@ class ProjectAgentService:
             db.add(proj)
             db.commit()
             db.refresh(proj)
-            logger.info(f"Created Project '{project_id}' in workspace '{workspace_id}'")
+            logger.info(f"Created Project '{proj.id}' ('{project_name}') in workspace '{workspace_id}'")
 
-        # Auto-provision Project Agent if missing
+        # Auto-provision Project Agent if missing using canonical project ID
         self.get_or_provision_project_agent(
-            project_id=project_id, db=db, workspace_id=workspace_id, sources=sources
+            project_id=proj.id, db=db, workspace_id=workspace_id, sources=sources
         )
         return proj
 
@@ -165,13 +181,26 @@ class ProjectAgentService:
         if not agent:
             # 1. Ensure Project record exists
             proj = db.query(Project).filter(Project.id == project_id).first()
+            clean_name = name.strip() if name else None
+            if not proj and clean_name:
+                from sqlalchemy import func
+                proj = (
+                    db.query(Project)
+                    .filter(
+                        Project.workspace_id == workspace_id,
+                        func.lower(Project.name) == func.lower(clean_name),
+                    )
+                    .first()
+                )
             if not proj:
-                proj_name = name or f"Project {project_id}"
+                proj_name = clean_name or f"Project {project_id}"
                 self.get_or_create_workspace(workspace_id, db)
                 proj = Project(id=project_id, workspace_id=workspace_id, name=proj_name)
                 db.add(proj)
                 db.commit()
                 db.refresh(proj)
+
+            project_id = proj.id
 
             # 2. Ensure Project State exists
             state = self.state_service.get_or_create_state(project_id, db)

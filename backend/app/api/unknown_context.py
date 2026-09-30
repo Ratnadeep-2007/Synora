@@ -102,6 +102,30 @@ async def get_unknown_suggestions(
     return service.format_item_read(item, db)
 
 
+@router.get(
+    "/board",
+    summary="Unknown Context living board (agent-maintained Excalidraw page)",
+)
+async def unknown_context_board(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """One Excalidraw page with notes of unassigned context + suggested project."""
+    from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+    from app.services.excalidraw_service import ExcalidrawService
+    from app.services.unknown_context_visual import pending_board_items
+
+    tenant = _tenant(current_user)
+    artifact = ExcalidrawService().get_or_create_artifact(
+        SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID, db, tenant_id=tenant, name="Unknown Context Board"
+    )
+    cards = pending_board_items(db, tenant_id=tenant)
+    return {
+        **ExcalidrawService().format_artifact_read(artifact).model_dump(),
+        "pending_notes": cards,
+    }
+
+
 @router.post(
     "/items/{item_id}/assign",
     response_model=UnknownContextActionResponse,

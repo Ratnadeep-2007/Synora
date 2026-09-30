@@ -102,6 +102,7 @@ class ContextIntelligenceService:
         if authorized_project_ids is not None:
             allowed = set(authorized_project_ids)
             projects = [p for p in projects if p.id in allowed]
+        projects.sort(key=lambda p: (getattr(p, "updated_at", None) or getattr(p, "created_at", None) or datetime.min), reverse=True)
         return projects
 
     def _is_authorized(self, project: Project, authorized_project_ids: Optional[List[str]]) -> bool:
@@ -197,7 +198,17 @@ class ContextIntelligenceService:
         """Build the bounded candidate corpus: prompt-safe, high-density project summaries."""
         corpus: List[Dict[str, Any]] = []
         evidence_limit = min(settings.CONTEXT_RESOLUTION_EVIDENCE_LIMIT, 3)
-        for project in projects:
+        seen_names = set()
+        deduped_projects = []
+        for p in projects:
+            norm_name = (p.name or "").strip().lower()
+            if norm_name and norm_name not in seen_names:
+                seen_names.add(norm_name)
+                deduped_projects.append(p)
+            elif not norm_name:
+                deduped_projects.append(p)
+
+        for project in deduped_projects:
             state = db.query(ProjectState).filter(ProjectState.project_id == project.id).first()
             sections: Dict[str, Any] = {}
             if state:
@@ -426,7 +437,123 @@ class ContextIntelligenceService:
                 )
             )
         candidates.sort(key=lambda c: c.confidence, reverse=True)
-        return candidates[: settings.CONTEXT_RESOLUTION_CANDIDATE_LIMIT], None, False
+        candidates = candidates[: settings.CONTEXT_RESOLUTION_CANDIDATE_LIMIT]
+
+        # Efficient-agent backstops (deterministic, no guessing):
+        # 1. If the model returned NO candidates at all, build one ranked
+        #    slate from lexical overlap so a clearly-topical project still
+        #    wins. Zero overlap everywhere -> stays Unknown.
+        # 2. If every score is weak, boost by overlap the same way.
+        if not candidates:
+            candidates = self._lexical_slate(text, corpus)
+        elif max(float(c.confidence) for c in candidates) < 0.35:
+            boosted = self._lexical_backstop(text, corpus, candidates)
+            if boosted:
+                candidates = boosted
+        return candidates, None, False
+
+    @staticmethod
+    def _corpus_terms(entry: Dict[str, Any]) -> set:
+        import re as _re
+
+        haystack = " ".join(
+            [
+                str(entry.get("name", "")),
+                str(entry.get("description", "")),
+                json.dumps(entry.get("state", {}), default=str),
+                json.dumps(entry.get("recent_evidence", []), default=str),
+            ]
+        ).lower()
+        words = set(_re.findall(r"[a-z0-9]{3,}", haystack))
+        stop = {
+            "the", "and", "for", "with", "that", "this", "from", "have", "has",
+            "will", "should", "could", "would", "what", "when", "where", "which",
+            "create", "make", "build", "need", "want", "please", "team",
+        }
+        return words - stop
+
+    @classmethod
+    def _lexical_slate(
+        cls,
+        text: str,
+        corpus: List[Dict[str, Any]],
+    ) -> List["CandidateProject"]:
+        """Rank every project by topical token overlap with the message."""
+        import re as _re
+
+        words = {w for w in _re.findall(r"[a-z0-9]{3,}", (text or "").lower())}
+        stop = {
+            "the", "and", "for", "with", "that", "this", "from", "have", "has",
+            "will", "should", "could", "would", "what", "when", "where", "which",
+            "create", "make", "build", "need", "want", "please", "team",
+        }
+        words -= stop
+        if not words:
+            return []
+        scored: List[tuple] = []
+        for entry in corpus:
+            overlap = len(words & cls._corpus_terms(entry))
+            if overlap > 0:
+                confidence = min(0.35 + 0.10 * overlap, 0.88)
+                scored.append(
+                    (
+                        overlap,
+                        CandidateProject(
+                            project_id=entry["project_id"],
+                            project_name=entry.get("name", entry["project_id"]),
+                            confidence=confidence,
+                            reasons=[f"Topical overlap with project context ({overlap} terms)"],
+                        ),
+                    )
+                )
+        scored.sort(key=lambda s: s[0], reverse=True)
+        return [c for _, c in scored[: settings.CONTEXT_RESOLUTION_CANDIDATE_LIMIT]]
+
+    @classmethod
+    def _lexical_backstop(
+        cls,
+        text: str,
+        corpus: List[Dict[str, Any]],
+        candidates: List["CandidateProject"],
+    ) -> List["CandidateProject"]:
+        """Deterministic token-overlap boost for weak semantic scores."""
+        import re as _re
+
+        words = {w for w in _re.findall(r"[a-z0-9]{3,}", (text or "").lower())}
+        words -= {
+            "the", "and", "for", "with", "that", "this", "from", "have", "has",
+            "will", "should", "could", "would", "what", "when", "where", "which",
+            "create", "make", "build", "need", "want", "please", "team",
+        }
+        if not words:
+            return candidates
+        scored: List[tuple] = []
+        for cand in candidates:
+            entry = next((c for c in corpus if c["project_id"] == cand.project_id), None)
+            overlap = len(words & cls._corpus_terms(entry)) if entry else 0
+            scored.append((overlap, cand))
+        best_overlap = max(s for s, _ in scored)
+        if best_overlap <= 0:
+            return candidates
+        out: List["CandidateProject"] = []
+        for overlap, cand in scored:
+            if overlap == best_overlap:
+                boost = min(0.15 + 0.05 * overlap, 0.45)
+                out.append(
+                    CandidateProject(
+                        project_id=cand.project_id,
+                        project_name=cand.project_name,
+                        confidence=min(1.0, float(cand.confidence) + boost),
+                        reasons=list(cand.reasons or []) + [f"Topical overlap with project context ({overlap} terms)"],
+                        supporting_evidence_ids=list(getattr(cand, "supporting_evidence_ids", []) or []),
+                        supporting_state_sections=list(getattr(cand, "supporting_state_sections", []) or []),
+                        conflicts=list(getattr(cand, "conflicts", []) or []),
+                    )
+                )
+            else:
+                out.append(cand)
+        out.sort(key=lambda c: float(c.confidence), reverse=True)
+        return out
 
     def _build_semantic_prompt(
         self,

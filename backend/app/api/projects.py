@@ -102,8 +102,34 @@ async def create_project(
     current_user: User = Depends(get_current_user),
 ):
     import uuid
+    from sqlalchemy import func
     from app.schemas.project_agent import PROJECT_SOURCE_IDS
     from app.services.project_agent_service import ProjectAgentService as _PAS
+
+    clean_name = (body.name or "").strip()
+    if not clean_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Project name cannot be empty.",
+        )
+
+    target_workspace = body.workspace_id or "ws_default"
+
+    # Enforce uniqueness: one project per name within workspace
+    existing = (
+        db.query(Project)
+        .filter(
+            Project.workspace_id == target_workspace,
+            func.lower(Project.name) == func.lower(clean_name),
+            Project.is_system.is_(False),
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A project with the name '{clean_name}' already exists (ID: {existing.id}). Each project must have a unique name.",
+        )
 
     sources = body.sources
     if sources is not None:
@@ -122,12 +148,12 @@ async def create_project(
     proj = project_agent_service.get_or_create_project(
         project_id=project_id,
         db=db,
-        workspace_id=body.workspace_id or "ws_default",
-        name=body.name,
+        workspace_id=target_workspace,
+        name=clean_name,
         description=body.description or "",
         sources=sources,
     )
-    agent = project_agent_service.get_or_provision_project_agent(project_id, db)
+    agent = project_agent_service.get_or_provision_project_agent(proj.id, db)
     return ProjectRead(
         id=proj.id,
         workspace_id=proj.workspace_id,

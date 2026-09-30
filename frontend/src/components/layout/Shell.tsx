@@ -6,7 +6,6 @@ import {
   Layers,
   PenTool,
   Video,
-  Inbox,
   Plug,
   Settings as SettingsIcon,
   Bell,
@@ -28,7 +27,6 @@ export type NavTab =
   | "state"
   | "excalidraw"
   | "meetings"
-  | "unknown-context"
   | "sources"
   | "settings";
 
@@ -72,7 +70,6 @@ const NAV_ITEMS: Array<{
   { id: "state", label: "Project State", icon: Layers },
   { id: "excalidraw", label: "Excalidraw", icon: PenTool },
   { id: "meetings", label: "Meetings", icon: Video },
-  { id: "unknown-context", label: "Unknown Context", icon: Inbox },
   { id: "sources", label: "Sources", icon: Plug },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -233,11 +230,6 @@ export function Shell({
                     <Icon className={`w-4 h-4 ${isActive ? "text-primary" : "text-text-muted"}`} />
                     <span>{item.label}</span>
                   </div>
-                  {item.id === "unknown-context" && unknownContextCount > 0 && (
-                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-warning/10 text-warning border-warning/20">
-                      {unknownContextCount}
-                    </span>
-                  )}
                   {item.id === "state" && (
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-canvas text-text-muted border border-border">
                       v{projectVersion}

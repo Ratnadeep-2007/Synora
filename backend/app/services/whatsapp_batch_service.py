@@ -97,13 +97,46 @@ class WhatsAppBatchService:
         db.commit()
         db.refresh(batch)
 
-        return {
+        # Pre-resolve project context so the ingestion log immediately reports which project is targeted
+        matched_project = None
+        confidence = None
+        reasoning = None
+        text = str(payload.get("text") or payload.get("caption") or "").strip()
+        if text:
+            try:
+                from app.services.context_intelligence import ContextIntelligenceService
+                from app.models.project import Project
+
+                resolver = ContextIntelligenceService()
+                res = resolver.resolve(
+                    source="whatsapp",
+                    payload=payload,
+                    db=db,
+                    tenant_id=tenant_id,
+                    record=False,
+                )
+                if res.project_id:
+                    proj = db.query(Project).filter(Project.id == res.project_id).first()
+                    if proj:
+                        matched_project = {"id": proj.id, "name": proj.name}
+                        confidence = res.confidence
+                        reasoning = res.reason
+            except Exception as exc:
+                logger.debug("WhatsApp enqueue project preview skipped: %s", exc)
+
+        result_dict: Dict[str, Any] = {
             "duplicate": False,
             "batch_id": batch.id,
             "message_id": message_id,
             "due_at": batch.due_at.isoformat(),
             "group_jid": group_jid,
         }
+        if matched_project:
+            result_dict["matched_project"] = matched_project
+            result_dict["confidence"] = confidence
+            result_dict["reasoning"] = reasoning
+
+        return result_dict
 
     def process_due_batches(
         self,
@@ -178,6 +211,34 @@ class WhatsAppBatchService:
                 db.commit()
                 processed += 1
                 summaries.append(result)
+
+                # Explicitly log and report which projects were mapped and updated
+                for r in result.get("results", []):
+                    matched = r.get("matched_project")
+                    if matched:
+                        logger.info(
+                            "🎯 [WhatsApp Batch %s] Message mapped to Project: %s (%s)",
+                            batch.id,
+                            matched.get("name"),
+                            matched.get("id"),
+                        )
+                        print(
+                            f"🎯 [WhatsApp Batch] Project Mapped: {matched.get('name')} ({matched.get('id')})"
+                        )
+
+                if result.get("visual_updates", 0) > 0:
+                    for r in result.get("results", []):
+                        matched = r.get("matched_project")
+                        if matched:
+                            logger.info(
+                                "🎨 [WhatsApp Batch %s] Excalidraw updated for Project: %s (%s)",
+                                batch.id,
+                                matched.get("name"),
+                                matched.get("id"),
+                            )
+                            print(
+                                f"🎨 [WhatsApp Batch] Excalidraw updated for Project: {matched.get('name')} ({matched.get('id')})"
+                            )
             except Exception as exc:
                 failed += 1
                 logger.exception("whatsapp_batch_failed batch=%s", batch.id)

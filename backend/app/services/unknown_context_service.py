@@ -350,6 +350,26 @@ class UnknownContextService:
     ) -> Project:
         from app.services.project_agent_service import ProjectAgentService
         import uuid
+        from sqlalchemy import func
+
+        clean_name = (name or "").strip()
+        if not clean_name:
+            raise UnknownContextError("Project name cannot be empty.")
+
+        existing = (
+            db.query(Project)
+            .filter(
+                Project.workspace_id == workspace_id,
+                func.lower(Project.name) == func.lower(clean_name),
+                Project.is_system.is_(False),
+            )
+            .first()
+        )
+        if existing:
+            raise UnknownContextError(
+                f"A project with the name '{clean_name}' already exists (ID: {existing.id}). "
+                f"Please choose a different name or assign the item to the existing project."
+            )
 
         item = self.get_item(item_id, db, tenant_id)
         project_id = f"proj_{uuid.uuid4().hex[:8]}"
@@ -357,7 +377,7 @@ class UnknownContextService:
             project_id=project_id,
             db=db,
             workspace_id=workspace_id,
-            name=name,
+            name=clean_name,
             description=description or f"Created from Unknown Context item {item.id}",
         )
         self._move_evidence(item, project.id, db)

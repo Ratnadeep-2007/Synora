@@ -143,19 +143,26 @@ class KnowledgeIntelligenceService:
 
         prompt = self._build_prompt(evidence_records, source_name)
         t0 = time.time()
+        batch = None
         try:
             batch = client.generate_structured(prompt, ExtractionBatchResult)
         except NotImplementedError:
             logger.warning("knowledge_intelligence_client_unsupported: source=%s", source_name)
-            return KnowledgeExtraction(
-                items=[],
-                ai_status=AiStatus.UNAVAILABLE.value,
-                model="none",
-                prompt_version="n/a",
-                input_evidence_ids=input_evidence_ids,
-            )
         except Exception as exc:
             logger.warning("knowledge_intelligence_extraction_failed: source=%s error=%s", source_name, exc)
+
+        # Fallback: if model extraction failed or returned no items, apply deterministic rules
+        if not batch or not getattr(batch, "items", None):
+            try:
+                rule_batch = DeterministicRuleLLMClient().generate_structured(prompt, ExtractionBatchResult)
+                if rule_batch and rule_batch.items:
+                    batch = rule_batch
+                    if ai_status == AiStatus.UNAVAILABLE.value:
+                        ai_status = AiStatus.DETERMINISTIC.value
+            except Exception as rule_exc:
+                logger.warning("knowledge_intelligence_rule_fallback_failed: %s", rule_exc)
+
+        if not batch:
             return KnowledgeExtraction(
                 items=[],
                 ai_status=AiStatus.UNAVAILABLE.value,

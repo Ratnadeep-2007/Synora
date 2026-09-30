@@ -88,12 +88,12 @@ def test_whatsapp_uses_shared_context_intelligence(db_session: Session):
     )
 
 
-def test_whatsapp_message_routes_and_proposes_without_auto_apply(db_session: Session):
+def test_whatsapp_message_routes_and_auto_applies(db_session: Session):
     """
-    A deterministically-resolved WhatsApp message:
+    A deterministically-resolved WhatsApp message (zero-human-loop):
     1. Resolves the target project through the shared engine
     2. Persists Evidence with provenance
-    3. Creates a PENDING visual proposal WITHOUT mutating the living workspace
+    3. Agent AUTOMATICALLY writes the note to that project's Excalidraw board
     """
     agent_service = ProjectAgentService()
     service = WhatsAppIntelligenceService()
@@ -130,20 +130,13 @@ def test_whatsapp_message_routes_and_proposes_without_auto_apply(db_session: Ses
     assert result["processed"] is True
     assert result["matched_project"]["id"] == claims_proj.id
 
-    # Consequential visual changes are proposal-first: never auto-applied.
-    assert result["excalidraw_updated"] is False
-    assert result["visual_proposal_pending"] is True
-    proposal = (
-        db_session.query(ExcalidrawProposal)
-        .filter(ExcalidrawProposal.id == result["proposal_id"])
-        .first()
-    )
-    assert proposal is not None
-    assert proposal.status == "pending"
+    # Zero-human-loop: the Agent writes the note to the board automatically.
+    assert result["excalidraw_updated"] is True
+    assert result["visual_proposal_pending"] is False
 
-    # The living workspace is unchanged until a human approves.
+    # The living workspace advanced with the new note.
     db_session.refresh(initial_artifact)
-    assert initial_artifact.version == initial_version
+    assert initial_artifact.version == initial_version + 1
 
     # Evidence was persisted with provenance against the resolved project.
     ev = db_session.query(Evidence).filter(Evidence.id == result["evidence_id"]).first()

@@ -175,16 +175,32 @@ class DeterministicRuleLLMClient(LLMClient):
                 )
                 continue
 
-            # Rule 6: Action Items
-            # "will write", "action item:", "assigned to", "by tomorrow"
-            if "will write" in lower_text or "action item:" in lower_text or "by tomorrow" in lower_text:
+            # Rule 6: Action Items & Task Directives
+            # "will write", "action item:", "assigned to", "by tomorrow", "create", "build", "implement", "add", "automate", etc.
+            task_match = re.search(
+                r"\b(create|build|implement|add|setup|set\s+up|integrate|automate|develop|fix|handle|write)\s+(?:an?\s+)?(.+)",
+                text,
+                re.IGNORECASE,
+            )
+            if (
+                "will write" in lower_text
+                or "action item:" in lower_text
+                or "by tomorrow" in lower_text
+                or task_match
+            ):
+                if task_match:
+                    action_verb = task_match.group(1).capitalize()
+                    task_target = re.sub(r"[.?!]+$", "", task_match.group(2).strip())
+                    task_title = f"{action_verb} {task_target[:70]}"
+                else:
+                    task_title = f"Action item for {speaker}"
                 items.append(
                     CandidateItemDTO(
                         category="action_item",
                         classification=ClassificationEnum.ACTION_ITEM,
-                        title=f"Action item for {speaker}",
+                        title=task_title,
                         content=text,
-                        confidence=0.85,
+                        confidence=0.90,
                         evidence_ids=[ev_id],
                     )
                 )

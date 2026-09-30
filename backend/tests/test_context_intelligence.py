@@ -278,6 +278,28 @@ def test_unknown_item_lifecycle_assign(db_session: Session):
     assert assigned.assigned_project_id == "proj_alpha"
 
 
+def test_unknown_item_create_project_duplicate_rejection(db_session: Session):
+    _project(db_session, "proj_existing", "Billing Engine")
+    unk = UnknownContextService(context_service=ContextIntelligenceService(llm_client=FakeSemanticClient([])))
+
+    item = unk.create_item(
+        source="whatsapp",
+        payload={"text": "message for new project"},
+        db=db_session,
+        source_event_id="evt_new_proj_item",
+    )
+
+    # Attempt to create project with same name -> raises UnknownContextError
+    with pytest.raises(UnknownContextError) as exc_info:
+        unk.create_project_from_item(
+            item_id=item.id,
+            name="  billing engine  ",
+            db=db_session,
+            actor_id="usr_test",
+        )
+    assert "already exists" in str(exc_info.value)
+
+
 # 8. WhatsApp and Meet use the same ContextIntelligenceService ----------------
 def test_whatsapp_and_meet_share_same_context_service(db_session: Session):
     from app.services.meet_event_worker import MeetEventWorker

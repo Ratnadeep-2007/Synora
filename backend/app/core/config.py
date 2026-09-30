@@ -58,11 +58,12 @@ class Settings(BaseSettings):
     GOOGLE_REFRESH_TOKEN: str = ""
 
     # Context Intelligence routing gate thresholds.
-    # A candidate must clear MIN_CONFIDENCE and beat the runner-up by
-    # MIN_MARGIN to be auto-resolved; otherwise the event is ambiguous/unknown
-    # and goes to Unknown Context for human review.
-    CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.72)
-    CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.15)
+    # The Agent auto-routes almost everything: only genuinely hard-to-classify
+    # content (nothing remotely plausible) stays in Unknown Context. A single
+    # weak-but-plausible candidate is enough for automatic assignment.
+    CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.35)
+    CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.05)
+    CONTEXT_RESOLUTION_AUTO_ASSIGN_MIN_CONFIDENCE: float = Field(default=0.20)
     CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
     AUTO_APPLY_VISUAL_UPDATES: bool = Field(default=False, description="Whether incoming messages auto-apply diagrams directly to Excalidraw")

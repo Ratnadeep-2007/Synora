@@ -382,3 +382,59 @@ def test_workspace_central_agent_api_endpoints(db_session: Session, client: Test
     assert disp_data["status"] == "success"
     assert disp_data["execution"]["agent_id"] == "tech_agent"
 
+
+def test_project_name_uniqueness_and_deduplication(db_session: Session, client: TestClient):
+    """
+    Validates that:
+    1. Creating a project with an existing name is rejected with HTTP 409 Conflict.
+    2. Name uniqueness is case-insensitive and trims whitespace.
+    3. Empty project names are rejected with HTTP 400 Bad Request.
+    4. Service layer get_or_create_project returns the existing Project rather than duplicating.
+    """
+    service = ProjectAgentService()
+
+    # 1. Create a project via API
+    resp = client.post(
+        "/projects",
+        json={"name": "Dinein Unique", "description": "Restaurant order management"},
+        headers={"X-User-ID": "usr_test_lead"},
+    )
+    assert resp.status_code == 200
+    first_id = resp.json()["id"]
+
+    # 2. Attempt duplicate creation with exact same name -> 409 Conflict
+    dup_resp = client.post(
+        "/projects",
+        json={"name": "Dinein Unique", "description": "Duplicate attempt"},
+        headers={"X-User-ID": "usr_test_lead"},
+    )
+    assert dup_resp.status_code == 409
+    assert "already exists" in dup_resp.json()["detail"]
+
+    # 3. Attempt duplicate creation with lowercase and whitespace -> 409 Conflict
+    case_resp = client.post(
+        "/projects",
+        json={"name": "  dinein unique  ", "description": "Case insensitive duplicate"},
+        headers={"X-User-ID": "usr_test_lead"},
+    )
+    assert case_resp.status_code == 409
+    assert "already exists" in case_resp.json()["detail"]
+
+    # 4. Attempt creation with empty name -> 400 Bad Request
+    empty_resp = client.post(
+        "/projects",
+        json={"name": "   ", "description": "Empty name"},
+        headers={"X-User-ID": "usr_test_lead"},
+    )
+    assert empty_resp.status_code == 400
+
+    # 5. Service layer get_or_create_project deduplication
+    matched_proj = service.get_or_create_project(
+        project_id="proj_some_new_random_id",
+        db=db_session,
+        workspace_id="ws_default",
+        name="dinein unique",
+    )
+    assert matched_proj.id == first_id
+
+

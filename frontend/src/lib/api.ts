@@ -238,6 +238,25 @@ export const api = {
     return request<UnknownContextItem[]>(`/unknown-context/items?${qs.toString()}`);
   },
 
+  getUnknownBoard: (): Promise<{
+    id: string;
+    project_id: string;
+    name: string;
+    version: number;
+    elements: any[];
+    app_state: any;
+    extracted_nodes: string[];
+    pending_notes: Array<{
+      item_id: string;
+      content: string;
+      sender: string;
+      source: string;
+      suggested_project: string;
+      reasons: string[];
+      created_at: string | null;
+    }>;
+  }> => request("/unknown-context/board"),
+
   getUnknownContextSummary: (): Promise<{ pending: number }> =>
     request<{ pending: number }>("/unknown-context/summary"),
 
