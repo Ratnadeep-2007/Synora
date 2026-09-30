@@ -18,9 +18,9 @@ def test_context_notes_stack_one_below_another():
             VisualRelationship(source="order", target="kds"),
         ],
         context_notes=[
-            "CONVERSATION\nWe should support table QR ordering.",
-            "CONVERSATION\nThe kitchen should receive orders immediately.",
-            "CONVERSATION\nPayment must happen before confirmation.",
+            "PURPOSE — Table QR ordering lets guests place orders directly from their table.",
+            "CURRENT STATE — Orders need immediate dispatch to the kitchen display.",
+            "CONSTRAINT — Payment confirmation is required before the order is finalized.",
         ],
     )
 
@@ -28,7 +28,7 @@ def test_context_notes_stack_one_below_another():
     cards = [
         e for e in elements
         if e.get("semantic_type") == "note"
-        and str(e.get("id", "")).startswith("conversation_note_")
+        and str(e.get("id", "")).startswith("context_note_")
     ]
 
     assert len(cards) == 3
