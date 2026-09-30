@@ -1,23 +1,7 @@
 "use client";
 
-import React, { useMemo } from "react";
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  Node,
-  Edge,
-  MarkerType,
-} from "@xyflow/react";
-import {
-  Layers,
-  History,
-  HelpCircle,
-  ShieldCheck,
-  CheckCircle2,
-  AlertCircle,
-  RotateCcw,
-} from "lucide-react";
+import React from "react";
+import { CheckCircle2, FileText, History, Layers3 } from "lucide-react";
 import { ProjectState, ProjectStateVersion } from "@/lib/types";
 
 interface ProjectStateViewProps {
@@ -27,311 +11,145 @@ interface ProjectStateViewProps {
   onOpenEvidence: (title: string, contextType: string, evidenceIds: string[]) => void;
 }
 
-export function ProjectStateView({
-  state,
-  history,
-  onRollback,
-  onOpenEvidence,
-}: ProjectStateViewProps) {
-  // Generate React Flow nodes & edges for "How this state is formed"
-  const { nodes, edges } = useMemo(() => {
-    const versionNum = state?.current_version || 1;
-
-    const stages = [
-      {
-        id: "evidence",
-        step: "Stage 01",
-        title: "Ingested Evidence",
-        subtitle: "Meet • WhatsApp • Uploads",
-        bg: "#FFFFFF",
-        border: "1px solid #E7EAE5",
-        badgeColor: "text-text-muted",
-      },
-      {
-        id: "agent",
-        step: "Stage 02",
-        title: "Synora Agent",
-        subtitle: "Unified Intelligence Layer",
-        bg: "#ECFDF5",
-        border: "2px solid #059669",
-        badgeColor: "text-primary font-semibold",
-      },
-      {
-        id: "guardrails",
-        step: "Stage 03",
-        title: "Deterministic Guardrails",
-        subtitle: "Schema & Conflict Gates",
-        bg: "#EFF6FF",
-        border: "1px solid #93C5FD",
-        badgeColor: "text-blue-600 font-semibold",
-      },
-      {
-        id: "state",
-        step: "Stage 04",
-        title: "Authoritative State",
-        subtitle: `PostgreSQL Record (v${versionNum})`,
-        bg: "#FEF3C7",
-        border: "2px solid #D97706",
-        badgeColor: "text-amber-700 font-semibold",
-      },
-    ];
-
-    const nodeItems: Node[] = stages.map((s, index) => ({
-      id: `node-${s.id}`,
-      position: { x: index * 200 + 20, y: 50 },
-      data: {
-        label: (
-          <div className="text-center p-1.5">
-            <div className={`text-[10px] uppercase font-mono tracking-wider ${s.badgeColor}`}>
-              {s.step}
-            </div>
-            <div className="font-semibold text-xs text-text-main mt-0.5">
-              {s.title}
-            </div>
-            <div className="text-[10px] text-text-muted mt-0.5 truncate">
-              {s.subtitle}
-            </div>
-          </div>
-        ),
-      },
-      style: {
-        background: s.bg,
-        border: s.border,
-        borderRadius: "8px",
-        width: 165,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-      },
-    }));
-
-    const edgeItems: Edge[] = [];
-    for (let i = 0; i < stages.length - 1; i++) {
-      const from = stages[i].id;
-      const to = stages[i + 1].id;
-      edgeItems.push({
-        id: `edge-${from}-${to}`,
-        source: `node-${from}`,
-        target: `node-${to}`,
-        animated: true,
-        style: { stroke: "#059669", strokeWidth: 1.5 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#059669",
-          width: 14,
-          height: 14,
-        },
-      });
-    }
-
-    return { nodes: nodeItems, edges: edgeItems };
-  }, [state?.current_version]);
+export function ProjectStateView({ state, history, onOpenEvidence }: ProjectStateViewProps) {
+  const version = state?.current_version ?? 1;
+  const requirements = state?.requirements || [];
+  const decisions = state?.decisions || [];
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-200">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight text-text-main">
-              Authoritative Project State
-            </h1>
-            <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded bg-primary-soft text-primary border border-primary/20">
-              v{state?.current_version || 1}
-            </span>
-          </div>
-          <p className="text-sm text-text-muted mt-1">
-            Single authoritative source of truth. Every transition is versioned and evidence-backed.
-          </p>
+    <div className="space-y-6">
+      <header className="flex flex-col gap-2">
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+          <Layers3 className="h-3.5 w-3.5 text-primary" />
+          Authoritative state
         </div>
-
-        <div className="text-xs font-mono text-text-muted bg-surface px-3 py-1.5 rounded-md border border-border">
-          Last Updated:{" "}
-          <strong className="text-text-main" suppressHydrationWarning>
-            {state?.updated_at ? new Date(state.updated_at).toLocaleString() : "Initial"}
-          </strong>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight text-text-main">Project State</h1>
+          <span className="rounded-md bg-primary-soft px-2 py-1 font-mono text-[11px] font-semibold text-primary">v{version}</span>
         </div>
-      </div>
-
-      {/* Vision */}
-      <div className="p-6 rounded-xl bg-surface border border-border shadow-xs">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">
-          Project Vision & Direction
-        </h3>
-        <p className="text-base text-text-main font-serif italic leading-relaxed">
-          "{state?.vision || "Build an evidence-backed software intelligence platform."}"
+        <p className="max-w-2xl text-sm text-text-muted">
+          The current source of truth produced from connected evidence and maintained automatically by Synora.
         </p>
-      </div>
+      </header>
 
-      {/* State Formation Flow Visualization */}
-      <div className="p-6 rounded-xl bg-surface border border-border shadow-xs space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-border">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-primary" />
+      <section className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+        <div className="grid lg:grid-cols-[1.25fr_0.75fr]">
+          <div className="p-5 lg:border-r lg:border-border">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-muted">Vision</div>
+            <p className="mt-3 text-base leading-7 text-text-main">
+              {state?.vision || "No project vision recorded yet."}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 p-5">
+            <div className="rounded-xl border border-border bg-canvas p-4">
+              <div className="text-xl font-semibold text-text-main">{requirements.length}</div>
+              <div className="mt-1 text-[11px] text-text-muted">Requirements</div>
+            </div>
+            <div className="rounded-xl border border-border bg-canvas p-4">
+              <div className="text-xl font-semibold text-text-main">{decisions.length}</div>
+              <div className="mt-1 text-[11px] text-text-muted">Decisions</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-border px-5 py-4">
+            <CheckCircle2 className="h-4 w-4 text-success" />
             <div>
-              <h3 className="text-sm font-semibold text-text-main uppercase tracking-wider">
-                How this state is formed
-              </h3>
-              <p className="text-[11px] text-text-muted mt-0.5">
-                Evidence is reasoned by Synora Agent, verified through deterministic guardrails, and committed to PostgreSQL.
-              </p>
+              <h2 className="text-sm font-semibold text-text-main">Requirements</h2>
+              <p className="text-[11px] text-text-muted">{requirements.length} confirmed</p>
             </div>
           </div>
-          <span className="text-xs text-text-muted font-mono">
-            4 Verified Stages
-          </span>
-        </div>
-
-        {/* React Flow Canvas */}
-        <div className="h-44 w-full bg-canvas/60 rounded-lg border border-border overflow-hidden relative">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            fitView
-            proOptions={{ hideAttribution: true }}
-            nodesDraggable={false}
-          >
-            <Background gap={16} size={1} color="#E7EAE5" />
-            <Controls showInteractive={false} position="bottom-right" />
-          </ReactFlow>
-        </div>
-      </div>
-
-      {/* Two Column: Requirements & Decisions */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Authoritative Requirements */}
-        <div className="p-6 rounded-xl bg-surface border border-border shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <h3 className="text-sm font-semibold text-text-main uppercase tracking-wider">
-                Confirmed Requirements ({state?.requirements?.length || 0})
-              </h3>
-              <span className="text-xs text-text-muted">Evidence Provenance</span>
-            </div>
-
-            <div className="divide-y divide-border/60 mt-3 space-y-1">
-              {!state?.requirements || state.requirements.length === 0 ? (
-                <div className="py-6 text-center text-xs text-text-muted">
-                  No explicit requirements persisted yet.
-                </div>
-              ) : (
-                state.requirements.map((req, idx) => (
-                  <div key={req.id || idx} className="py-3 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="text-xs font-semibold text-text-main">{req.title}</div>
-                      <div className="text-xs text-text-muted mt-0.5 leading-relaxed">{req.content}</div>
-                    </div>
+          <div className="divide-y divide-border">
+            {requirements.length === 0 ? (
+              <div className="px-5 py-8 text-xs text-text-muted">No confirmed requirements yet.</div>
+            ) : (
+              requirements.slice(0, 5).map((item, index) => (
+                <div key={item.id || index} className="px-5 py-3.5">
+                  <div className="text-xs font-semibold text-text-main">{item.title}</div>
+                  <div className="mt-1 text-xs leading-5 text-text-muted line-clamp-2">{item.content}</div>
+                  {(item.evidence_ids || []).length > 0 && (
                     <button
-                      onClick={() =>
-                        onOpenEvidence(req.title, "Requirement", req.evidence_ids || [])
-                      }
-                      className="px-2 py-1 rounded text-[11px] font-semibold text-primary bg-primary-soft hover:bg-primary/20 border border-primary/20 shrink-0 transition-colors"
+                      onClick={() => onOpenEvidence(item.title, "Requirement", item.evidence_ids || [])}
+                      className="mt-2 text-[11px] font-semibold text-primary hover:underline"
                     >
-                      Why?
+                      View evidence
                     </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Authoritative Decisions */}
-        <div className="p-6 rounded-xl bg-surface border border-border shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <h3 className="text-sm font-semibold text-text-main uppercase tracking-wider">
-                Authoritative Decisions ({state?.decisions?.length || 0})
-              </h3>
-              <span className="text-xs text-text-muted">Audit Records</span>
-            </div>
-
-            <div className="divide-y divide-border/60 mt-3 space-y-1">
-              {!state?.decisions || state.decisions.length === 0 ? (
-                <div className="py-6 text-center text-xs text-text-muted">
-                  No confirmed decisions recorded yet.
+                  )}
                 </div>
-              ) : (
-                state.decisions.map((dec, idx) => (
-                  <div key={dec.id || idx} className="py-3 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="text-xs font-semibold text-text-main">{dec.text}</div>
-                      <div className="text-[11px] text-text-muted mt-0.5">
-                        Approved by: <strong>{dec.approved_by || "Human Reviewer"}</strong> • {dec.date}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() =>
-                        onOpenEvidence(dec.text, "Decision", dec.evidence_ids || [])
-                      }
-                      className="px-2 py-1 rounded text-[11px] font-semibold text-primary bg-primary-soft hover:bg-primary/20 border border-primary/20 shrink-0 transition-colors"
-                    >
-                      Why?
-                    </button>
-                  </div>
-                ))
-              )}
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-border px-5 py-4">
+            <FileText className="h-4 w-4 text-primary" />
+            <div>
+              <h2 className="text-sm font-semibold text-text-main">Decisions</h2>
+              <p className="text-[11px] text-text-muted">{decisions.length} recorded</p>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* State Version History & Rollback */}
-      <div className="p-6 rounded-xl bg-surface border border-border shadow-xs space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-border">
-          <div className="flex items-center gap-2">
-            <History className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-text-main uppercase tracking-wider">
-              Immutable Version History & Rollback
-            </h3>
+          <div className="divide-y divide-border">
+            {decisions.length === 0 ? (
+              <div className="px-5 py-8 text-xs text-text-muted">No decisions yet.</div>
+            ) : (
+              decisions.slice(0, 5).map((item, index) => (
+                <div key={item.id || index} className="px-5 py-3.5">
+                  <div className="text-xs font-semibold leading-5 text-text-main">{item.text}</div>
+                  <div className="mt-1 text-[11px] text-text-muted">
+                    {item.approved_by || "Recorded"}{item.date ? " • " + item.date : ""}
+                  </div>
+                  {(item.evidence_ids || []).length > 0 && (
+                    <button
+                      onClick={() => onOpenEvidence(item.text, "Decision", item.evidence_ids || [])}
+                      className="mt-2 text-[11px] font-semibold text-primary hover:underline"
+                    >
+                      View evidence
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
           </div>
-          <span className="text-xs text-text-muted">Tamper-Evident Audit Trail</span>
         </div>
+      </section>
 
-        <div className="space-y-3">
+      <section className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-border px-5 py-4">
+          <History className="h-4 w-4 text-primary" />
+          <div>
+            <h2 className="text-sm font-semibold text-text-main">Version history</h2>
+            <p className="text-[11px] text-text-muted">Immutable snapshots • {history.length || 1} recorded</p>
+          </div>
+        </div>
+        <div className="divide-y divide-border">
           {history.length === 0 ? (
-            <div className="py-4 text-center text-xs text-text-muted">
-              Only initial version recorded.
-            </div>
+            <div className="px-5 py-8 text-xs text-text-muted">Initial version only.</div>
           ) : (
-            history.map((ver) => {
-              const isCurrent = ver.version_number === state?.current_version;
-              return (
-                <div
-                  key={ver.id}
-                  className="flex items-center justify-between p-3 rounded-lg border border-border bg-canvas/50 text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono font-bold text-primary px-2 py-0.5 rounded bg-primary-soft border border-primary/20">
-                      v{ver.version_number}
+            history.slice(0, 6).map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between gap-4 px-5 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-canvas px-2 py-0.5 font-mono text-[10px] font-semibold text-primary">
+                      v{entry.version_number}
                     </span>
-                    <div>
-                      <div className="font-semibold text-text-main">{ver.reason}</div>
-                      <div className="text-[11px] text-text-muted" suppressHydrationWarning>
-                        Created by {ver.actor_id} • {new Date(ver.created_at).toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    {isCurrent ? (
-                      <span className="text-[11px] font-semibold text-success px-2 py-1 rounded bg-success/10 border border-success/20">
-                        Current Active
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => onRollback(ver.version_number)}
-                        className="flex items-center gap-1 px-2.5 py-1 text-xs text-text-muted hover:text-text-main border border-border rounded bg-surface hover:bg-canvas transition-colors"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Rollback to v{ver.version_number}</span>
-                      </button>
+                    {entry.version_number === version && (
+                      <span className="text-[10px] font-semibold text-success">Current</span>
                     )}
                   </div>
+                  <div className="mt-1 truncate text-xs text-text-main">{entry.reason}</div>
                 </div>
-              );
-            })
+                <span className="shrink-0 text-[10px] font-mono text-text-muted">
+                  {new Date(entry.created_at).toLocaleDateString()}
+                </span>
+              </div>
+            ))
           )}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
