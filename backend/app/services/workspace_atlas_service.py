@@ -21,8 +21,11 @@ SYSTEM_WORKSPACE_ATLAS_PROJECT_ID = "proj_workspace_atlas"
 
 # Logical canvas units. Excalidraw is infinite; these constants define the
 # workspace's stable horizontal "columns" while allowing unlimited vertical growth.
-COLUMN_WIDTH = 1420
-COLUMN_GUTTER = 120
+CM = 37.7952755906  # Excalidraw logical units per CSS px-equivalent centimetre
+COLUMN_WIDTH_CM = 36.0
+COLUMN_GUTTER_CM = 3.0
+COLUMN_WIDTH = int(round(COLUMN_WIDTH_CM * CM))
+COLUMN_GUTTER = int(round(COLUMN_GUTTER_CM * CM))
 ATLAS_PADDING_X = 80
 ATLAS_PADDING_Y = 60
 
@@ -168,6 +171,8 @@ class WorkspaceAtlasService:
             "layout": {
                 "column_width": COLUMN_WIDTH,
                 "column_gutter": COLUMN_GUTTER,
+                "column_width_cm": COLUMN_WIDTH_CM,
+                "column_gutter_cm": COLUMN_GUTTER_CM,
                 "padding_x": ATLAS_PADDING_X,
                 "project_columns": len(projects),
                 "unknown_context_column": 0,
