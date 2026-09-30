@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI, Request, status
@@ -45,9 +46,37 @@ async def lifespan(app: FastAPI):
             "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env."
         )
 
+    # Start WhatsApp background batch worker
+    stop_event = asyncio.Event()
+
+    async def _batch_worker():
+        from app.core.database import SessionLocal
+        from app.services.whatsapp_batch_service import WhatsAppBatchService
+        service = WhatsAppBatchService()
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(settings.WHATSAPP_BATCH_POLL_SECONDS or 5)
+                db = SessionLocal()
+                try:
+                    service.process_due_batches(db=db, tenant_id="default_tenant", force=False)
+                finally:
+                    db.close()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error(f"WhatsApp background batch worker error: {exc}")
+
+    worker_task = asyncio.create_task(_batch_worker())
+
     yield
 
     logger.info("Shutting down Synesis Backend...")
+    stop_event.set()
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(
