@@ -780,7 +780,7 @@ class WorkspaceAtlasService:
         return {
             "category": category,
             "title": str(title)[:70],
-            "content": str(content)[:180],
+            "content": str(content)[:120],
             "evidence_ids": evidence_ids[:4] if isinstance(evidence_ids, list) else [],
         }
 
@@ -1131,7 +1131,7 @@ class WorkspaceAtlasService:
             "verticalAlign": "top",
             "lineHeight": 1.25,
             "baseline": max(10, int(font_size)),
-            "autoResize": True,
+            "autoResize": False,
             "strokeColor": stroke_color,
             "backgroundColor": "transparent",
             "fillStyle": "solid",
