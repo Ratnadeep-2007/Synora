@@ -350,7 +350,17 @@ class ExcalidrawService:
         db.add(proposal)
         db.flush()
 
-        if auto_apply:
+        should_auto_apply = (
+            auto_apply
+            and patch.safety_classification == PatchSafetyClassification.SAFE_AUTO_APPLY
+        )
+        if auto_apply and not should_auto_apply:
+            proposal.reason = (
+                proposal.reason
+                + " [Deferred: semantic patch requires review before applying.]"
+            )
+
+        if should_auto_apply:
             revision = patch_service.apply_patch(
                 project_id=project_id,
                 patch=patch,
