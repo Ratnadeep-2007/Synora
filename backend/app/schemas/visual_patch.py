@@ -39,6 +39,8 @@ class VisualNoteCategory(str, Enum):
     INTEGRATION = "INTEGRATION"
     OPEN_QUESTION = "OPEN_QUESTION"
     ARCHITECTURE_PRINCIPLE = "ARCHITECTURE_PRINCIPLE"
+    PROJECT_CONTEXT = "PROJECT_CONTEXT"
+    # Kept for backward compatibility with older stored patches.
     CONVERSATION = "CONVERSATION"
 
 
