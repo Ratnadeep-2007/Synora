@@ -289,7 +289,6 @@ class VisualPlanService:
                 "parts": [{"text": system_instruction}]
             },
             "generationConfig": {
-                "temperature": 0.2,
                 "responseMimeType": "application/json",
             },
         }
