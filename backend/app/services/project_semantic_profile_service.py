@@ -79,6 +79,13 @@ class ProjectSemanticProfileService:
             .first()
         )
         if profile:
+            state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
+            current_state_version = int(state.current_version) if state else 0
+            if current_state_version <= int(profile.state_version or 0):
+                return profile
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if project:
+                return self.rebuild_profile(project, db, tenant_id=tenant_id)
             return profile
 
         project = db.query(Project).filter(Project.id == project_id).first()
