@@ -601,6 +601,10 @@ class ExcalidrawService:
         planner = VisualPlanService()
         plan, ai_status = planner.build_plan_from_text(text=text, title=title)
 
+        # Every direct conversation remains visible as its own note card.
+        # This is intentionally separate from architectural summary notes.
+        plan.conversation_notes = [text.strip()[:650]] if text.strip() else []
+
         # 2. Compile to Excalidraw Elements
         compiler = ExcalidrawCompiler()
         compiled_elements = compiler.compile(plan)
