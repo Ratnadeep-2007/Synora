@@ -53,6 +53,7 @@ STYLE = {
     "action": {"stroke": "#166534", "background": "#f0fdf4", "text": "#14532d"},
     "risk": {"stroke": "#c2410c", "background": "#fff7ed", "text": "#9a3412"},
     "question": {"stroke": "#2563eb", "background": "#eff6ff", "text": "#1e40af"},
+    "assumption": {"stroke": "#64748b", "background": "#f8fafc", "text": "#334155"},
     "unknown": {"stroke": "#b45309", "background": "#fffbeb", "text": "#78350f"},
 }
 
@@ -466,6 +467,7 @@ class WorkspaceAtlasService:
         decs = self._json_list(state.decisions_json if state else "[]")
         questions = self._json_list(state.open_questions_json if state else "[]")
         constraints = self._json_list(state.constraints_json if state else "[]")
+        assumptions = self._json_list(state.assumptions_json if state else "[]")
 
         intent = self._project_intent(state)
         if intent:
@@ -491,7 +493,7 @@ class WorkspaceAtlasService:
                 ATLAS_PADDING_Y + 151,
                 COLUMN_WIDTH - 92,
                 18,
-                f"STATE v{state_version}   •   {len(reqs)} requirements   •   {len(decs)} decisions   •   {len(questions)} questions   •   {len(constraints)} constraints",
+                f"STATE v{state_version}   •   {len(reqs)} requirements   •   {len(decs)} decisions   •   {len(questions)} questions   •   {len(constraints)} constraints   •   {len(assumptions)} assumptions",
                 10,
                 "#66736a",
                 custom_data={"atlas": {"type": "project_metrics", "project_id": project.id}},
@@ -542,6 +544,7 @@ class WorkspaceAtlasService:
             decs=decs,
             questions=questions,
             constraints=constraints,
+            assumptions=assumptions,
         )
         for i, note in enumerate(notes[:8]):
             row = i // 2
@@ -774,17 +777,23 @@ class WorkspaceAtlasService:
         decs: List[Any],
         questions: List[Any],
         constraints: List[Any],
+        assumptions: Optional[List[Any]] = None,
     ) -> List[Dict[str, Any]]:
+        """Select a balanced set of context records for the visual note layer."""
         cards: List[Dict[str, Any]] = []
 
-        for item in decs[:3]:
+        # Keep the eight-note surface balanced so one category cannot dominate
+        # the human-readable context story.
+        for item in decs[:2]:
             cards.append(self._knowledge_item("DECISION", item))
-        for item in reqs[:3]:
+        for item in reqs[:2]:
             cards.append(self._knowledge_item("REQUIREMENT", item))
-        for item in questions[:1]:
-            cards.append(self._knowledge_item("OPEN QUESTION", item))
         for item in constraints[:1]:
             cards.append(self._knowledge_item("CONSTRAINT", item))
+        for item in (assumptions or [])[:2]:
+            cards.append(self._knowledge_item("ASSUMPTION", item))
+        for item in questions[:1]:
+            cards.append(self._knowledge_item("OPEN QUESTION", item))
         return cards
 
     def _knowledge_item(self, category: str, item: Any) -> Dict[str, Any]:
@@ -824,6 +833,7 @@ class WorkspaceAtlasService:
             "ACTION": "action",
             "CONSTRAINT": "risk",
             "OPEN QUESTION": "question",
+            "ASSUMPTION": "assumption",
         }.get(category, "decision")
         style = STYLE[style_key]
         key = f"{category}:{note['title']}:{note['content']}"
@@ -980,6 +990,13 @@ class WorkspaceAtlasService:
                 {"label": "RESPONSE", "detail": "Design around it"},
                 {"label": "IMPACT", "detail": "Affected behaviour"},
             ]
+        if key == "ASSUMPTION":
+            return [
+                {"label": "PREMISE", "detail": "What we believe"},
+                {"label": "ASSUMPTION", "detail": anchor},
+                {"label": "DEPENDENCY", "detail": "What relies on it"},
+                {"label": "VERIFY", "detail": "Evidence to confirm"},
+            ]
         return [
             {"label": "CONTEXT", "detail": "Recorded evidence"},
             {"label": "KNOWLEDGE", "detail": anchor},
@@ -1109,6 +1126,7 @@ class WorkspaceAtlasService:
             "ACTION": "Read left → right: trigger → action → evidence → outcome.",
             "OPEN QUESTION": "Read left → right: known facts → gap → needed evidence → resolution.",
             "CONSTRAINT": "Read left → right: boundary → limit → design response → impact.",
+            "ASSUMPTION": "Read left → right: premise → assumption → dependency → verification.",
         }
         return captions.get(
             str(category).upper(),
