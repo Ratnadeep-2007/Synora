@@ -241,6 +241,13 @@ class VisualPatchService:
             operations = list(intent.operations or [])
 
             if not operations:
+                if intent.context_notes:
+                    return (
+                        [],
+                        [str(note).strip()[:650] for note in intent.context_notes[:5] if str(note).strip()],
+                        intent.safety_classification,
+                        intent.reason or "Context-only semantic update.",
+                    )
                 return (*self._deterministic_fallback_operations(text),)
 
             sanitized: List[VisualPatchOperation] = []
