@@ -460,7 +460,11 @@ class VisualMergeService:
         applied_ops: List[Dict[str, Any]],
         conflicts: List[str],
     ) -> None:
-        note_id = op.target_id if op.target_id.startswith("note_") else f"note_{op.target_id}"
+        note_id = (
+            op.target_id
+            if op.target_id.startswith(("note_", "conversation_note_"))
+            else f"note_{op.target_id}"
+        )
         text_id = f"txt_{note_id}"
         content = op.content or op.label or "Architectural note"
 
@@ -473,7 +477,7 @@ class VisualMergeService:
         style = NOTE_CATEGORY_STYLES.get(category, NOTE_CATEGORY_STYLES["DECISION"])
 
         note_w = 620 if category == "CONVERSATION" else 260
-        note_h = 108 if category == "CONVERSATION" else 80
+        note_h = 132 if category == "CONVERSATION" else 80
 
         if category == "CONVERSATION":
             # Conversation cards form a strict chronological vertical stream.
@@ -487,7 +491,10 @@ class VisualMergeService:
                     float(el.get("x") or 0) + float(el.get("width") or 0)
                     for el in element_map.values()
                     if isinstance(el, dict)
-                    and el.get("semantic_type") == "node"
+                    and (
+                        el.get("semantic_type") == "node"
+                        or str(el.get("id", "")).startswith("node_")
+                    )
                 ],
                 default=BASE_X + NODE_WIDTH,
             )
@@ -517,7 +524,7 @@ class VisualMergeService:
             "isDeleted": False,
         }
 
-        display_text = f"[{category}]\n{content[:90]}"
+        display_text = f"[{category}]\n{content[:480]}"
         text_element = {
             "id": text_id,
             "type": "text",
@@ -537,6 +544,8 @@ class VisualMergeService:
             "backgroundColor": "transparent",
             "fillStyle": "solid",
             "strokeWidth": 1,
+            "lineHeight": 1.35,
+            "autoResize": True,
             "isDeleted": False,
         }
 
