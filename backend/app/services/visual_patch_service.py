@@ -363,6 +363,8 @@ class VisualPatchService:
         actor_id: str = "system",
         tenant_id: str = "default_tenant",
         user_scene_override: Optional[List[Dict[str, Any]]] = None,
+        derived_from_project_state_version: Optional[int] = None,
+        proposal_id: Optional[str] = None,
     ) -> VisualRevision:
         """Apply patch to the current visual scene and commit a new immutable VisualRevision."""
         if patch.project_id != project_id:
@@ -448,6 +450,8 @@ class VisualPatchService:
             app_state=app_state,
             operations=applied_ops,
             evidence_ids=patch.evidence_ids,
+            derived_from_project_state_version=derived_from_project_state_version,
+            proposal_id=proposal_id,
             parent_revision_id=current_rev.id if current_rev else None,
             actor_id=actor_id,
             reason=patch.reason or f"Applied visual patch {patch.patch_id}",
