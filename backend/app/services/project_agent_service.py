@@ -638,3 +638,98 @@ class ProjectAgentService:
         db.commit()
         db.refresh(agent)
         return agent
+
+    # ------------------------------------------------------------------
+    # Enterprise Visual Patch & Canvas Tools
+    # ------------------------------------------------------------------
+    def get_current_revision(self, project_id: str, db: Session):
+        """Retrieve the latest immutable visual revision for the project."""
+        from app.services.visual_revision_service import VisualRevisionService
+        return VisualRevisionService().current_revision(project_id, db)
+
+    def inspect_canvas(self, project_id: str, db: Session) -> Dict[str, Any]:
+        """Inspect the current canvas elements, nodes, and metadata."""
+        rev = self.get_current_revision(project_id, db)
+        if not rev or not rev.scene_json:
+            return {"revision_number": 0, "elements_count": 0, "elements": []}
+        try:
+            elements = json.loads(rev.scene_json)
+        except Exception:
+            elements = []
+        return {
+            "revision_id": rev.id,
+            "revision_number": rev.revision_number,
+            "elements_count": len(elements),
+            "elements": elements,
+            "created_at": rev.created_at.isoformat() if rev.created_at else None,
+        }
+
+    def create_visual_patch(
+        self,
+        project_id: str,
+        text: str,
+        db: Session,
+        evidence_ids: Optional[List[str]] = None,
+        tenant_id: str = "default_tenant",
+    ):
+        """Synthesize a semantic VisualPatch from evidence text."""
+        from app.services.visual_patch_service import VisualPatchService
+        return VisualPatchService().generate_patch_from_evidence(
+            project_id=project_id,
+            text=text,
+            db=db,
+            evidence_ids=evidence_ids,
+            tenant_id=tenant_id,
+        )
+
+    def apply_visual_patch(
+        self,
+        project_id: str,
+        patch,
+        db: Session,
+        actor_id: str = "project_agent",
+        tenant_id: str = "default_tenant",
+        user_scene_override: Optional[List[Dict[str, Any]]] = None,
+    ):
+        """Apply a semantic visual patch through the 3-way merge engine."""
+        from app.services.visual_patch_service import VisualPatchService
+        return VisualPatchService().apply_patch(
+            project_id=project_id,
+            patch=patch,
+            db=db,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            user_scene_override=user_scene_override,
+        )
+
+    def compare_revision(
+        self,
+        project_id: str,
+        base_revision_id: str,
+        target_revision_id: str,
+        db: Session,
+    ) -> Dict[str, Any]:
+        """Compute visual diff between two revisions."""
+        from app.services.visual_revision_service import VisualRevisionService
+        return VisualRevisionService().diff(base_revision_id, target_revision_id, db)
+
+    def rollback_revision(
+        self,
+        project_id: str,
+        target_revision_id: str,
+        reason: str,
+        db: Session,
+        actor_id: str = "project_agent",
+        tenant_id: str = "default_tenant",
+    ):
+        """Roll back canvas state to a historical revision as an immutable forward commit."""
+        from app.services.visual_revision_service import VisualRevisionService
+        return VisualRevisionService().rollback(
+            project_id=project_id,
+            target_revision_id=target_revision_id,
+            reason=reason,
+            db=db,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+        )
+

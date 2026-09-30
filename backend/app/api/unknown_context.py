@@ -234,3 +234,148 @@ async def dismiss_unknown_item(
         message="Item dismissed.",
         item=service.format_item_read(item, db),
     )
+
+
+# ------------------------------------------------------------------
+# Cluster Management & Project Draft Endpoints
+# ------------------------------------------------------------------
+from pydantic import BaseModel
+from typing import Any, Dict
+
+
+class ClusterAssignRequest(BaseModel):
+    project_id: str
+
+
+class ProjectDraftRequest(BaseModel):
+    item_id: Optional[str] = None
+    cluster_id: Optional[str] = None
+
+
+class CreateProjectFromDraftRequest(BaseModel):
+    draft: Dict[str, Any]
+    workspace_id: Optional[str] = "ws_default"
+    cluster_id: Optional[str] = None
+    item_id: Optional[str] = None
+
+
+@router.get(
+    "/clusters",
+    summary="List or trigger embedding-based clusters of pending Unknown Context items",
+)
+async def list_or_create_clusters(
+    refresh: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.unknown_cluster_service import UnknownClusterService
+    from app.models.unknown_cluster import UnknownCluster
+
+    cluster_svc = UnknownClusterService()
+    tenant = _tenant(current_user)
+    if refresh:
+        clusters = cluster_svc.cluster_pending_items(db, tenant_id=tenant)
+    else:
+        clusters = (
+            db.query(UnknownCluster)
+            .filter(UnknownCluster.tenant_id == tenant, UnknownCluster.status == "pending")
+            .all()
+        )
+        if not clusters:
+            clusters = cluster_svc.cluster_pending_items(db, tenant_id=tenant)
+
+    return [
+        {
+            "id": c.id,
+            "title": c.title,
+            "summary": c.summary,
+            "item_count": c.item_count,
+            "item_ids": c.get_item_ids(),
+            "suggested_project_id": c.suggested_project_id,
+            "suggested_project_name": c.suggested_project_name,
+            "status": c.status,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        }
+        for c in clusters
+    ]
+
+
+@router.post(
+    "/clusters/{cluster_id}/assign",
+    summary="Atomically assign all items in a cluster to a project",
+)
+async def assign_cluster(
+    cluster_id: str,
+    body: ClusterAssignRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.unknown_cluster_service import UnknownClusterError, UnknownClusterService
+
+    tenant = _tenant(current_user)
+    try:
+        cluster = UnknownClusterService().assign_cluster(
+            cluster_id=cluster_id,
+            project_id=body.project_id,
+            db=db,
+            actor_id=current_user.id,
+            tenant_id=tenant,
+        )
+    except UnknownClusterError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return {
+        "success": True,
+        "message": f"Cluster '{cluster.id}' assigned to project '{body.project_id}'.",
+        "cluster_id": cluster.id,
+        "assigned_project_id": cluster.assigned_project_id,
+    }
+
+
+@router.post(
+    "/draft-project",
+    summary="Synthesize an intelligent project draft from an unknown item or cluster",
+)
+async def draft_project(
+    body: ProjectDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.unknown_cluster_service import UnknownClusterService
+
+    draft = UnknownClusterService().generate_project_draft(
+        item_id=body.item_id,
+        cluster_id=body.cluster_id,
+        db=db,
+    )
+    return draft
+
+
+@router.post(
+    "/create-project-from-draft",
+    summary="Create a full enterprise project from a draft with visual workspace and agent",
+)
+async def create_project_from_draft(
+    body: CreateProjectFromDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.unknown_cluster_service import UnknownClusterService
+
+    tenant = _tenant(current_user)
+    project = UnknownClusterService().create_project_from_draft(
+        draft=body.draft,
+        db=db,
+        actor_id=current_user.id,
+        tenant_id=tenant,
+        workspace_id=body.workspace_id or "ws_default",
+        cluster_id=body.cluster_id,
+        item_id=body.item_id,
+    )
+    return {
+        "success": True,
+        "message": f"Project '{project.name}' successfully created.",
+        "project_id": project.id,
+        "name": project.name,
+    }
+

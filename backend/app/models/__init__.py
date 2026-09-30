@@ -53,8 +53,17 @@ from app.models.visual_revision import (
 )
 from app.models.whatsapp_batch import WhatsAppBatch, WhatsAppBatchItem
 from app.models.project_domain import ProjectDomainProfile
+from app.models.project_semantic_profile import ProjectSemanticProfile
+from app.models.context_feedback import ContextFeedback
+from app.models.unknown_cluster import UnknownCluster
+from app.models.visual_patch import VisualPatchModel
 
 __all__ = [
+    "ProjectSemanticProfile",
+    "ContextFeedback",
+    "UnknownCluster",
+    "VisualPatchModel",
+
     "Workspace",
     "Project",
     "ProjectAgent",

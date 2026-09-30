@@ -40,10 +40,16 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"
 
-    # NVIDIA NIM is the required/default semantic inference provider.
-    # The provider abstraction can host other adapters later, but product
-    # operation and documentation target NVIDIA NIM + DeepSeek.
-    LLM_PROVIDER: str = Field(default="nvidia", description="nvidia | deterministic")
+    # Free runtime provider abstraction.
+    # Default: Google Gemini with gemini-3.5-flash-lite and gemini-embedding-2.
+    # Supported: gemini | groq | nvidia | deterministic
+    LLM_PROVIDER: str = Field(default="gemini", description="gemini | groq | nvidia | deterministic")
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
+
+    # Secondary failover providers: NVIDIA NIM & Groq
     NVIDIA_API_KEY: str = ""
     NVIDIA_MODEL: str = "deepseek-ai/deepseek-v4.1-flash"
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
@@ -52,7 +58,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_WHISPER_MODEL: str = "whisper-large-v3-turbo"
-    GROQ_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
     # Zero-touch Google Meet connection refresh token
     GOOGLE_REFRESH_TOKEN: str = ""
@@ -61,9 +67,9 @@ class Settings(BaseSettings):
     # The Agent auto-routes almost everything: only genuinely hard-to-classify
     # content (nothing remotely plausible) stays in Unknown Context. A single
     # weak-but-plausible candidate is enough for automatic assignment.
-    CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.35)
-    CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.05)
-    CONTEXT_RESOLUTION_AUTO_ASSIGN_MIN_CONFIDENCE: float = Field(default=0.20)
+    CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.72)
+    CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.08)
+    CONTEXT_RESOLUTION_AUTO_ASSIGN_MIN_CONFIDENCE: float = Field(default=0.72)
     CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
     AUTO_APPLY_VISUAL_UPDATES: bool = Field(default=False, description="Whether incoming messages auto-apply diagrams directly to Excalidraw")
@@ -87,6 +93,10 @@ class Settings(BaseSettings):
     @property
     def is_nvidia_nim_configured(self) -> bool:
         return bool(self.NVIDIA_API_KEY.strip())
+
+    @property
+    def is_gemini_configured(self) -> bool:
+        return bool(self.GEMINI_API_KEY.strip())
 
     @property
     def is_groq_configured(self) -> bool:

@@ -177,7 +177,11 @@ class ContextIntelligenceService:
             if not any(anchor in clean for anchor in tech_anchors):
                 return True
 
-        if _re.search(r"\b(lunch|dinner|breakfast|coffee|tea|pizza|burger|snacks|cafeteria|restaurant|hungry|food|drinks|beers)\b", clean):
+        meal_banter = [
+            r"\b(going for|having|grab(?:bing)?|out for|up for|time for)\s+(?:some\s+|a\s+)?(lunch|dinner|breakfast|coffee|tea|snacks|drinks|food)\b",
+            r"\b(coffee break|tea break|grab a bite|let'?s eat|hungry now)\b",
+        ]
+        if any(_re.search(pat, clean) for pat in meal_banter):
             if not any(anchor in clean for anchor in tech_anchors):
                 return True
 
@@ -208,7 +212,11 @@ class ContextIntelligenceService:
             elif not norm_name:
                 deduped_projects.append(p)
 
+        from app.services.project_semantic_profile_service import ProjectSemanticProfileService
+        profile_svc = ProjectSemanticProfileService()
+
         for project in deduped_projects:
+            profile = profile_svc.get_or_create_profile(project.id, db, tenant_id=tenant_id)
             state = db.query(ProjectState).filter(ProjectState.project_id == project.id).first()
             sections: Dict[str, Any] = {}
             if state:
@@ -252,7 +260,14 @@ class ContextIntelligenceService:
                 "project_id": project.id,
                 "name": project.name,
                 "description": (project.description or "")[:350],
+                "domain": profile.domain,
             }
+            if profile.business_concepts:
+                item["business_concepts"] = profile.business_concepts[:10]
+            if profile.technical_concepts:
+                item["technical_concepts"] = profile.technical_concepts[:10]
+            if profile.important_entities:
+                item["entities"] = profile.important_entities[:8]
             if sections:
                 item["state"] = sections
             if recent_evidence:
@@ -261,6 +276,7 @@ class ContextIntelligenceService:
                 ]
             corpus.append(item)
         return corpus
+
 
     @staticmethod
     def _safe_json(raw: Optional[str]) -> List[Any]:
@@ -378,6 +394,7 @@ class ContextIntelligenceService:
         corpus: List[Dict[str, Any]],
         continuity_context: Optional[str] = None,
         visual_context: Optional[str] = None,
+        feedback_context: Optional[str] = None,
     ) -> tuple[List[CandidateProject], Optional[str], bool]:
         """Ask the semantic provider to rank candidate projects.
 
@@ -393,8 +410,10 @@ class ContextIntelligenceService:
                 # Deterministic-only mode: no semantic candidates, and no fabricated output.
                 return [], "deterministic_only", False
             is_active = (
-                (provider == "groq" and settings.is_groq_configured)
+                (provider == "gemini" and settings.is_gemini_configured)
+                or (provider == "groq" and settings.is_groq_configured)
                 or (provider == "nvidia" and settings.is_nvidia_nim_configured)
+                or settings.is_gemini_configured
                 or settings.is_groq_configured
                 or settings.is_nvidia_nim_configured
             )
@@ -404,7 +423,8 @@ class ContextIntelligenceService:
                 # nothing here is ever presented as AI output.
                 return [], "ai_unavailable", False
 
-        prompt = self._build_semantic_prompt(text, corpus, continuity_context, visual_context)
+        prompt = self._build_semantic_prompt(text, corpus, continuity_context, visual_context, feedback_context=feedback_context)
+
         try:
             batch = self.llm_client.generate_structured(prompt, ContextCandidateBatch)
         except NotImplementedError:
@@ -460,6 +480,10 @@ class ContextIntelligenceService:
             [
                 str(entry.get("name", "")),
                 str(entry.get("description", "")),
+                str(entry.get("domain", "")),
+                json.dumps(entry.get("business_concepts", []), default=str),
+                json.dumps(entry.get("technical_concepts", []), default=str),
+                json.dumps(entry.get("entities", []), default=str),
                 json.dumps(entry.get("state", {}), default=str),
                 json.dumps(entry.get("recent_evidence", []), default=str),
             ]
@@ -561,6 +585,7 @@ class ContextIntelligenceService:
         corpus: List[Dict[str, Any]],
         continuity_context: Optional[str],
         visual_context: Optional[str],
+        feedback_context: Optional[str] = None,
     ) -> str:
         lines = [
             "You are Synora's Context Intelligence routing engine.",
@@ -596,6 +621,8 @@ class ContextIntelligenceService:
             lines += ["", "--- CONVERSATION CONTINUITY ---", continuity_context[:1500]]
         if visual_context:
             lines += ["", "--- VISUAL CONTEXT ---", visual_context[:1500]]
+        if feedback_context:
+            lines += ["", "--- HISTORICAL HUMAN CLASSIFICATION FEEDBACK ---", feedback_context[:1500]]
         lines += ["", "--- INCOMING CONTENT ---", text[:4000]]
         return "\n".join(lines)
 
@@ -618,6 +645,21 @@ class ContextIntelligenceService:
     ) -> ContextResolutionResult:
         """Resolve the project context for one incoming source event."""
         text = self.extract_text(source, payload)
+
+        # Casual / noise gate: drop pure banter before any routing or persistence
+        if self.is_casual_chatter(text):
+            return ContextResolutionResult(
+                decision=ContextDecision.CASUAL_IGNORED.value,
+                project_id=None,
+                confidence=0.0,
+                margin=0.0,
+                is_casual=True,
+                signals=[],
+                candidate_projects=[],
+                reason="Casual non-project conversation detected; ignored to preserve workspace purity",
+                requires_human_review=False,
+            )
+
         projects = self._authorized_projects(db, tenant_id, authorized_project_ids)
 
         # A. Deterministic first (short-circuits, no model call).
@@ -638,6 +680,23 @@ class ContextIntelligenceService:
                 self._record(source, source_event_id, result, db, tenant_id)
             return result
 
+        # Top-K candidate retrieval via vector embeddings if multiple projects exist
+        if len(projects) > 5 and text.strip():
+            from app.services.project_semantic_profile_service import ProjectSemanticProfileService
+            profile_svc = ProjectSemanticProfileService()
+            top_ranked = profile_svc.rank_candidates_by_embedding(text, projects, db, tenant_id=tenant_id, top_k=5)
+            ranked_pids = {p.id for p, _ in top_ranked}
+            projects = [p for p in projects if p.id in ranked_pids]
+
+        # Historical human feedback retrieval
+        feedback_context: Optional[str] = None
+        try:
+            from app.services.context_feedback_service import ContextFeedbackService
+            fb_svc = ContextFeedbackService(db)
+            feedback_context = fb_svc.get_feedback_for_prompt([p.id for p in projects])
+        except Exception as exc:
+            logger.debug("failed_to_fetch_feedback: %s", exc)
+
         # B/C/D. Semantic + continuity + visual, delegated to a pure scoring step
         # so callers can run it concurrently with knowledge extraction.
         corpus = self._build_corpus(projects, db, tenant_id=tenant_id) if projects else []
@@ -647,6 +706,7 @@ class ContextIntelligenceService:
             det_signals=det_signals,
             continuity_context=continuity_context,
             visual_context=visual_context,
+            feedback_context=feedback_context,
         )
         if record and result.decision != ContextDecision.CASUAL_IGNORED.value:
             self._record(source, source_event_id, result, db, tenant_id)
@@ -659,6 +719,7 @@ class ContextIntelligenceService:
         det_signals: Optional[List[ContextSignal]] = None,
         continuity_context: Optional[str] = None,
         visual_context: Optional[str] = None,
+        feedback_context: Optional[str] = None,
     ) -> ContextResolutionResult:
         """Pure scoring + routing decision. Performs NO database access.
 
@@ -682,7 +743,10 @@ class ContextIntelligenceService:
         if visual_context:
             signals.append(ContextSignal(kind="visual", name="scene_structure", weight=0.3))
 
-        candidates, ai_status, is_casual = self._semantic_candidates(text, corpus, continuity_context, visual_context)
+        candidates, ai_status, is_casual = self._semantic_candidates(
+            text, corpus, continuity_context, visual_context, feedback_context=feedback_context
+        )
+
 
         if is_casual:
             return ContextResolutionResult(

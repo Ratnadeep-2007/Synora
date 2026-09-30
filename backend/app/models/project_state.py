@@ -78,8 +78,23 @@ class ProjectState(Base):
     versions = relationship("ProjectStateVersion", back_populates="project_state", cascade="all, delete-orphan")
     changes = relationship("StateChange", back_populates="project_state", cascade="all, delete-orphan")
 
+    @property
+    def state_json(self) -> str:
+        import json
+        return json.dumps({
+            "title": self.title,
+            "vision": self.vision,
+            "requirements": json.loads(self.requirements_json or "[]"),
+            "architecture": json.loads(self.architecture_json or "[]"),
+            "decisions": json.loads(self.decisions_json or "[]"),
+            "constraints": json.loads(self.constraints_json or "[]"),
+            "assumptions": json.loads(self.assumptions_json or "[]"),
+            "open_questions": json.loads(self.open_questions_json or "[]"),
+        })
+
     def __repr__(self) -> str:
         return f"<ProjectState project={self.project_id} v={self.current_version}>"
+
 
 
 class ProjectStateVersion(Base):

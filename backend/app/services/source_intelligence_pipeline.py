@@ -293,78 +293,9 @@ class SourceIntelligencePipeline:
                 reason=context_result.reason,
             )
 
-        # Zero-human-loop: Auto-assign best candidate project if any exists.
-        # Only truly hard-to-classify content (no candidates or sub-threshold)
-        # enters Unknown Context.
-        suggestions = self.context_service.resolve_with_corpus(
-            text, corpus, det_signals, continuity_context, visual_context
-        )
-        candidate_pool = list(getattr(suggestions, "candidate_projects", []) or getattr(context_result, "candidate_projects", []) or [])
-        best = max(
-            candidate_pool,
-            key=lambda c: float(getattr(c, "confidence", 0.0) or 0.0),
-            default=None,
-        ) if candidate_pool else None
-        auto_floor = float(
-            getattr(settings, "CONTEXT_RESOLUTION_AUTO_ASSIGN_MIN_CONFIDENCE", 0.20)
-        )
-
-        if best is not None and float(getattr(best, "confidence", 0.0) or 0.0) >= auto_floor:
-            resolved_project_id = self._route(
-                ContextResolutionResult(
-                    decision=ContextDecision.RESOLVED.value,
-                    project_id=best.project_id,
-                    confidence=float(best.confidence),
-                    margin=0.0,
-                    signals=suggestions.signals,
-                    candidate_projects=candidate_pool,
-                    reason="; ".join(list(best.reasons or [])[:3]) or "Best candidate auto-assigned",
-                    requires_human_review=False,
-                ),
-                authorized,
-                authorized_project_ids,
-            )
-            if resolved_project_id:
-                if source_event.project_id != resolved_project_id:
-                    source_event.project_id = resolved_project_id
-                    evidence.project_id = resolved_project_id
-                    db.commit()
-                candidates = self.knowledge_service.persist_candidates(
-                    extraction, project_id=resolved_project_id, db=db, meeting_id=meeting_id
-                )
-                try:
-                    from app.services.excalidraw_service import ExcalidrawService
-
-                    ExcalidrawService().generate_diagram_from_text(
-                        project_id=resolved_project_id,
-                        text=text[:2000],
-                        db=db,
-                        tenant_id=tenant_id,
-                        auto_apply=True,
-                        actor_id=actor_id or "synora_agent",
-                        title="Agent note",
-                    )
-                except Exception as exc:
-                    logger.warning("auto_assign_visual_failed: %s", exc)
-                logger.info(
-                    "source_routing_auto_assigned: source=%s project_id=%s candidates=%d",
-                    source,
-                    resolved_project_id,
-                    len(candidates),
-                )
-                return SourceEventOutcome(
-                    outcome=RoutingOutcome.RESOLVED.value,
-                    source=source,
-                    source_event_id=source_event.source_event_id,
-                    project_id=resolved_project_id,
-                    evidence_id=evidence.id,
-                    meeting_id=meeting_id,
-                    candidates_created=len(candidates),
-                    ai_status=extraction.ai_status,
-                    reason=f"Auto-assigned to '{best.project_name or resolved_project_id}' ({best.confidence:.2f}) without human approval",
-                )
-
-        # Genuinely hard-to-classify: evidence preserved in Unknown Context.
+        # Strict Authoritative Resolver Policy:
+        # A low-confidence or ambiguous candidate is NEVER force-assigned.
+        # Unresolved content is safely quarantined in Unknown Context triage.
         item = self.unknown_service.create_item(
             source=source,
             payload=payload,
@@ -378,7 +309,7 @@ class SourceIntelligencePipeline:
             occurred_at=occurred_at,
             context_resolution_id=None,
         )
-        self._persist_suggestions(item.id, suggestions, db)
+        self._persist_suggestions(item.id, context_result, db)
         try:
             from app.services.unknown_context_visual import (
                 render_unknown_context_board,

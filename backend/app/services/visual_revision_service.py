@@ -16,6 +16,11 @@ class VisualRevisionError(SynesisException):
     """Raised for invalid visual revision operations."""
 
 
+class VisualRevisionConflict(VisualRevisionError):
+    """Raised when committing against a stale or mismatched parent revision."""
+
+
+
 class VisualRevisionService:
     """Immutable visual revision history for a project's living workspace.
 
@@ -101,6 +106,7 @@ class VisualRevisionService:
         scene: List[Dict[str, Any]],
         db: Session,
         tenant_id: str = "default_tenant",
+        parent_revision_id: Optional[str] = None,
         app_state: Optional[Dict[str, Any]] = None,
         operations: Optional[List[Dict[str, Any]]] = None,
         evidence_ids: Optional[List[str]] = None,
@@ -120,10 +126,19 @@ class VisualRevisionService:
             .order_by(VisualRevision.revision_number.desc())
             .first()
         )
+
+        if parent_revision_id is not None:
+            expected_parent_id = latest.id if latest else None
+            if parent_revision_id != expected_parent_id:
+                raise VisualRevisionConflict(
+                    f"Version mismatch: base revision '{parent_revision_id}' is stale. Current latest is '{expected_parent_id}'."
+                )
+
         next_number = (latest.revision_number + 1) if latest else 1
 
         if latest:
             latest.is_current = 0
+
 
         revision = VisualRevision(
             workspace_id=workspace.id,
@@ -233,6 +248,51 @@ class VisualRevisionService:
             },
         )
         return restored
+
+    def rollback(
+        self,
+        project_id: str,
+        target_revision: Any,
+        reason: Optional[str] = None,
+        db: Optional[Session] = None,
+        actor_id: str = "system",
+        tenant_id: str = "default_tenant",
+    ) -> VisualRevision:
+        """Branch forward from historical revision as an immutable rollback commit."""
+        if isinstance(target_revision, str):
+            rev = db.query(VisualRevision).filter(VisualRevision.id == target_revision).first()
+            if rev:
+                rev_num = rev.revision_number
+            else:
+                try:
+                    rev_num = int(target_revision)
+                except ValueError:
+                    raise VisualRevisionError(f"Revision '{target_revision}' not found")
+        else:
+            rev_num = int(target_revision)
+
+        return self.restore_as_new_revision(
+            project_id=project_id,
+            target_revision_number=rev_num,
+            db=db,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            reason=reason,
+        )
+
+    def diff(
+        self,
+        base_revision_id: str,
+        target_revision_id: str,
+        db: Session,
+    ) -> Dict[str, Any]:
+        """Compute visual diff between two revisions by ID."""
+        rev_a = db.query(VisualRevision).filter(VisualRevision.id == base_revision_id).first()
+        rev_b = db.query(VisualRevision).filter(VisualRevision.id == target_revision_id).first()
+        if not rev_a or not rev_b:
+            raise VisualRevisionError("Revisions not found for diff")
+        return self.compare(rev_a.project_id, rev_a.revision_number, rev_b.revision_number, db)
+
 
     # ------------------------------------------------------------------
     # Comparison
