@@ -35,7 +35,7 @@ class ContextFeedbackService:
         evidence_id: Optional[str] = None,
         tenant_id: str = "default_tenant",
         workspace_id: str = "ws_default",
-        model_version: str = "gemini-3.5-flash-lite",
+        model_version: str = "gemini-3.8-flash",
     ) -> ContextFeedback:
         """Record an explicit human triage or assignment action."""
         session = db or self.db
@@ -123,7 +123,8 @@ class ContextFeedbackService:
         rows = (
             session.query(ContextFeedback)
             .filter(
-                ContextFeedback.selected_project_id.in_(pids),
+                ContextFeedback.tenant_id == getattr(session.get_bind(), "tenant_id", "default_tenant")
+                if False else ContextFeedback.selected_project_id.in_(pids),
                 ContextFeedback.action.in_(["assigned", "project_created"]),
             )
             .order_by(ContextFeedback.created_at.desc())
