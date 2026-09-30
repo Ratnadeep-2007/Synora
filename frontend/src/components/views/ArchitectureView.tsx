@@ -333,6 +333,36 @@ export function ArchitectureView({
         onRetry={onRetrySync}
       />
 
+      {/* AI-first operating status */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-border bg-surface p-3.5 shadow-xs">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Operating mode</div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+            <span className="text-sm font-semibold text-text-main">AI Autopilot</span>
+          </div>
+          <div className="mt-1 text-[11px] text-text-muted">Routine analysis and visual updates are automated.</div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-surface p-3.5 shadow-xs">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Human intervention</div>
+          <div className="mt-1.5 text-sm font-semibold text-text-main">Ambiguous context only</div>
+          <div className="mt-1 text-[11px] text-text-muted">Only unresolved or low-confidence routing needs attention.</div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-surface p-3.5 shadow-xs">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Project state</div>
+          <div className="mt-1.5 text-sm font-semibold text-primary">v{currentStateVersion}</div>
+          <div className="mt-1 text-[11px] text-text-muted">Authoritative state used by the agent.</div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-surface p-3.5 shadow-xs">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Diagram</div>
+          <div className="mt-1.5 text-sm font-semibold text-text-main">v{artifact?.version || 1}</div>
+          <div className="mt-1 text-[11px] text-text-muted">{artifact?.elements?.length || 0} elements • DB-backed</div>
+        </div>
+      </div>
+
       {/* Direct Automated Text -> Excalidraw Generator */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-2.5 bg-surface border border-border rounded-xl shadow-2xs">
         <input
@@ -489,7 +519,7 @@ export function ArchitectureView({
       {reviewedProposals.length > 0 && (
         <div className="space-y-3 pt-4 border-t border-border">
           <h3 className="text-sm font-semibold text-text-muted uppercase tracking-wider">
-            Proposal Audit History
+            Visual Change Audit History
           </h3>
           <div className="space-y-2">
             {reviewedProposals.map((prop) => (
