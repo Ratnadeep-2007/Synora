@@ -84,7 +84,7 @@ class WorkspaceAtlasService:
         tenant_id: str = "default_tenant",
         workspace_id: str = "ws_default",
     ) -> Dict[str, Any]:
-        atlas_project = self._ensure_system_project(db, tenant_id, workspace_id)
+        self._ensure_system_project(db, tenant_id, workspace_id)
         artifact = self.excal.get_or_create_artifact(
             SYSTEM_WORKSPACE_ATLAS_PROJECT_ID,
             db,
