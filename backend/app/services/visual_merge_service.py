@@ -91,21 +91,30 @@ class VisualMergeService:
             if isinstance(el, dict) and el.get("id"):
                 element_map[str(el["id"])] = copy.deepcopy(el)
 
-        def semantic_signature(el: Optional[Dict[str, Any]]) -> str:
+        def semantic_signature(
+            el: Optional[Dict[str, Any]],
+            source_map: Optional[Dict[str, Dict[str, Any]]] = None,
+        ) -> str:
             if not el:
                 return ""
-            return json.dumps(
-                {
-                    "type": el.get("type"),
-                    "text": el.get("text"),
-                    "semantic_id": el.get("semantic_id"),
-                    "semantic_type": el.get("semantic_type"),
-                    "startBinding": el.get("startBinding"),
-                    "endBinding": el.get("endBinding"),
-                },
-                sort_keys=True,
-                default=str,
-            )
+            signature = {
+                "type": el.get("type"),
+                "text": el.get("text"),
+                "semantic_id": el.get("semantic_id"),
+                "semantic_type": el.get("semantic_type"),
+                "startBinding": el.get("startBinding"),
+                "endBinding": el.get("endBinding"),
+            }
+            if el.get("semantic_type") == "note" and source_map is not None:
+                bound_texts = []
+                for binding in el.get("boundElements") or []:
+                    if binding.get("type") != "text":
+                        continue
+                    child = source_map.get(str(binding.get("id")))
+                    if child:
+                        bound_texts.append(child.get("text"))
+                signature["bound_texts"] = bound_texts
+            return json.dumps(signature, sort_keys=True, default=str)
 
         def user_changed_target(target_id: str) -> bool:
             base_el = base_map.get(target_id)
@@ -114,7 +123,7 @@ class VisualMergeService:
                 return False
             if user_el is None:
                 return True
-            return semantic_signature(base_el) != semantic_signature(user_el)
+            return semantic_signature(base_el, base_map) != semantic_signature(user_el, element_map)
 
         # Build index of existing semantic labels and node rectangles
         label_to_id: Dict[str, str] = {}
