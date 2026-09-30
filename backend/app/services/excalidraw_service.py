@@ -644,6 +644,25 @@ class ExcalidrawService:
             if reason:
                 proposal.reason += f" [Rejected: {reason}]"
 
+            # Keep the semantic patch lifecycle aligned with the human review.
+            try:
+                from app.models.visual_patch import VisualPatchModel
+                patch_data = json.loads(proposal.diff_preview_json or "{}").get("visual_patch")
+                patch_id = patch_data.get("patch_id") if isinstance(patch_data, dict) else None
+                if patch_id:
+                    patch_model = (
+                        db.query(VisualPatchModel)
+                        .filter(
+                            VisualPatchModel.id == patch_id,
+                            VisualPatchModel.tenant_id == tenant_id,
+                        )
+                        .first()
+                    )
+                    if patch_model:
+                        patch_model.status = "rejected"
+            except Exception as exc:
+                logger.warning("visual_patch_rejection_sync_failed: proposal=%s error=%s", proposal.id, exc)
+
             self.audit_service.record_event(
                 action="excalidraw_proposal_rejected",
                 actor_id=actor_id,
