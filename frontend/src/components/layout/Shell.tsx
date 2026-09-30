@@ -68,7 +68,7 @@ const NAV_ITEMS: Array<{
 }> = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "state", label: "Project State", icon: Layers },
-  { id: "excalidraw", label: "Excalidraw", icon: PenTool },
+  { id: "excalidraw", label: "Project Atlas", icon: PenTool },
   { id: "meetings", label: "Meetings", icon: Video },
   { id: "sources", label: "Sources", icon: Plug },
   { id: "settings", label: "Settings", icon: SettingsIcon },
@@ -233,6 +233,11 @@ export function Shell({
                   {item.id === "state" && (
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-canvas text-text-muted border border-border">
                       v{projectVersion}
+                    </span>
+                  )}
+                  {item.id === "excalidraw" && unknownContextCount > 0 && (
+                    <span className="min-w-[18px] rounded-full bg-warning px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
+                      {unknownContextCount > 99 ? "99+" : unknownContextCount}
                     </span>
                   )}
                 </button>
