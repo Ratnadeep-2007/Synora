@@ -229,13 +229,15 @@ def update_whatsapp_session_status(payload: Dict[str, Any]) -> Dict[str, Any]:
 async def whatsapp_webhook(
     request: Request,
     db: Session = Depends(get_db),
+    immediate: bool = Query(default=False),
 ) -> Dict[str, Any]:
     """
     Durable WhatsApp ingestion boundary.
 
-    The webhook only persists messages into a one-minute processing window.
-    AI/context/knowledge processing and the Excalidraw update happen in the
-    dedicated batch worker, keeping the connector responsive and contextual.
+    The webhook persists messages into the batch queue.
+    If immediate=True is supplied (for example by the live Baileys bridge),
+    the queued batch is processed immediately so safe semantic canvas patches
+    can appear in real time.
     """
     raw_body = await request.body()
     headers = dict(request.headers)
@@ -282,6 +284,18 @@ async def whatsapp_webhook(
                 detail=f"WhatsApp batch queue error: {exc}",
             )
 
+    batch_summary = None
+    is_immediate = immediate or request.query_params.get("immediate") == "true"
+    if is_immediate and queued:
+        try:
+            batch_summary = whatsapp_batch_service.process_due_batches(
+                db=db,
+                tenant_id="default_tenant",
+                force=True,
+            )
+        except Exception as exc:
+            logger.exception("Failed to instantly process WhatsApp batch: %s", exc)
+
     primary_matched = None
     primary_confidence = None
     primary_reasoning = None
@@ -295,9 +309,11 @@ async def whatsapp_webhook(
     response_data: Dict[str, Any] = {
         "ok": True,
         "status": "queued",
+        "processed": bool(batch_summary),
         "enqueued": len(queued),
         "duplicates": duplicates,
         "items": queued,
+        "visual_updates": batch_summary.get("visual_updates", 0) if batch_summary else 0,
     }
     if primary_matched:
         response_data["matched_project"] = primary_matched
@@ -323,19 +339,41 @@ def simulate_whatsapp_message(
         db=db,
         tenant_id=tenant_id,
     )
+    should_process = immediate or bool(payload.get("immediate", False))
+    batch_summary = None
+    if should_process:
+        try:
+            batch_summary = whatsapp_batch_service.process_due_batches(
+                db=db,
+                tenant_id=tenant_id,
+                force=True,
+            )
+        except Exception as exc:
+            logger.exception("Failed to instantly process simulated WhatsApp batch: %s", exc)
+
+    matched_project = result.get("matched_project")
+    confidence = result.get("confidence")
+    reasoning = result.get("reasoning")
+    if batch_summary and batch_summary.get("results"):
+        first_res = batch_summary["results"][0]
+        if first_res.get("matched_project"):
+            matched_project = first_res["matched_project"]
+            confidence = first_res.get("confidence") or confidence
+            reasoning = first_res.get("reason") or reasoning
+
     res_payload = {
         "ok": True,
-        "processed": False,
+        "processed": bool(batch_summary),
         "status": "queued",
         "batch_id": result["batch_id"],
         "message_id": result["message_id"],
-        "processing_interval_seconds": settings.WHATSAPP_PROCESSING_INTERVAL_SECONDS,
-        "message": "Simulated WhatsApp message queued for batch processing.",
+        "visual_updates": batch_summary.get("visual_updates", 0) if batch_summary else 0,
+        "message": "Message enqueued for processing.",
     }
-    if result.get("matched_project"):
-        res_payload["matched_project"] = result["matched_project"]
-        res_payload["confidence"] = result.get("confidence")
-        res_payload["reasoning"] = result.get("reasoning")
+    if matched_project:
+        res_payload["matched_project"] = matched_project
+        res_payload["confidence"] = confidence
+        res_payload["reasoning"] = reasoning
     return res_payload
 
 
