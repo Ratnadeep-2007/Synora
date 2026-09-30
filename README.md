@@ -19,7 +19,7 @@ Synora bridges unstructured discussions across communication channels (Google Me
 3. **AI Visual Canvas Engine (Excalidraw)**
    - Powered by **Gemini 3.8 Flash** for architecture planning and structured intelligence, with **Gemini Embedding 2** for semantic project retrieval.
    - Builds a single infinite **Project Atlas**: Context Inbox + fixed project columns, architecture-first composition, human-readable knowledge cards, evidence-linked revisions, and deterministic collision-safe layout.
-   - Fallback to robust deterministic geometric layout if NIM API is unreachable or rate-limited.
+   - Falls back to a deterministic geometric layout when the configured semantic provider is unavailable or rate-limited.
 
 4. **Living Workspace & Project Management**
    - One infinite Excalidraw Project Atlas with stable non-overlapping project columns and live database synchronization.
