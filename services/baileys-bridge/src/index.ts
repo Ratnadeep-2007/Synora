@@ -46,7 +46,7 @@ async function reportSessionStatus(
         {
           hostname: parsedUrl.hostname,
           port: parsedUrl.port || 80,
-          path: parsedUrl.pathname,
+          path: parsedUrl.pathname + parsedUrl.search,
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -92,7 +92,7 @@ async function forwardMessageToSynora(payload: {
       {
         hostname: parsedUrl.hostname,
         port: parsedUrl.port || 80,
-        path: parsedUrl.pathname + parsedUrl.search,
+        path: parsedUrl.pathname,
         method: "POST",
         headers: {
           "Content-Type": "application/json",

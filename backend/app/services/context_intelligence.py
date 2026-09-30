@@ -35,7 +35,7 @@ class ContextIntelligenceService:
     A. Deterministic signals - explicit project id, explicit tag, trusted
        connector mapping, user-selected project. A deterministic hit
        short-circuits with no model call and no human review.
-    B. Semantic signals - NVIDIA NIM + DeepSeek ranks candidate projects and
+    B. Semantic signals - configured provider ranks candidate projects and
        returns per-candidate reasons.
     C. Continuity / D. Visual - source-specific window supplied by the caller.
 
@@ -518,7 +518,7 @@ class ContextIntelligenceService:
         for entry in corpus:
             overlap = len(words & cls._corpus_terms(entry))
             if overlap > 0:
-                confidence = min(0.35 + 0.10 * overlap, 0.88)
+                confidence = min(0.55, 0.35 + 0.05 * overlap)
                 scored.append(
                     (
                         overlap,
@@ -562,12 +562,12 @@ class ContextIntelligenceService:
         out: List["CandidateProject"] = []
         for overlap, cand in scored:
             if overlap == best_overlap:
-                boost = min(0.15 + 0.05 * overlap, 0.45)
+                boost = min(0.10 + 0.03 * overlap, 0.20)
                 out.append(
                     CandidateProject(
                         project_id=cand.project_id,
                         project_name=cand.project_name,
-                        confidence=min(1.0, float(cand.confidence) + boost),
+                        confidence=min(0.60, float(cand.confidence) + boost),
                         reasons=list(cand.reasons or []) + [f"Topical overlap with project context ({overlap} terms)"],
                         supporting_evidence_ids=list(getattr(cand, "supporting_evidence_ids", []) or []),
                         supporting_state_sections=list(getattr(cand, "supporting_state_sections", []) or []),

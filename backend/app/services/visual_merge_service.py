@@ -1,4 +1,5 @@
 import copy
+import json
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -27,10 +28,34 @@ NOTE_CATEGORY_STYLES: Dict[str, Dict[str, str]] = {
     "INTEGRATION": {"background": "#fdf4ff", "stroke": "#c026d3", "text": "#86198f"},
     "OPEN_QUESTION": {"background": "#eff6ff", "stroke": "#2563eb", "text": "#1e40af"},
     "ARCHITECTURE_PRINCIPLE": {"background": "#f8fafc", "stroke": "#475569", "text": "#1e293b"},
+    "CONVERSATION": {"background": "#ffffff", "stroke": "#94a3b8", "text": "#334155"},
+    "PROJECT_CONTEXT": {"background": "#ffffff", "stroke": "#64748b", "text": "#0f172a"},
 }
 
 
 class VisualMergeService:
+    """Three-Way Visual Merge Engine for Excalidraw scenes.
+
+    BASE is the common ancestor, USER is the current local state, and AI PATCH
+    contains semantic changes. User edits are preserved on semantic conflicts.
+    """
+
+    _CONCEPT_ALIASES = {
+        "kds": "kitchen display system",
+        "kitchen display": "kitchen display system",
+        "pos": "pos integration service",
+        "qr ordering": "table qr ordering",
+        "table qr": "table qr ordering",
+        "ordering app": "ordering web app",
+        "order app": "ordering web app",
+    }
+
+    @classmethod
+    def _canonical_concept_key(cls, value: Any) -> str:
+        import re
+        normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+        normalized = cls._CONCEPT_ALIASES.get(normalized, normalized)
+        return normalized
     """Three-Way Visual Merge Engine for Excalidraw scenes.
 
     Inputs:
@@ -55,21 +80,60 @@ class VisualMergeService:
         conflicts: List[str] = []
         applied_ops: List[Dict[str, Any]] = []
 
-        # Map current user elements by ID
+        # BASE is the common ancestor; USER is the current local state.
+        base_map = {
+            str(el["id"]): copy.deepcopy(el)
+            for el in base_elements
+            if isinstance(el, dict) and el.get("id")
+        }
         element_map: Dict[str, Dict[str, Any]] = {}
         for el in user_elements:
             if isinstance(el, dict) and el.get("id"):
                 element_map[str(el["id"])] = copy.deepcopy(el)
 
+        def semantic_signature(
+            el: Optional[Dict[str, Any]],
+            source_map: Optional[Dict[str, Dict[str, Any]]] = None,
+        ) -> str:
+            if not el:
+                return ""
+            signature = {
+                "type": el.get("type"),
+                "text": el.get("text"),
+                "semantic_id": el.get("semantic_id"),
+                "semantic_type": el.get("semantic_type"),
+                "startBinding": el.get("startBinding"),
+                "endBinding": el.get("endBinding"),
+            }
+            if el.get("semantic_type") == "note" and source_map is not None:
+                bound_texts = []
+                for binding in el.get("boundElements") or []:
+                    if binding.get("type") != "text":
+                        continue
+                    child = source_map.get(str(binding.get("id")))
+                    if child:
+                        bound_texts.append(child.get("text"))
+                signature["bound_texts"] = bound_texts
+            return json.dumps(signature, sort_keys=True, default=str)
+
+        def user_changed_target(target_id: str) -> bool:
+            base_el = base_map.get(target_id)
+            user_el = element_map.get(target_id)
+            if base_el is None:
+                return False
+            if user_el is None:
+                return True
+            return semantic_signature(base_el, base_map) != semantic_signature(user_el, element_map)
+
         # Build index of existing semantic labels and node rectangles
         label_to_id: Dict[str, str] = {}
         for el in element_map.values():
             if el.get("type") == "text" and el.get("text"):
-                clean_lbl = str(el["text"]).strip().lower()
+                clean_lbl = self._canonical_concept_key(el["text"])
                 label_to_id[clean_lbl] = str(el["id"])
             elif el.get("type") == "rectangle" and "node_" in str(el.get("id", "")):
                 # Index by node ID suffix
-                suffix = str(el["id"]).replace("node_", "").strip().lower()
+                suffix = self._canonical_concept_key(str(el["id"]).replace("node_", ""))
                 label_to_id[suffix] = str(el["id"])
 
         # Occupied bounding boxes for collision avoidance
@@ -89,14 +153,32 @@ class VisualMergeService:
                 if op.op_type == VisualPatchOpType.ADD_NODE:
                     self._apply_add_node(op, element_map, label_to_id, occupied_boxes, applied_ops, conflicts)
                 elif op.op_type == VisualPatchOpType.UPDATE_NODE:
+                    target = op.target_id if op.target_id.startswith("node_") else f"node_{op.target_id}"
+                    if user_changed_target(target):
+                        conflicts.append(f"AI update skipped because the user changed or removed {target} after the patch base.")
+                        continue
                     self._apply_update_node(op, element_map, label_to_id, applied_ops, conflicts)
                 elif op.op_type == VisualPatchOpType.REMOVE_NODE:
+                    target = op.target_id if op.target_id.startswith("node_") else f"node_{op.target_id}"
+                    if user_changed_target(target):
+                        conflicts.append(f"AI removal skipped because the user changed or removed {target} after the patch base.")
+                        continue
                     self._apply_remove_node(op, element_map, patch.safety_classification, applied_ops, conflicts)
                 elif op.op_type == VisualPatchOpType.ADD_EDGE:
                     self._apply_add_edge(op, element_map, label_to_id, applied_ops, conflicts)
                 elif op.op_type == VisualPatchOpType.ADD_NOTE:
                     self._apply_add_note(op, element_map, occupied_boxes, applied_ops, conflicts)
                 elif op.op_type in (VisualPatchOpType.UPDATE_NOTE, VisualPatchOpType.REMOVE_NOTE):
+                    note_target = (
+                        op.target_id
+                        if op.target_id.startswith(("note_", "context_"))
+                        else f"note_{op.target_id}"
+                    )
+                    if user_changed_target(note_target):
+                        conflicts.append(
+                            f"AI note mutation skipped because the user changed or removed {note_target} after the patch base."
+                        )
+                        continue
                     self._apply_note_mutation(op, element_map, applied_ops, conflicts)
                 else:
                     applied_ops.append(op_dict)
@@ -173,7 +255,7 @@ class VisualMergeService:
         label = op.label or op.target_id.replace("node_", "").replace("_", " ").title()
 
         # Deduplication check: if node already exists by ID or exact label, update it instead of duplicating
-        clean_lbl = label.strip().lower()
+        clean_lbl = self._canonical_concept_key(label)
         if rect_id in element_map or clean_lbl in label_to_id:
             existing_rect_id = rect_id if rect_id in element_map else label_to_id[clean_lbl]
             if existing_rect_id in element_map:
@@ -190,6 +272,8 @@ class VisualMergeService:
 
         rect_element = {
             "id": rect_id,
+            "semantic_id": rect_id,
+            "semantic_type": "node",
             "type": "rectangle",
             "x": x,
             "y": y,
@@ -215,6 +299,8 @@ class VisualMergeService:
 
         text_element = {
             "id": text_id,
+            "semantic_id": rect_id,
+            "semantic_type": "node_label",
             "type": "text",
             "x": x + 12,
             "y": txt_y,
@@ -329,6 +415,7 @@ class VisualMergeService:
             return
 
         edge_id = f"edge_{src_id.replace('node_', '')}_{dst_id.replace('node_', '')}"
+        canonical_edge_key = f"edge_{self._canonical_concept_key(src_id)}_{self._canonical_concept_key(dst_id)}"
         if edge_id in element_map:
             # Edge already exists, no duplicate needed
             return
@@ -359,6 +446,8 @@ class VisualMergeService:
 
         arrow_element = {
             "id": edge_id,
+            "semantic_id": canonical_edge_key,
+            "semantic_type": "edge",
             "type": "arrow",
             "x": start_x,
             "y": start_y,
@@ -391,18 +480,67 @@ class VisualMergeService:
         applied_ops: List[Dict[str, Any]],
         conflicts: List[str],
     ) -> None:
-        note_id = op.target_id if op.target_id.startswith("note_") else f"note_{op.target_id}"
+        note_id = (
+            op.target_id
+            if op.target_id.startswith(("note_", "conversation_note_"))
+            else f"note_{op.target_id}"
+        )
         text_id = f"txt_{note_id}"
         content = op.content or op.label or "Architectural note"
+
+        if note_id in element_map:
+            existing = element_map[note_id]
+            bound_text_id = next(
+                (
+                    item.get("id")
+                    for item in (existing.get("boundElements") or [])
+                    if item.get("type") == "text" and item.get("id")
+                ),
+                f"txt_{note_id}",
+            )
+            visible_text = f"[{op.category.value if op.category else 'DECISION'}]\n{content[:480]}"
+            text_el = element_map.get(bound_text_id)
+            if text_el:
+                text_el["text"] = visible_text
+                text_el["originalText"] = visible_text
+            existing["note_content"] = content
+            applied_ops.append({**op.model_dump(), "note": "Updated existing note instead of duplicating"})
+            return
         category = op.category.value if op.category else "DECISION"
         style = NOTE_CATEGORY_STYLES.get(category, NOTE_CATEGORY_STYLES["DECISION"])
 
-        note_w = 260
-        note_h = 80
-        x, y = self._find_free_slot(None, None, note_w, note_h, occupied_boxes)
+        note_w = 760 if category == "PROJECT_CONTEXT" else (620 if category == "CONVERSATION" else 260)
+        note_h = 108 if category == "PROJECT_CONTEXT" else (132 if category == "CONVERSATION" else 80)
+
+        if category in ("PROJECT_CONTEXT", "CONVERSATION"):
+            prefix = "context_" if category == "PROJECT_CONTEXT" else "conversation_note_"
+            stack_cards = [
+                el for el in element_map.values()
+                if isinstance(el, dict) and el.get("semantic_type") == "note"
+                and str(el.get("id", "")).startswith(prefix)
+            ]
+            node_right = max(
+                [
+                    float(el.get("x") or 0) + float(el.get("width") or 0)
+                    for el in element_map.values()
+                    if isinstance(el, dict)
+                    and (
+                        el.get("semantic_type") == "node"
+                        or str(el.get("id", "")).startswith("node_")
+                    )
+                ],
+                default=BASE_X + NODE_WIDTH,
+            )
+            x = node_right + 80
+            y = BASE_Y + len(stack_cards) * (note_h + 18)
+            occupied_boxes.append((x, y, x + note_w, y + note_h))
+        else:
+            x, y = self._find_free_slot(None, None, note_w, note_h, occupied_boxes)
 
         rect_element = {
             "id": note_id,
+            "semantic_id": note_id,
+            "semantic_type": "note",
             "type": "rectangle",
             "x": x,
             "y": y,
@@ -419,7 +557,7 @@ class VisualMergeService:
             "isDeleted": False,
         }
 
-        display_text = f"[{category}]\n{content[:90]}"
+        display_text = f"[{category}]\n{content[:480]}"
         text_element = {
             "id": text_id,
             "type": "text",
@@ -439,6 +577,8 @@ class VisualMergeService:
             "backgroundColor": "transparent",
             "fillStyle": "solid",
             "strokeWidth": 1,
+            "lineHeight": 1.35,
+            "autoResize": True,
             "isDeleted": False,
         }
 
@@ -453,7 +593,10 @@ class VisualMergeService:
         applied_ops: List[Dict[str, Any]],
         conflicts: List[str],
     ) -> None:
-        note_id = op.target_id if op.target_id.startswith("note_") else f"note_{op.target_id}"
+        if op.target_id.startswith(("note_", "context_")):
+            note_id = op.target_id
+        else:
+            note_id = f"note_{op.target_id}"
         text_id = f"txt_{note_id}"
 
         if op.op_type == VisualPatchOpType.REMOVE_NOTE:
@@ -464,5 +607,10 @@ class VisualMergeService:
             txt_el = element_map.get(text_id)
             if txt_el and op.content:
                 category = op.category.value if op.category else "DECISION"
-                txt_el["text"] = f"[{category}]\n{op.content[:90]}"
+                visible = f"[{category}]\n{op.content[:480]}"
+                txt_el["text"] = visible
+                txt_el["originalText"] = visible
+                note_el = element_map.get(note_id)
+                if note_el is not None:
+                    note_el["note_content"] = op.content[:650]
             applied_ops.append(op.model_dump())

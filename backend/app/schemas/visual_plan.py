@@ -74,6 +74,9 @@ class VisualPlan(BaseModel):
     change: List[str] = []
     remove: List[str] = []
     notes: List[str] = []
+    # Human-oriented synthesis of the overall project context.
+    # These are concise context cards, not a transcript or message timeline.
+    context_notes: List[str] = []
     model: str = ""
     prompt_version: str = ""
 

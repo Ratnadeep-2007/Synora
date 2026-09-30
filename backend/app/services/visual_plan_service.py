@@ -183,7 +183,7 @@ class VisualPlanService:
             '"client|service|datastore|actor|decision|requirement|group|note", '
             '"group": str|null, "emphasis": "normal|primary|muted", "annotations": [str]}], '
             '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed"}], '
-            '"preserve": [str], "add": [str], "change": [str], "remove": [str], "notes": [str]}'
+            '"preserve": [str], "add": [str], "change": [str], "remove": [str], "notes": [str], "context_notes": [str]}'
         )
         lines = [
             f"You are the Synora visual architecture planner for the project: '{project_title}'.",
@@ -195,6 +195,9 @@ class VisualPlanService:
             "3. HIGH-EFFICIENCY ARCHITECTURAL NOTES: You MUST provide 2 to 4 concise, high-signal, actionable notes in the 'notes' array. Each note must state a concrete architectural decision, integration specification, technical constraint, or operational scope (e.g. 'Event-driven message stream for real-time order dispatch', 'Autonomous table ordering with QR token verification'). Do NOT leave 'notes' empty.",
             "4. NODE LABELS: Keep node labels short, crisp, and professional (2-4 words, e.g. 'Table Ordering Agent', 'Kitchen Display API', 'Order DB', 'Customer Web App').",
             "5. RELATIONSHIPS: Connect components logically with directional data flow relationships.",
+            "6. PROJECT CONTEXT NOTES: Synthesize the overall context from project state plus relevant evidence so a human can understand the project without reading source messages. Do not output a transcript or one card per message. Produce 3 to 5 concise cards, preferably labeled PURPOSE, CURRENT STATE, KEY DECISIONS, CONSTRAINTS, OPEN ITEMS, or NEXT FOCUS. Each card is 1 to 2 short sentences and preserves important meaning without quoting chat verbatim.",
+            "7. VISUAL HIERARCHY: Prefer a clear architecture flow with clients at the edge, core services in the middle, data/external systems downstream, and grouped sections where useful. Render PROJECT CONTEXT as a separate vertical stack that can be scanned before architecture details.",
+
             "",
             f"Respond with ONLY JSON matching: {schema}",
             "",
@@ -249,6 +252,28 @@ class VisualPlanService:
                 dec_title = dec.get("title") or dec.get("text") if isinstance(dec, dict) else str(dec)
                 auto_notes.append(f"💡 Decision: {str(dec_title)[:90]}")
             plan.notes = auto_notes or ["Domain architecture components and operational directives."]
+
+        if not plan.context_notes:
+            context_notes: List[str] = []
+            vision = str(state.get("vision") or "").strip()
+            if vision:
+                context_notes.append(f"PURPOSE — {vision[:220]}")
+            for entry in (state.get("requirements") or [])[:2]:
+                value = entry.get("title") or entry.get("content") or entry.get("detail") if isinstance(entry, dict) else str(entry)
+                if value:
+                    context_notes.append(f"CURRENT SCOPE — {str(value)[:200]}")
+            for entry in (state.get("decisions") or [])[:2]:
+                value = entry.get("title") or entry.get("text") or entry.get("decision") if isinstance(entry, dict) else str(entry)
+                if value:
+                    context_notes.append(f"KEY DECISION — {str(value)[:200]}")
+            for entry in (state.get("constraints") or [])[:1]:
+                value = entry.get("title") or entry.get("text") if isinstance(entry, dict) else str(entry)
+                if value:
+                    context_notes.append(f"CONSTRAINT — {str(value)[:200]}")
+            plan.context_notes = context_notes[:5] or [
+                f"PROJECT CONTEXT — {state.get('title') or 'Project'} domain state and current operating scope."
+            ]
+
         return plan
 
     def _call_client(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
@@ -272,22 +297,18 @@ class VisualPlanService:
         project_title = state.get("title") or "Project"
         system_instruction = (
             f"You are the Synora visual architecture planner for project '{project_title}'. "
-            "You produce structured, production-grade VisualPlans and high-efficiency architectural notes. "
-            "Model concrete domain components (clients, services, datastores, external APIs) and actionable architectural notes. "
-            "Never emit platform meta-scaffolding (do NOT include 'Synora Agent', 'Project State', 'Living Workspace', 'Evidence'). "
-            "Return ONLY strict JSON matching the requested schema. You never return Excalidraw JSON."
+            "Produce structured, production-grade VisualPlans and high-signal project-context notes. "
+            "Model concrete domain components and actionable architectural notes. "
+            "Never emit Synora platform meta-nodes and never return raw Excalidraw JSON. "
+            "Return ONLY strict JSON matching the requested VisualPlan schema."
         )
-        url = f"{settings.GEMINI_BASE_URL.rstrip('/')}/models/{settings.GEMINI_MODEL}:generateContent?key={settings.GEMINI_API_KEY}"
+        url = (
+            f"{settings.GEMINI_BASE_URL.rstrip('/')}/models/"
+            f"{settings.GEMINI_MODEL}:generateContent?key={settings.GEMINI_API_KEY}"
+        )
         payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}],
-                }
-            ],
-            "systemInstruction": {
-                "parts": [{"text": system_instruction}]
-            },
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
             "generationConfig": {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
@@ -297,22 +318,24 @@ class VisualPlanService:
             with httpx.Client(timeout=30.0) as client:
                 resp = client.post(url, json=payload)
                 if resp.status_code != 200:
-                    logger.warning("visual_plan_gemini_http_%s: %s", resp.status_code, resp.text[:200])
+                    logger.warning(
+                        "visual_plan_gemini_http_%s: %s", resp.status_code, resp.text[:200]
+                    )
                     return None
-                res_json = resp.json()
-                candidates = res_json.get("candidates", [])
+                data = resp.json()
+                candidates = data.get("candidates", [])
                 if not candidates:
                     return None
                 parts = candidates[0].get("content", {}).get("parts", [])
                 content = parts[0].get("text", "") if parts else ""
-                if not content or not content.strip():
-                    return None
                 if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
+                    content = content.split("```json", 1)[1].split("```", 1)[0].strip()
                 elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
+                    content = content.split("```", 1)[1].split("```", 1)[0].strip()
         except Exception as exc:
             logger.warning("visual_plan_gemini_failed: %s", exc)
+            return None
+        if not content.strip():
             return None
         plan = self._parse(content, model=f"gemini/{settings.GEMINI_MODEL}")
         return self._ensure_efficient_notes(plan, state, focus)
@@ -535,9 +558,39 @@ class VisualPlanService:
             relationships=relationships,
             preserve=[],
             notes=notes_list or ["System architecture and operational directives."],
+            context_notes=self._deterministic_context_notes(
+                state_summary, requirements=requirements, decisions=decisions
+            ),
             model="deterministic",
-            prompt_version="visual-plan-deterministic-v2",
+            prompt_version="visual-plan-deterministic-v3",
         )
+
+    @staticmethod
+    def _deterministic_context_notes(
+        state_summary: Dict[str, Any],
+        requirements: Optional[List[Any]] = None,
+        decisions: Optional[List[Any]] = None,
+    ) -> List[str]:
+        """Build human-readable context cards without replaying the transcript."""
+        notes: List[str] = []
+        vision = str(state_summary.get("vision") or "").strip()
+        if vision:
+            notes.append(f"PURPOSE — {vision[:220]}")
+        for entry in (requirements or [])[:2]:
+            value = entry.get("title") or entry.get("content") or entry.get("detail") if isinstance(entry, dict) else str(entry)
+            if value:
+                notes.append(f"CURRENT SCOPE — {str(value)[:200]}")
+        for entry in (decisions or [])[:2]:
+            value = entry.get("title") or entry.get("text") or entry.get("decision") if isinstance(entry, dict) else str(entry)
+            if value:
+                notes.append(f"KEY DECISION — {str(value)[:200]}")
+        for entry in (state_summary.get("constraints") or [])[:1]:
+            value = entry.get("title") or entry.get("text") if isinstance(entry, dict) else str(entry)
+            if value:
+                notes.append(f"CONSTRAINT — {str(value)[:200]}")
+        return notes[:5] or [
+            f"PROJECT CONTEXT — {state_summary.get('title') or 'Project'} domain state and current operating scope."
+        ]
 
     def _plan_from_text_deterministic(self, text: str, title: str) -> VisualPlan:
         """Deterministic fallback when AI model is offline: extracts keywords/entities directly from text."""
@@ -628,6 +681,7 @@ class VisualPlanService:
             relationships=relationships,
             preserve=[],
             notes=notes,
+            context_notes=[f"PURPOSE — {text.strip()[:220]}"] if text.strip() else [],
             model="deterministic",
-            prompt_version="visual-plan-text-deterministic-v2",
+            prompt_version="visual-plan-text-deterministic-v3",
         )

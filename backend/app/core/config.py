@@ -64,15 +64,15 @@ class Settings(BaseSettings):
     GOOGLE_REFRESH_TOKEN: str = ""
 
     # Context Intelligence routing gate thresholds.
-    # The Agent auto-routes almost everything: only genuinely hard-to-classify
-    # content (nothing remotely plausible) stays in Unknown Context. A single
-    # weak-but-plausible candidate is enough for automatic assignment.
+    # Automatic assignment requires a strong semantic match AND sufficient
+    # separation from competing candidates. Ambiguous or weak matches remain
+    # in Unknown Context.
     CONTEXT_RESOLUTION_MIN_CONFIDENCE: float = Field(default=0.72)
     CONTEXT_RESOLUTION_MIN_MARGIN: float = Field(default=0.08)
     CONTEXT_RESOLUTION_AUTO_ASSIGN_MIN_CONFIDENCE: float = Field(default=0.72)
     CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
-    AUTO_APPLY_VISUAL_UPDATES: bool = Field(default=True, description="Whether incoming messages auto-apply diagrams directly to Excalidraw")
+    AUTO_APPLY_VISUAL_UPDATES: bool = Field(default=True, description="Whether incoming messages auto-apply safe semantic visual patches to Excalidraw")
     WHATSAPP_PROCESSING_INTERVAL_SECONDS: int = Field(default=60, ge=1, description="Durable processing window in seconds.")
     WHATSAPP_BATCH_POLL_SECONDS: int = Field(default=1, ge=1, description="Interval for background batch worker to poll.")
     WHATSAPP_BATCH_MAX_MESSAGES: int = Field(default=100, ge=1, le=1000)

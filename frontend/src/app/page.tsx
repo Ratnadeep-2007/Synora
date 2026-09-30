@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Shell, NavTab, NotificationItem } from "@/components/layout/Shell";
 import { OverviewView } from "@/components/views/OverviewView";
 import { ProjectStateView } from "@/components/views/ProjectStateView";
@@ -149,11 +149,39 @@ export default function Home() {
 
   useEffect(() => {
     refreshAll();
+    // Dashboard data is intentionally refreshed less often; visual revisions
+    // have their own lightweight heartbeat below.
     const interval = setInterval(() => {
       refreshAll();
-    }, 1000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [refreshAll]);
+
+  useEffect(() => {
+    if (!currentProjectId) return;
+    let cancelled = false;
+    let lastVersion = excalArtifact?.version ?? 0;
+
+    const pollVisualRevision = async () => {
+      try {
+        const latest = await api.getExcalidrawArtifact(currentProjectId);
+        if (cancelled) return;
+        if (latest.version !== lastVersion) {
+          lastVersion = latest.version;
+          setExcalArtifact(latest);
+        }
+      } catch {
+        // Live heartbeat is best-effort; the full refresh reconciles state.
+      }
+    };
+
+    pollVisualRevision();
+    const interval = setInterval(pollVisualRevision, 250);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [currentProjectId, excalArtifact?.version]);
 
   // Load meeting detail when selected
   useEffect(() => {

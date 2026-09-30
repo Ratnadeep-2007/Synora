@@ -372,6 +372,11 @@ class WhatsAppIntelligenceService:
                     ),
                     direct_apply=True,
                     actor_id="whatsapp_batch_worker",
+                    context_notes=[
+                        str(text).strip()
+                        for text in texts
+                        if str(text).strip()
+                    ][:8],
                 )
                 self.audit_service.record_event(
                     action="whatsapp_batch_visual_updated",

@@ -235,8 +235,9 @@ async def whatsapp_webhook(
     Durable WhatsApp ingestion boundary.
 
     The webhook persists messages into the batch queue.
-    If immediate=True is supplied (e.g. from the live Baileys bridge),
-    the batch is immediately processed so canvas updates appear in real-time.
+    If immediate=True is supplied (for example by the live Baileys bridge),
+    the queued batch is processed immediately so safe semantic canvas patches
+    can appear in real time.
     """
     raw_body = await request.body()
     headers = dict(request.headers)
@@ -283,6 +284,36 @@ async def whatsapp_webhook(
                 detail=f"WhatsApp batch queue error: {exc}",
             )
 
+    batch_summary = None
+    is_immediate = immediate or request.query_params.get("immediate") == "true"
+    if is_immediate and queued:
+        try:
+            summaries = []
+            processed_batch_ids = set()
+            for item in queued:
+                batch_id = item.get("batch_id")
+                if not batch_id or batch_id in processed_batch_ids:
+                    continue
+                processed_batch_ids.add(batch_id)
+                summary = whatsapp_batch_service.process_due_batches(
+                    db=db,
+                    tenant_id="default_tenant",
+                    force=True,
+                    batch_id=batch_id,
+                    max_batches=1,
+                )
+                summaries.extend(summary.get("batches", []))
+            batch_summary = {
+                "ok": True,
+                "processed_batches": len(summaries),
+                "batches": summaries,
+                "visual_updates": sum(
+                    int(batch.get("visual_updates", 0) or 0) for batch in summaries
+                ),
+            }
+        except Exception as exc:
+            logger.exception("Failed to instantly process WhatsApp batch: %s", exc)
+
     primary_matched = None
     primary_confidence = None
     primary_reasoning = None
@@ -292,18 +323,6 @@ async def whatsapp_webhook(
             primary_confidence = item.get("confidence")
             primary_reasoning = item.get("reasoning")
             break
-
-    batch_summary = None
-    is_immediate = immediate or request.query_params.get("immediate") == "true"
-    if is_immediate and queued:
-        try:
-            batch_summary = whatsapp_batch_service.process_due_batches(
-                db=db,
-                tenant_id="default_tenant",
-                force=True,
-            )
-        except Exception as exc:
-            logger.exception("Failed to instantly process WhatsApp batch: %s", exc)
 
     response_data: Dict[str, Any] = {
         "ok": True,
@@ -329,7 +348,7 @@ def simulate_whatsapp_message(
     current_user: User = Depends(get_current_user),
     immediate: bool = Query(default=False),
 ) -> Dict[str, Any]:
-    """Enqueue and optionally instantly process a simulated WhatsApp message."""
+    """Enqueue a simulated WhatsApp message through the same production batching path."""
     if "text" not in payload or not str(payload["text"]).strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message 'text' is required.")
 
@@ -339,7 +358,6 @@ def simulate_whatsapp_message(
         db=db,
         tenant_id=tenant_id,
     )
-
     should_process = immediate or bool(payload.get("immediate", False))
     batch_summary = None
     if should_process:
@@ -348,6 +366,8 @@ def simulate_whatsapp_message(
                 db=db,
                 tenant_id=tenant_id,
                 force=True,
+                batch_id=result["batch_id"],
+                max_batches=1,
             )
         except Exception as exc:
             logger.exception("Failed to instantly process simulated WhatsApp batch: %s", exc)
@@ -355,7 +375,6 @@ def simulate_whatsapp_message(
     matched_project = result.get("matched_project")
     confidence = result.get("confidence")
     reasoning = result.get("reasoning")
-
     if batch_summary and batch_summary.get("results"):
         first_res = batch_summary["results"][0]
         if first_res.get("matched_project"):
@@ -365,8 +384,8 @@ def simulate_whatsapp_message(
 
     res_payload = {
         "ok": True,
-        "status": "queued",
         "processed": bool(batch_summary),
+        "status": "queued",
         "batch_id": result["batch_id"],
         "message_id": result["message_id"],
         "visual_updates": batch_summary.get("visual_updates", 0) if batch_summary else 0,

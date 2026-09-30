@@ -4,6 +4,77 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import dynamic from "next/dynamic";
 import { AlertTriangle, Check, Eye, Info, Layers, Maximize2, Minimize2, PenTool, Save, ZoomIn } from "lucide-react";
 
+function sceneElementSignature(el: any): string {
+  if (!el || typeof el !== "object") return "";
+  return JSON.stringify({
+    type: el.type,
+    text: el.text,
+    semantic_id: el.semantic_id,
+    semantic_type: el.semantic_type,
+    x: el.x,
+    y: el.y,
+    width: el.width,
+    height: el.height,
+    angle: el.angle,
+    startBinding: el.startBinding,
+    endBinding: el.endBinding,
+    points: el.points,
+    groupIds: el.groupIds,
+    isDeleted: el.isDeleted,
+  });
+}
+
+/**
+ * Merge a remote server revision into a locally edited canvas.
+ * BASE = last server scene, LOCAL = unsaved browser scene, REMOTE = new revision.
+ * Remote changes are accepted only where LOCAL has not changed since BASE.
+ */
+function mergeRemoteScene(base: any[], local: any[], remote: any[]): any[] {
+  const baseMap = new Map((base || []).filter(Boolean).map((el) => [String(el.id), el]));
+  const localMap = new Map((local || []).filter(Boolean).map((el) => [String(el.id), el]));
+  const remoteMap = new Map((remote || []).filter(Boolean).map((el) => [String(el.id), el]));
+  const orderedIds: string[] = [];
+
+  for (const el of local || []) {
+    if (el?.id) orderedIds.push(String(el.id));
+  }
+  for (const el of remote || []) {
+    if (el?.id && !orderedIds.includes(String(el.id))) orderedIds.push(String(el.id));
+  }
+
+  const merged: any[] = [];
+  for (const id of orderedIds) {
+    const baseEl = baseMap.get(id);
+    const localEl = localMap.get(id);
+    const remoteEl = remoteMap.get(id);
+
+    if (!baseEl && remoteEl && !localEl) {
+      merged.push(remoteEl);
+      continue;
+    }
+    if (!remoteEl) {
+      if (localEl && (!baseEl || sceneElementSignature(localEl) !== sceneElementSignature(baseEl))) {
+        merged.push(localEl);
+      }
+      continue;
+    }
+    if (!localEl) {
+      merged.push(remoteEl);
+      continue;
+    }
+
+    const localChanged = sceneElementSignature(localEl) !== sceneElementSignature(baseEl);
+    const remoteChanged = sceneElementSignature(remoteEl) !== sceneElementSignature(baseEl);
+
+    if (remoteChanged && !localChanged) {
+      merged.push(remoteEl);
+    } else {
+      merged.push(localEl);
+    }
+  }
+  return merged;
+}
+
 export function sanitizeExcalidrawElements(elements: any[]): any[] {
   if (!Array.isArray(elements)) return [];
   const elementMap = new Map<string, any>();
@@ -234,7 +305,11 @@ export function ExcalidrawCanvas({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const localElementsRef = useRef<any[]>([]);
+  const serverElementsRef = useRef<any[]>([]);
+  const syncingSceneRef = useRef(false);
   const visibleElements = useMemo(
     () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
     [compareMode, compareElements, initialElements]
@@ -242,12 +317,51 @@ export function ExcalidrawCanvas({
   const initialScene = useMemo(() => sanitizeExcalidrawElements(initialElements), [initialElements]);
 
   useEffect(() => {
+    if (!localElementsRef.current.length && initialScene.length) {
+      localElementsRef.current = initialScene;
+    }
+    if (!serverElementsRef.current.length && initialScene.length) {
+      serverElementsRef.current = initialScene;
+    }
+  }, [initialScene]);
+
+  useEffect(() => {
     if (!excalidrawAPI) return;
     try {
+      const incoming = visibleElements;
+      const merged = isDirty
+        ? mergeRemoteScene(
+            serverElementsRef.current,
+            localElementsRef.current.length
+              ? localElementsRef.current
+              : excalidrawAPI.getSceneElements(),
+            incoming,
+          )
+        : incoming;
+
+      syncingSceneRef.current = true;
       excalidrawAPI.updateScene({
-        elements: visibleElements,
+        elements: merged,
         commitToHistory: false,
       });
+      localElementsRef.current = merged;
+      serverElementsRef.current = incoming;
+      if (!isDirty) {
+        setIsDirty(false);
+      }
+      setTimeout(() => {
+        try {
+          excalidrawAPI.scrollToContent();
+        } catch {}
+      }, 100);
+      queueMicrotask(() => {
+        syncingSceneRef.current = false;
+      });
+    } catch (error) {
+      console.warn("Failed to update Excalidraw scene", error);
+    }
+  }, [excalidrawAPI, visibleElements, version, isDirty, initialScene]);
+
       setTimeout(() => {
         try {
           excalidrawAPI.scrollToContent();
@@ -270,15 +384,19 @@ export function ExcalidrawCanvas({
       setIsSaving(true);
       const elements = excalidrawAPI.getSceneElements();
       const appState = excalidrawAPI.getAppState();
+      const savedElements = (elements || []).filter((el: any) => !el.isDeleted);
       await onSaveCanvas({
         name: projectName,
-        elements: (elements || []).filter((el: any) => !el.isDeleted),
+        elements: savedElements,
         app_state: {
           viewBackgroundColor: appState?.viewBackgroundColor || "#ffffff",
           gridSize: appState?.gridSize || 20,
           theme: appState?.theme || "light",
         },
       });
+      localElementsRef.current = savedElements;
+      serverElementsRef.current = savedElements;
+      setIsDirty(false);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (error) {
@@ -400,6 +518,11 @@ export function ExcalidrawCanvas({
           <Excalidraw
             excalidrawAPI={(api) => setExcalidrawAPI(api)}
             viewModeEnabled={!isEditable}
+            onChange={(elements: readonly any[]) => {
+              if (syncingSceneRef.current) return;
+              localElementsRef.current = Array.from(elements || []);
+              setIsDirty(true);
+            }}
             initialData={{
               elements: initialScene,
               appState: initialAppState || {
@@ -429,7 +552,9 @@ export function ExcalidrawCanvas({
         <span className="inline-flex items-center gap-1.5">
           <Info className="h-3 w-3 text-primary" />
           {isEditable
-            ? "Live editing enabled. Draw, add shapes, or modify components freely and click 'Save' (or Ctrl+S) to persist."
+            ? (isDirty
+                ? "Unsaved local edits are protected while Synora applies new semantic updates. Save to persist your changes."
+                : "Live editing enabled. Draw, add shapes, or modify components freely and click 'Save' (or Ctrl+S) to persist.")
             : "Synora automatically updates this visual workspace from governed project information."}
         </span>
         <span className="hidden font-mono sm:inline">
