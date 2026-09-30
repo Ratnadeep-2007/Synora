@@ -372,7 +372,7 @@ class WhatsAppIntelligenceService:
                     ),
                     direct_apply=True,
                     actor_id="whatsapp_batch_worker",
-                    conversation_notes=[
+                    context_notes=[
                         str(text).strip()
                         for text in texts
                         if str(text).strip()
