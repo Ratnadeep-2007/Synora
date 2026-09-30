@@ -14,7 +14,7 @@ AI_STATUS_DETERMINISTIC = "deterministic"
 class VisualPlanService:
     """Produces a structured VisualPlan from Project State.
 
-    The AI (NVIDIA NIM + DeepSeek) reasons about what should remain, change,
+    The AI (Gemini or configured failover provider) reasons about what should remain, change,
     be added or removed. When no semantic provider is available the service
     produces an explicitly-labelled DETERMINISTIC plan derived from Project
     State - it never presents deterministic output as AI output, and it never
