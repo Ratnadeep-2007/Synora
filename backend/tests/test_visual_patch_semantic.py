@@ -147,8 +147,10 @@ def test_project_visual_update_entrypoints_do_not_compile_or_replace_full_scene(
     source += inspect.getsource(ExcalidrawService.generate_proposal_from_state)
     source += inspect.getsource(ExcalidrawService.generate_ai_visual_architecture)
     source += inspect.getsource(ExcalidrawService.generate_diagram_from_text)
+    source += inspect.getsource(ExcalidrawService.review_proposal)
 
     assert "ExcalidrawCompiler" not in source
     assert "artifact.elements_json = json.dumps(proposed_elements)" not in source
     assert "artifact.elements_json = json.dumps(compiled_elements)" not in source
+    assert "artifact.elements_json = proposal.proposed_elements_json" not in source
     assert "VisualPatchService" in source
