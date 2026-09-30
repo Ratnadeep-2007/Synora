@@ -1,7 +1,7 @@
 # Synora 🚀
 > **Autonomous Multi-Channel Ingestion & Living Architecture Workspace**
 
-Synora bridges unstructured discussions across communication channels (Google Meet transcripts, WhatsApp messages, and direct uploads) with a dynamic, living system architecture workspace powered by Excalidraw, deterministic pipeline synthesis, and AI design via NVIDIA NIM (`deepseek-ai/deepseek-v4.1-flash`).
+Synora bridges unstructured discussions across communication channels (Google Meet transcripts, WhatsApp messages, and direct uploads) with a dynamic, living system architecture workspace powered by a single database-backed Excalidraw Project Atlas, deterministic pipeline synthesis, semantic project routing, and Gemini-driven architecture planning.
 
 ---
 
@@ -17,12 +17,12 @@ Synora bridges unstructured discussions across communication channels (Google Me
    - High-performance, zero-latency deterministic baseline ensuring 100% system availability even without cloud LLM keys.
 
 3. **AI Visual Canvas Engine (Excalidraw)**
-   - Powered by **NVIDIA NIM** (`deepseek-ai/deepseek-v4.1-flash`).
-   - Translates raw requirements into complete multi-tier visual architectural diagrams (Frontend, Application/API Gateway, Message Bus, Data & Storage tiers) with coordinate placement and typed edge routing.
+   - Powered by **Gemini 3.8 Flash** for architecture planning and structured intelligence, with **Gemini Embedding 2** for semantic project retrieval.
+   - Builds a single infinite **Project Atlas**: Context Inbox + fixed project columns, architecture-first composition, human-readable knowledge cards, evidence-linked revisions, and deterministic collision-safe layout.
    - Fallback to robust deterministic geometric layout if NIM API is unreachable or rate-limited.
 
 4. **Living Workspace & Project Management**
-   - Interactive Excalidraw board with live element synchronisation.
+   - One infinite Excalidraw Project Atlas with stable non-overlapping project columns and live database synchronization.
    - Full project lifecycle tracking: requirements, decisions, tasks, and architecture state history.
    - Real-time notification center and source connection management.
 
@@ -51,7 +51,7 @@ For a comprehensive breakdown of all 24 database models, 3 architectural pillars
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy, SQLite/PostgreSQL, Pydantic v2, Pytest
 - **Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS, Lucide React, Excalidraw
 - **Microservices**: Node.js Baileys Bridge (WhatsApp Web Multi-Device)
-- **AI / LLM**: NVIDIA NIM Cloud API (`deepseek-ai/deepseek-v4.1-flash`) with automatic deterministic fallback
+- **AI / LLM**: Gemini 3.8 Flash + Gemini Embedding 2 with Groq/NVIDIA failover and deterministic safety fallback
 
 ---
 
