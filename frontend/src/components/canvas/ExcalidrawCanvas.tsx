@@ -413,7 +413,9 @@ export function ExcalidrawCanvas({
               canvasActions: {
                 changeViewBackgroundColor: true,
                 clearCanvas: false,
-                export: true,
+                export: {
+                  saveFileToDisk: true,
+                },
                 loadScene: false,
                 saveToActiveFile: false,
                 toggleTheme: true,
