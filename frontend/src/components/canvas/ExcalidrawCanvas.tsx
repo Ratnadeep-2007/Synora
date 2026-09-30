@@ -256,7 +256,7 @@ export function ExcalidrawCanvas({
     } catch (error) {
       console.warn("Failed to update Excalidraw scene", error);
     }
-  }, [excalidrawAPI, visibleElements]);
+  }, [excalidrawAPI, visibleElements, version]);
 
   const center = useCallback(() => {
     try {
