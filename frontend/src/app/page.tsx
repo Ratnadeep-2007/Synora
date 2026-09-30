@@ -73,6 +73,24 @@ export default function Home() {
       const projListData = await api.getProjects().catch(() => [] as Project[]);
       setProjects(projListData);
 
+      // The Atlas is the workspace-wide view. Do not refresh unrelated
+      // project/meeting/agent endpoints while the user is watching the canvas.
+      if (currentTab === "excalidraw") {
+        const [atlasResult, unknownResult] = await Promise.allSettled([
+          api.getWorkspaceAtlas(),
+          api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
+        ]);
+        if (atlasResult.status === "fulfilled") setAtlasData(atlasResult.value);
+        if (unknownResult.status === "fulfilled") {
+          setUnknownPendingCount(unknownResult.value?.pending || 0);
+        }
+        return;
+      }
+
+      if (currentTab === "settings") {
+        return;
+      }
+
       const activeId =
         preferredProjectId !== undefined
           ? preferredProjectId
@@ -104,7 +122,6 @@ export default function Home() {
         subsData,
         eventsData,
         unknownSummaryData,
-        atlasDataResult,
       ] = await Promise.allSettled([
         api.getProjectState(activeId),
         api.getProjectHistory(activeId),
@@ -119,7 +136,6 @@ export default function Home() {
         api.listMeetSubscriptions().catch(() => []),
         api.listMeetEvents(undefined, 20).catch(() => []),
         api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
-        currentTab === "excalidraw" ? api.getWorkspaceAtlas() : Promise.resolve(null),
       ]);
 
       if (stateData.status === "fulfilled") setState(stateData.value);
@@ -136,9 +152,6 @@ export default function Home() {
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
       if (unknownSummaryData.status === "fulfilled") {
         setUnknownPendingCount(unknownSummaryData.value?.pending || 0);
-      }
-      if (atlasDataResult.status === "fulfilled" && atlasDataResult.value) {
-        setAtlasData(atlasDataResult.value);
       }
     } catch (err) {
       console.error("Failed to load project context:", err);
