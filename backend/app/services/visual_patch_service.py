@@ -389,24 +389,43 @@ class VisualPatchService:
 
         current_rev = self.revision_service.current_revision(project_id, db)
 
+        # For a stale proposal, recover its original BASE revision so the merge is
+        # genuinely three-way: ORIGINAL BASE + CURRENT USER CANVAS + SEMANTIC PATCH.
+        patch_model = (
+            existing_patch
+            or db.query(VisualPatchModel)
+            .filter(VisualPatchModel.id == patch.patch_id)
+            .first()
+        )
+        base_rev = current_rev
         if (
-            current_rev is not None
-            and patch.base_revision_number is not None
-            and current_rev.revision_number != patch.base_revision_number
+            patch_model
+            and patch_model.base_revision_id
+            and current_rev is not None
+            and (
+                patch.base_revision_number is None
+                or current_rev.revision_number != patch.base_revision_number
+            )
         ):
-            raise RuntimeError(
-                f"Visual patch base revision {patch.base_revision_number} is stale; "
-                f"current revision is {current_rev.revision_number}. Rebase/merge required."
+            base_rev = (
+                db.query(VisualRevision)
+                .filter(VisualRevision.id == patch_model.base_revision_id)
+                .first()
+                or current_rev
             )
 
         base_elements = []
-        if current_rev and current_rev.scene_json:
+        if base_rev and base_rev.scene_json:
             try:
-                base_elements = json.loads(current_rev.scene_json)
+                base_elements = json.loads(base_rev.scene_json)
             except Exception:
-                pass
+                base_elements = []
 
-        user_elements = user_scene_override if user_scene_override is not None else base_elements
+        user_elements = user_scene_override if user_scene_override is not None else (
+            json.loads(current_rev.scene_json)
+            if current_rev and current_rev.scene_json
+            else base_elements
+        )
         merged_scene, applied_ops, conflicts = self.merge_service.merge(
             base_elements=base_elements,
             user_elements=user_elements,
