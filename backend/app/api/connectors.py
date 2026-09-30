@@ -288,11 +288,29 @@ async def whatsapp_webhook(
     is_immediate = immediate or request.query_params.get("immediate") == "true"
     if is_immediate and queued:
         try:
-            batch_summary = whatsapp_batch_service.process_due_batches(
-                db=db,
-                tenant_id="default_tenant",
-                force=True,
-            )
+            summaries = []
+            processed_batch_ids = set()
+            for item in queued:
+                batch_id = item.get("batch_id")
+                if not batch_id or batch_id in processed_batch_ids:
+                    continue
+                processed_batch_ids.add(batch_id)
+                summary = whatsapp_batch_service.process_due_batches(
+                    db=db,
+                    tenant_id="default_tenant",
+                    force=True,
+                    batch_id=batch_id,
+                    max_batches=1,
+                )
+                summaries.extend(summary.get("batches", []))
+            batch_summary = {
+                "ok": True,
+                "processed_batches": len(summaries),
+                "batches": summaries,
+                "visual_updates": sum(
+                    int(batch.get("visual_updates", 0) or 0) for batch in summaries
+                ),
+            }
         except Exception as exc:
             logger.exception("Failed to instantly process WhatsApp batch: %s", exc)
 
@@ -328,6 +346,7 @@ def simulate_whatsapp_message(
     payload: Dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    immediate: bool = Query(default=False),
 ) -> Dict[str, Any]:
     """Enqueue a simulated WhatsApp message through the same production batching path."""
     if "text" not in payload or not str(payload["text"]).strip():
@@ -347,6 +366,8 @@ def simulate_whatsapp_message(
                 db=db,
                 tenant_id=tenant_id,
                 force=True,
+                batch_id=result["batch_id"],
+                max_batches=1,
             )
         except Exception as exc:
             logger.exception("Failed to instantly process simulated WhatsApp batch: %s", exc)
