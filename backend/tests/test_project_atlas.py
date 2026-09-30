@@ -11,6 +11,8 @@ from app.services.workspace_atlas_service import (
     COLUMN_GUTTER_CM,
     COLUMN_WIDTH,
     COLUMN_WIDTH_CM,
+    NOTE_H,
+    NOTE_W,
     WorkspaceAtlasService,
 )
 
@@ -190,6 +192,7 @@ def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
         )
         assert any(
             el.get("type") == "rectangle"
-            and el.get("width") == service.NOTE_W if hasattr(service, "NOTE_W") else True
+            and el.get("width") == NOTE_W
+            and el.get("height") == NOTE_H
             for el in elements
         )
