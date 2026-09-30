@@ -2,7 +2,7 @@ from app.schemas.visual_plan import VisualNode, VisualPlan, VisualRelationship
 from app.services.excalidraw_compiler import ExcalidrawCompiler
 
 
-def test_conversation_notes_stack_one_below_another():
+def test_context_notes_stack_one_below_another():
     plan = VisualPlan(
         title="DineIn",
         layout_direction="horizontal",
@@ -17,7 +17,7 @@ def test_conversation_notes_stack_one_below_another():
             VisualRelationship(source="ordering", target="order"),
             VisualRelationship(source="order", target="kds"),
         ],
-        conversation_notes=[
+        context_notes=[
             "CONVERSATION\nWe should support table QR ordering.",
             "CONVERSATION\nThe kitchen should receive orders immediately.",
             "CONVERSATION\nPayment must happen before confirmation.",
