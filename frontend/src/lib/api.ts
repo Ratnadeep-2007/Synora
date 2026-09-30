@@ -388,6 +388,11 @@ export const api = {
       body: JSON.stringify({ name, description, ...(workspaceId ? { workspace_id: workspaceId } : {}), ...(sources ? { sources } : {}) }),
     }),
 
+  deleteProject: (projectId: string): Promise<{ success: boolean; project_id: string; project_name: string; message: string }> =>
+    request(`/projects/${projectId}`, {
+      method: "DELETE",
+    }),
+
   getProjectAgent: (projectId: string): Promise<ProjectAgent> =>
     request<ProjectAgent>(`/projects/${projectId}/agent`),
 
