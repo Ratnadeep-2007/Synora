@@ -1,124 +1,73 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import {
-  Sparkles,
-  RefreshCw,
-  Save,
-  Maximize2,
-  Minimize2,
-  ZoomIn,
-  Download,
-  CheckCircle2,
-  Layers,
-  Info,
-  AlertTriangle,
-} from "lucide-react";
+import { AlertTriangle, Info, Layers, Maximize2, Minimize2, ZoomIn } from "lucide-react";
 
-// Robust sanitizer ensuring element geometry never passes NaN, null, or undefined to RoughJS / path-data-parser
 export function sanitizeExcalidrawElements(elements: any[]): any[] {
   if (!Array.isArray(elements)) return [];
-  return elements
-    .map((el, idx) => {
-      if (!el || typeof el !== "object") return null;
-      const sanitized = { ...el };
+  return elements.map((el, idx) => {
+    if (!el || typeof el !== "object") return null;
+    const sanitized = { ...el };
+    sanitized.id = String(sanitized.id || "el_" + idx);
+    sanitized.type = String(sanitized.type || "rectangle");
+    sanitized.x = Number.isFinite(Number(sanitized.x)) ? Number(sanitized.x) : 0;
+    sanitized.y = Number.isFinite(Number(sanitized.y)) ? Number(sanitized.y) : 0;
 
-      sanitized.id = String(sanitized.id || `el_${idx}_${Date.now()}`);
-      sanitized.type = String(sanitized.type || "rectangle");
+    if (sanitized.type === "arrow" || sanitized.type === "line") {
+      sanitized.width = Number.isFinite(Number(sanitized.width)) ? Number(sanitized.width) : 0;
+      sanitized.height = Number.isFinite(Number(sanitized.height)) ? Number(sanitized.height) : 0;
+      sanitized.points =
+        Array.isArray(sanitized.points) && sanitized.points.length > 0
+          ? sanitized.points.map((point: any) =>
+              Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
+                ? [Number(point[0]), Number(point[1])]
+                : [0, 0]
+            )
+          : [[0, 0], [100, 0]];
+    } else {
+      const width = Number(sanitized.width);
+      const height = Number(sanitized.height);
+      sanitized.width = Number.isFinite(width) && width >= 0 ? width : sanitized.type === "text" ? 120 : 160;
+      sanitized.height = Number.isFinite(height) && height >= 0 ? height : sanitized.type === "text" ? 24 : 70;
+    }
 
-      // Validate numeric coordinates
-      sanitized.x = Number.isFinite(Number(sanitized.x)) ? Number(sanitized.x) : 0;
-      sanitized.y = Number.isFinite(Number(sanitized.y)) ? Number(sanitized.y) : 0;
-
-      if (sanitized.type === "arrow" || sanitized.type === "line") {
-        sanitized.width = Number.isFinite(Number(sanitized.width)) ? Number(sanitized.width) : 0;
-        sanitized.height = Number.isFinite(Number(sanitized.height)) ? Number(sanitized.height) : 0;
-        if (!Array.isArray(sanitized.points) || sanitized.points.length === 0) {
-          sanitized.points = [[0, 0], [100, 0]];
-        } else {
-          sanitized.points = sanitized.points.map((pt: any) =>
-            Array.isArray(pt) && Number.isFinite(Number(pt[0])) && Number.isFinite(Number(pt[1]))
-              ? [Number(pt[0]), Number(pt[1])]
-              : [0, 0]
-          );
-        }
-      } else {
-        const w = Number(sanitized.width);
-        const h = Number(sanitized.height);
-        sanitized.width = Number.isFinite(w) && w >= 0 ? w : (sanitized.type === "text" ? 120 : 160);
-        sanitized.height = Number.isFinite(h) && h >= 0 ? h : (sanitized.type === "text" ? 24 : 70);
-      }
-
-      // Validate roundness object
-      if (sanitized.roundness) {
-        if (
-          typeof sanitized.roundness !== "object" ||
-          sanitized.roundness === null ||
-          !Number.isFinite(Number(sanitized.roundness.type))
-        ) {
-          sanitized.roundness = null;
-        } else {
-          sanitized.roundness = {
-            type: Number(sanitized.roundness.type),
-            ...(Number.isFinite(Number(sanitized.roundness.value)) ? { value: Number(sanitized.roundness.value) } : {}),
-          };
-        }
-      }
-
-      sanitized.angle = Number.isFinite(Number(sanitized.angle)) ? Number(sanitized.angle) : 0;
-      sanitized.roughness = Number.isFinite(Number(sanitized.roughness)) ? Number(sanitized.roughness) : 1;
-      sanitized.opacity = Number.isFinite(Number(sanitized.opacity)) ? Number(sanitized.opacity) : 100;
-      sanitized.isDeleted = Boolean(sanitized.isDeleted);
-      sanitized.groupIds = Array.isArray(sanitized.groupIds) ? sanitized.groupIds : [];
-
-      return sanitized;
-    })
-    .filter(Boolean);
-}
-
-// React error boundary isolating Excalidraw runtime/rendering exceptions
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: Error | null;
+    sanitized.angle = Number.isFinite(Number(sanitized.angle)) ? Number(sanitized.angle) : 0;
+    sanitized.roughness = Number.isFinite(Number(sanitized.roughness)) ? Number(sanitized.roughness) : 1;
+    sanitized.opacity = Number.isFinite(Number(sanitized.opacity)) ? Number(sanitized.opacity) : 100;
+    sanitized.isDeleted = Boolean(sanitized.isDeleted);
+    sanitized.groupIds = Array.isArray(sanitized.groupIds) ? sanitized.groupIds : [];
+    return sanitized;
+  }).filter(Boolean);
 }
 
 class CanvasErrorBoundary extends React.Component<
   { children: React.ReactNode; onReset?: () => void },
-  ErrorBoundaryState
+  { hasError: boolean }
 > {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
+  state = { hasError: false };
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error("Excalidraw runtime error caught by boundary:", error, errorInfo);
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="w-full h-full min-h-[580px] flex flex-col items-center justify-center bg-canvas p-6 text-center border border-border rounded-xl">
-          <div className="w-12 h-12 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center mb-3">
-            <AlertTriangle className="w-6 h-6" />
+        <div className="flex min-h-[620px] flex-col items-center justify-center rounded-xl border border-border bg-canvas p-6 text-center">
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-warning/10 text-warning">
+            <AlertTriangle className="h-5 w-5" />
           </div>
-          <h3 className="text-sm font-semibold text-text-main mb-1">Canvas Render Issue Encountered</h3>
-          <p className="text-xs text-text-muted max-w-md mb-4">
-            An element shape or drawing path could not be parsed by the canvas engine. The scene has been protected from corruption.
-          </p>
+          <h3 className="text-sm font-semibold text-text-main">Canvas could not be rendered</h3>
+          <p className="mt-1 max-w-md text-xs text-text-muted">The stored architecture remains intact in the database.</p>
           <button
             onClick={() => {
-              this.setState({ hasError: false, error: null });
-              if (this.props.onReset) this.props.onReset();
+              this.setState({ hasError: false });
+              this.props.onReset?.();
             }}
-            className="px-3.5 py-1.5 text-xs font-medium bg-primary text-white hover:bg-primary/90 rounded-lg transition-colors shadow-2xs"
+            className="mt-4 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-semibold text-text-main hover:bg-canvas"
           >
-            Reload Canvas
+            Reload canvas
           </button>
         </div>
       );
@@ -127,21 +76,18 @@ class CanvasErrorBoundary extends React.Component<
   }
 }
 
-// Dynamically import Excalidraw with SSR disabled since it relies heavily on browser Canvas & window APIs
 const Excalidraw = dynamic(
   async () => {
-    const mod = await import("@excalidraw/excalidraw");
-    return mod.Excalidraw;
+    const module = await import("@excalidraw/excalidraw");
+    return module.Excalidraw;
   },
   {
     ssr: false,
     loading: () => (
-      <div className="w-full h-full min-h-[580px] flex flex-col items-center justify-center bg-canvas/80 text-text-muted gap-3 border border-border rounded-xl">
-        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-        <div className="text-center space-y-1">
-          <p className="text-sm font-semibold text-text-main">Loading Interactive Excalidraw Canvas...</p>
-          <p className="text-xs text-text-muted font-mono">Initializing Visual Workspace</p>
-        </div>
+      <div className="flex min-h-[620px] flex-col items-center justify-center rounded-xl border border-border bg-canvas text-text-muted">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <p className="mt-3 text-sm font-semibold text-text-main">Loading architecture…</p>
+        <p className="mt-1 text-[11px] text-text-muted">Initializing visual workspace</p>
       </div>
     ),
   }
@@ -169,10 +115,6 @@ export function ExcalidrawCanvas({
   version = 1,
   initialElements = [],
   initialAppState,
-  isSyncing = false,
-  onSyncAgentOutput,
-  onSaveCanvas,
-  onExportJson,
   compareMode = false,
   compareElements = [],
   compareAddedIds = [],
@@ -182,194 +124,98 @@ export function ExcalidrawCanvas({
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
-  const rawVisibleElements = compareMode ? compareElements : initialElements;
-  const visibleElements = React.useMemo(
-    () => sanitizeExcalidrawElements(rawVisibleElements),
-    [rawVisibleElements]
-  );
-  const sanitizedInitialElements = React.useMemo(
-    () => sanitizeExcalidrawElements(initialElements),
-    [initialElements]
-  );
-  const [elementCount, setElementCount] = useState(visibleElements?.length || 0);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const lastRenderedKeyRef = useRef<string>("");
-  const currentKey = `${version}_${compareMode ? "cmp" : "norm"}_${visibleElements?.length || 0}`;
+  const visibleElements = useMemo(
+    () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
+    [compareMode, compareElements, initialElements]
+  );
+  const initialScene = useMemo(() => sanitizeExcalidrawElements(initialElements), [initialElements]);
 
-  // Update the canvas whenever the current workspace or compare overlay changes.
-  // Compare mode is intentionally view-only and does not write ghost elements back.
   useEffect(() => {
-    if (excalidrawAPI && visibleElements && visibleElements.length > 0) {
-      if (lastRenderedKeyRef.current === currentKey) {
-        return;
-      }
-      lastRenderedKeyRef.current = currentKey;
-      try {
-        excalidrawAPI.updateScene({
-          elements: visibleElements,
-          commitToHistory: !compareMode,
-        });
-        setElementCount(visibleElements.length);
-        // Center view on content after slight render delay
-        setTimeout(() => {
-          try {
-            excalidrawAPI.scrollToContent();
-          } catch {
-            // Ignore if layout hasn't settled
-          }
-        }, 150);
-      } catch (err) {
-        console.warn("Failed to update Excalidraw scene:", err);
-      }
+    if (!excalidrawAPI || !visibleElements.length) return;
+    try {
+      excalidrawAPI.updateScene({
+        elements: visibleElements,
+        commitToHistory: false,
+      });
+      setTimeout(() => {
+        try {
+          excalidrawAPI.scrollToContent();
+        } catch {}
+      }, 100);
+    } catch (error) {
+      console.warn("Failed to update Excalidraw scene", error);
     }
-  }, [excalidrawAPI, visibleElements, compareMode, currentKey]);
+  }, [excalidrawAPI, visibleElements]);
 
-  // Center view on content
-  const handleCenterView = useCallback(() => {
-    if (excalidrawAPI) {
-      try {
-        excalidrawAPI.scrollToContent();
-      } catch (err) {
-        console.warn("Error centering canvas:", err);
-      }
-    }
+  const center = useCallback(() => {
+    try {
+      excalidrawAPI?.scrollToContent();
+    } catch {}
   }, [excalidrawAPI]);
 
-  // Save current canvas state back to backend database
-  const handleSave = async () => {
-    if (!excalidrawAPI || !onSaveCanvas) return;
-    try {
-      setIsSaving(true);
-      const elements = excalidrawAPI.getSceneElements();
-      const appState = excalidrawAPI.getAppState();
-
-      await onSaveCanvas({
-        name: `${projectName} Architecture Scene`,
-        elements: Array.from(elements || []),
-        app_state: {
-          viewBackgroundColor: appState?.viewBackgroundColor || "#ffffff",
-          gridSize: appState?.gridSize || 20,
-        },
-      });
-
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2500);
-    } catch (err: any) {
-      alert(`Failed to save canvas to project state: ${err.message}`);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Keyboard shortcut for Esc to exit fullscreen
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isFullscreen) {
-        setIsFullscreen(false);
-      }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && isFullscreen) setIsFullscreen(false);
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [isFullscreen]);
 
   return (
     <div
       ref={containerRef}
-      className={`transition-all duration-300 flex flex-col bg-surface border border-border shadow-xs ${
-        isFullscreen
-          ? "fixed inset-0 z-50 rounded-none w-screen h-screen bg-canvas"
-          : "rounded-xl overflow-hidden w-full"
-      }`}
+      className={
+        "flex flex-col overflow-hidden border border-border bg-surface " +
+        (isFullscreen ? "fixed inset-0 z-50 rounded-none" : "rounded-xl")
+      }
     >
-      {/* Clean Canvas Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-surface border-b border-border text-xs">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-primary-soft text-primary flex items-center justify-center font-bold">
-            <Layers className="w-3.5 h-3.5" />
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
+            <Layers className="h-4 w-4" />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-text-main text-xs">
-              {projectName} Diagram
-            </span>
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-text-muted bg-canvas border border-border">
-              v{version}
-            </span>
-            <span className="text-[11px] text-text-muted">
-              • {elementCount} elements
-            </span>
-            {compareMode && compareFromRevision !== null && compareToRevision !== null && (
-              <>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-soft text-primary border border-primary/20">
-                  Compare r{compareFromRevision} → r{compareToRevision}
-                </span>
-                <span className="text-[10px] text-text-muted font-mono">
-                  +{compareAddedIds.length} added • ~{compareChangedIds.length} changed
-                </span>
-              </>
-            )}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-xs font-semibold text-text-main">{projectName}</h3>
+              <span className="rounded-md bg-canvas px-1.5 py-0.5 font-mono text-[10px] text-text-muted">v{version}</span>
+            </div>
+            <p className="text-[10px] text-text-muted">
+              {visibleElements.length} elements • AI-maintained • database-backed
+            </p>
           </div>
         </div>
 
-        {/* Action Controls */}
         <div className="flex items-center gap-1.5">
-          {onSaveCanvas && (
-            <button
-              onClick={handleSave}
-              disabled={isSaving || compareMode}
-              className={`px-3 py-1 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs border ${
-                saveSuccess
-                  ? "bg-emerald-500 text-white border-emerald-600"
-                  : "bg-surface hover:bg-surface/80 text-text-main border-border"
-              }`}
-              title="Save any visual canvas edits back to the project state"
-            >
-              {saveSuccess ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-                  <span>Saved</span>
-                </>
-              ) : (
-                <>
-                  <Save className="w-3.5 h-3.5 text-text-muted" />
-                  <span>{isSaving ? "Saving..." : "Save Edits"}</span>
-                </>
-              )}
-            </button>
+          {compareMode && compareFromRevision !== null && compareToRevision !== null && (
+            <span className="hidden rounded-full border border-border bg-canvas px-2 py-1 text-[10px] font-medium text-text-muted sm:inline">
+              r{compareFromRevision} → r{compareToRevision} • +{compareAddedIds.length} • ~{compareChangedIds.length}
+            </span>
           )}
-
           <button
-            onClick={handleCenterView}
-            className="px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center gap-1 transition-colors"
-            title="Center diagram on screen"
+            onClick={center}
+            className="rounded-lg border border-border bg-surface p-1.5 text-text-muted hover:bg-canvas hover:text-text-main"
+            title="Center diagram"
           >
-            <ZoomIn className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Center</span>
+            <ZoomIn className="h-3.5 w-3.5" />
           </button>
-
           <button
-            onClick={() => setIsFullscreen((prev) => !prev)}
-            className="p-1 text-text-muted hover:text-text-main bg-surface hover:bg-surface/80 border border-border rounded-lg flex items-center justify-center transition-colors"
-            title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+            onClick={() => setIsFullscreen((value) => !value)}
+            className="rounded-lg border border-border bg-surface p-1.5 text-text-muted hover:bg-canvas hover:text-text-main"
+            title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
           >
-            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>
 
-      {/* Embedded Excalidraw Component Container */}
-      <div
-        className="excalidraw-wrapper w-full relative transition-all"
-        style={{
-          height: isFullscreen ? "calc(100vh - 54px)" : "620px",
-        }}
-      >
-        <CanvasErrorBoundary onReset={handleCenterView}>
+      <div className="relative w-full" style={{ height: isFullscreen ? "calc(100vh - 57px)" : "620px" }}>
+        <CanvasErrorBoundary onReset={center}>
           <Excalidraw
             excalidrawAPI={(api) => setExcalidrawAPI(api)}
+            viewModeEnabled={true}
             initialData={{
-              elements: sanitizedInitialElements,
+              elements: initialScene,
               appState: initialAppState || {
                 viewBackgroundColor: "#ffffff",
                 gridSize: 20,
@@ -379,8 +225,8 @@ export function ExcalidrawCanvas({
             }}
             UIOptions={{
               canvasActions: {
-                changeViewBackgroundColor: true,
-                clearCanvas: true,
+                changeViewBackgroundColor: false,
+                clearCanvas: false,
                 export: false,
                 loadScene: false,
                 saveToActiveFile: false,
@@ -391,19 +237,12 @@ export function ExcalidrawCanvas({
         </CanvasErrorBoundary>
       </div>
 
-      {/* Canvas Footnote */}
-      <div className="px-4 py-2 bg-surface/50 border-t border-border flex items-center justify-between text-[11px] text-text-muted">
-        <div className="flex items-center gap-1.5">
-          <Info className="w-3 h-3 text-primary" />
-          <span>
-            {compareMode
-              ? "Compare view: historical elements are ghosted; added elements are highlighted in green; changed elements are highlighted in amber."
-              : "The Synora Agent compiles the living visual workspace from governed project information."}
-          </span>
-        </div>
-        <div className="font-mono text-[10px]">
-          Press <strong>Space + Drag</strong> to pan • <strong>Ctrl + Scroll</strong> to zoom
-        </div>
+      <div className="flex items-center justify-between gap-4 border-t border-border bg-surface/60 px-4 py-2 text-[10px] text-text-muted">
+        <span className="inline-flex items-center gap-1.5">
+          <Info className="h-3 w-3 text-primary" />
+          Synora automatically updates this visual workspace from governed project information.
+        </span>
+        <span className="hidden font-mono sm:inline">View only</span>
       </div>
     </div>
   );
