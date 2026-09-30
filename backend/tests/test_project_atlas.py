@@ -150,3 +150,28 @@ def test_context_feedback_is_tenant_scoped(db_session: Session):
 
     assert len(rows) == 1
     assert rows[0]["text"] == "restaurant table booking"
+
+
+def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
+    project = _project(db_session, "proj_note_visual", "DineIn")
+    notes = WorkspaceAtlasService()._knowledge_cards(
+        project.id,
+        reqs=[{"title": "QR ordering", "content": "Customers scan a table code to order."}],
+        decs=[{"title": "Use realtime KDS", "content": "Kitchen tickets are pushed immediately."}],
+        questions=[{"title": "Offline mode", "content": "What happens when the tablet loses connectivity?"}],
+        constraints=[{"title": "POS constraint", "content": "Settlement must stay consistent."}],
+    )
+
+    service = WorkspaceAtlasService()
+    for note in notes:
+        visual = service._mini_visual_sequence(note["category"], note["title"])
+        assert len(visual) == 3
+
+        elements = service._note_card(
+            project.id,
+            note,
+            x=100,
+            y=100,
+        )
+        assert any(el.get("customData", {}).get("atlas", {}).get("type") == "knowledge_mini_visual" for el in elements)
+        assert sum(1 for el in elements if el.get("type") == "arrow") >= 2
