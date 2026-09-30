@@ -110,6 +110,7 @@ class WorkspaceAtlasService:
                 db=db,
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
+                slot_map=slot_map,
             )
             now = datetime.now(timezone.utc)
             artifact.elements_json = json.dumps(scene)
@@ -267,6 +268,7 @@ class WorkspaceAtlasService:
                     "updated": p.updated_at.isoformat() if p.updated_at else None,
                     "state_version": self._state_version(p.id, db),
                     "diagram_version": self._diagram_version(p.id, db, tenant_id),
+                    "atlas_slot": slot_map.get(p.id),
                 }
                 for p in projects
             ],
@@ -314,6 +316,7 @@ class WorkspaceAtlasService:
         db: Session,
         tenant_id: str,
         workspace_id: str,
+        slot_map: Optional[Dict[str, int]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         scene: List[Dict[str, Any]] = []
         unknown_items = (
@@ -330,22 +333,8 @@ class WorkspaceAtlasService:
         # Column 0 is always Context Inbox.
         scene.extend(self._unknown_column(unknown_items, db, workspace_id))
 
-        app = self._json_dict(
-            db.query(ExcalidrawArtifact)
-            .filter(
-                ExcalidrawArtifact.project_id == SYSTEM_WORKSPACE_ATLAS_PROJECT_ID,
-                ExcalidrawArtifact.tenant_id == tenant_id,
-            )
-            .first().app_state_json
-            if db.query(ExcalidrawArtifact)
-            .filter(
-                ExcalidrawArtifact.project_id == SYSTEM_WORKSPACE_ATLAS_PROJECT_ID,
-                ExcalidrawArtifact.tenant_id == tenant_id,
-            )
-            .first()
-            else "{}"
-        )
-        slot_map = self._assign_slots(projects, app.get("atlas_slots") or {})
+        if slot_map is None:
+            slot_map = self._assign_slots(projects, {})
         for project in projects:
             slot = slot_map.get(project.id, 1)
             x = ATLAS_PADDING_X + slot * (COLUMN_WIDTH + COLUMN_GUTTER)
