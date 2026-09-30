@@ -132,19 +132,42 @@ def get_current_user(
     """
     Dependency that resolves the current authenticated Synesis user.
     Supports X-User-ID header or query parameter. Rejects unauthenticated requests.
+    Automatically provisions new session users to ensure seamless onboarding.
     """
-    target_id = x_user_id or user_id
+    target_id = (x_user_id or user_id or "").strip()
     if not target_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Provide X-User-ID header or user_id query parameter.",
         )
 
-    user = db.query(User).filter(User.id == target_id).first()
+    user = db.query(User).filter((User.id == target_id) | (User.email == target_id)).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Unknown user '{target_id}'.",
+        clean_name = target_id.replace("usr_", "").strip()
+        display_name = f"User {clean_name[:8]}" if clean_name else "User"
+        user_email = target_id if "@" in target_id else f"{target_id}@synesis.internal"
+
+        # Check if email is already taken by a different user
+        existing_with_email = db.query(User).filter(User.email == user_email).first()
+        if existing_with_email:
+            return existing_with_email
+
+        user = User(
+            id=target_id,
+            email=user_email,
+            name=display_name,
         )
+        db.add(user)
+        try:
+            db.commit()
+            db.refresh(user)
+        except Exception:
+            db.rollback()
+            user = db.query(User).filter((User.id == target_id) | (User.email == user_email)).first()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Unknown user '{target_id}'.",
+                )
 
     return user

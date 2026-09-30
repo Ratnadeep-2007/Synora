@@ -261,3 +261,40 @@ def test_list_connections(
     assert len(items) >= 1
     assert items[0]["provider"] == "google"
     assert items[0]["user_id"] == test_user.id
+
+
+def test_auto_provision_new_session_user(client: TestClient, db_session: Session):
+    new_user_id = "usr_mujgw3xsyq6xz0v8"
+    response = client.get("/auth/me", headers={"X-User-ID": new_user_id})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == new_user_id
+    assert data["email"] == f"{new_user_id}@synesis.internal"
+    assert "User" in data["name"]
+
+    # Verify user persists in database
+    persisted = db_session.query(User).filter(User.id == new_user_id).first()
+    assert persisted is not None
+    assert persisted.id == new_user_id
+
+
+def test_create_project_with_new_session_user(client: TestClient):
+    new_user_id = "usr_client_session_999"
+    response = client.post(
+        "/projects",
+        json={"name": "New Onboarding Project", "description": "Auto-provisioning test"},
+        headers={"X-User-ID": new_user_id},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "New Onboarding Project"
+    assert data["project_agent_id"] is not None
+
+
+def test_unauthenticated_request_rejected(client: TestClient):
+    response = client.post(
+        "/projects",
+        json={"name": "Rejected Project"},
+    )
+    assert response.status_code == 401
+    assert "Authentication required" in response.json()["detail"]

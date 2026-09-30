@@ -485,3 +485,19 @@ async def list_google_connections(
         .all()
     )
     return [SourceConnectionRead.model_validate(c) for c in connections]
+
+
+@router.get(
+    "/me",
+    summary="Get Current Authenticated User",
+    description="Returns current authenticated session user profile.",
+)
+async def get_me(
+    current_user: User = Depends(get_current_user),
+):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+    }
