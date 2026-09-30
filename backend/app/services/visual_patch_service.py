@@ -311,6 +311,28 @@ class VisualPatchService:
         user_scene_override: Optional[List[Dict[str, Any]]] = None,
     ) -> VisualRevision:
         """Apply patch to the current visual scene and commit a new immutable VisualRevision."""
+        if patch.project_id != project_id:
+            raise ValueError("Visual patch project_id does not match target project.")
+
+        # Idempotent retry: an already-applied patch returns its original revision.
+        existing_patch = (
+            db.query(VisualPatchModel)
+            .filter(VisualPatchModel.id == patch.patch_id)
+            .first()
+        )
+        if (
+            existing_patch
+            and existing_patch.status == "applied"
+            and existing_patch.target_revision_id
+        ):
+            existing_revision = (
+                db.query(VisualRevision)
+                .filter(VisualRevision.id == existing_patch.target_revision_id)
+                .first()
+            )
+            if existing_revision:
+                return existing_revision
+
         current_rev = self.revision_service.current_revision(project_id, db)
 
         if (
