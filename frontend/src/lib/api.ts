@@ -477,7 +477,7 @@ export const api = {
     group_name?: string;
     group_jid?: string;
   }): Promise<WhatsAppSimulateResult> =>
-    request<WhatsAppSimulateResult>("/connectors/whatsapp/simulate", {
+    request<WhatsAppSimulateResult>("/connectors/whatsapp/simulate?immediate=true", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
