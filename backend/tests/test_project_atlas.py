@@ -164,8 +164,13 @@ def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
 
     service = WorkspaceAtlasService()
     for note in notes:
-        visual = service._mini_visual_sequence(note["category"], note["title"])
-        assert len(visual) == 3
+        stages = service._mini_visual_stages(
+            note["category"],
+            note["title"],
+            note["content"],
+        )
+        assert len(stages) == 4
+        assert all(stage["label"] and stage["detail"] for stage in stages)
 
         elements = service._note_card(
             project.id,
@@ -173,5 +178,18 @@ def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
             x=100,
             y=100,
         )
-        assert any(el.get("customData", {}).get("atlas", {}).get("type") == "knowledge_mini_visual" for el in elements)
-        assert sum(1 for el in elements if el.get("type") == "arrow") >= 2
+        assert any(
+            el.get("customData", {}).get("atlas", {}).get("type") == "knowledge_mini_visual"
+            for el in elements
+        )
+        assert sum(1 for el in elements if el.get("type") == "arrow") >= 3
+        assert any(
+            el.get("type") == "text"
+            and "Read left" in el.get("text", "")
+            for el in elements
+        )
+        assert any(
+            el.get("type") == "rectangle"
+            and el.get("width") == service.NOTE_W if hasattr(service, "NOTE_W") else True
+            for el in elements
+        )
