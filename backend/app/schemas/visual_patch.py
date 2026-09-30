@@ -39,6 +39,7 @@ class VisualNoteCategory(str, Enum):
     INTEGRATION = "INTEGRATION"
     OPEN_QUESTION = "OPEN_QUESTION"
     ARCHITECTURE_PRINCIPLE = "ARCHITECTURE_PRINCIPLE"
+    CONVERSATION = "CONVERSATION"
 
 
 def make_stable_semantic_id(prefix: str, name: str) -> str:
