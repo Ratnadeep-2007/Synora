@@ -20,7 +20,7 @@ from app.schemas.excalidraw import (
     ExcalidrawProposalRead,
 )
 from app.schemas.source_event import SourceEventCreate
-from app.schemas.visual_patch import VisualPatch
+from app.schemas.visual_patch import PatchSafetyClassification, VisualPatch
 from app.services.audit_service import AuditService
 from app.services.ingestion_service import IngestionService
 
