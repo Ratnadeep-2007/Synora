@@ -410,7 +410,7 @@ class ExcalidrawService:
         direct_apply: bool = True,
         actor_id: str = "visual_planner",
         visual_plan_service=None,
-        conversation_notes: Optional[List[str]] = None,
+        context_notes: Optional[List[str]] = None,
     ) -> tuple[ExcalidrawProposal, Optional[ExcalidrawArtifact]]:
         """Plan -> compile -> critique -> auto-apply (or proposal).
 
@@ -457,13 +457,13 @@ class ExcalidrawService:
                 "minimum platform boilerplate",
                 "short labels",
                 "preserve good layout",
-                "conversation notes must be separate and stacked vertically",
+                "project context cards must be concise, synthesized, and stacked vertically",
             ],
         )
-        if conversation_notes:
-            plan.conversation_notes = [
+        if context_notes:
+            plan.context_notes = [
                 str(note).strip()[:650]
-                for note in conversation_notes
+                for note in context_notes
                 if str(note).strip()
             ][:8]
 
@@ -603,7 +603,7 @@ class ExcalidrawService:
 
         # Every direct conversation remains visible as its own note card.
         # This is intentionally separate from architectural summary notes.
-        plan.conversation_notes = [text.strip()[:650]] if text.strip() else []
+        plan.context_notes = [text.strip()[:650]] if text.strip() else []
 
         # 2. Compile to Excalidraw Elements
         compiler = ExcalidrawCompiler()
