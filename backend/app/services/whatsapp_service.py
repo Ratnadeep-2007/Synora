@@ -372,6 +372,11 @@ class WhatsAppIntelligenceService:
                     ),
                     direct_apply=True,
                     actor_id="whatsapp_batch_worker",
+                    conversation_notes=[
+                        f"{message.get('sender_name') or message.get('pushName') or 'WhatsApp User'}: {str(message.get('text') or message.get('caption') or '').strip()}"
+                        for message in messages[: settings.WHATSAPP_BATCH_MAX_MESSAGES]
+                        if str(message.get('text') or message.get('caption') or '').strip()
+                    ][:8],
                 )
                 self.audit_service.record_event(
                     action="whatsapp_batch_visual_updated",
