@@ -410,6 +410,7 @@ class ExcalidrawService:
         direct_apply: bool = True,
         actor_id: str = "visual_planner",
         visual_plan_service=None,
+        conversation_notes: Optional[List[str]] = None,
     ) -> tuple[ExcalidrawProposal, Optional[ExcalidrawArtifact]]:
         """Plan -> compile -> critique -> auto-apply (or proposal).
 
@@ -450,7 +451,21 @@ class ExcalidrawService:
             current_nodes=nodes_before,
             evidence_snippets=evidence_snippets,
             focus_prompt=focus_prompt,
-            constraints=["light theme", "minimum text", "short labels", "preserve good layout"],
+            constraints=[
+                "professional architecture-first layout",
+                "clear dependency flow",
+                "minimum platform boilerplate",
+                "short labels",
+                "preserve good layout",
+                "conversation notes must be separate and stacked vertically",
+            ],
+        )
+        if conversation_notes:
+            plan.conversation_notes = [
+                str(note).strip()[:650]
+                for note in conversation_notes
+                if str(note).strip()
+            ][:8]
         )
 
         compiler = ExcalidrawCompiler()
