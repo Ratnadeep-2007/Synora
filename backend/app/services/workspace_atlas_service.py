@@ -324,6 +324,9 @@ class WorkspaceAtlasService:
         slot_map: Optional[Dict[str, int]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         scene: List[Dict[str, Any]] = []
+        if slot_map is None:
+            slot_map = self._assign_slots(projects, {})
+
         unknown_items = (
             db.query(UnknownContextItem)
             .filter(
@@ -367,8 +370,6 @@ class WorkspaceAtlasService:
         # Column 0 is always Context Inbox.
         scene.extend(self._unknown_column(unknown_items, db, workspace_id))
 
-        if slot_map is None:
-            slot_map = self._assign_slots(projects, {})
         for project in projects:
             slot = slot_map.get(project.id, 1)
             x = ATLAS_PADDING_X + slot * (COLUMN_WIDTH + COLUMN_GUTTER)
