@@ -95,7 +95,7 @@ class WorkspaceAtlasService:
         projects = (
             db.query(Project)
             .filter(
-                Project.tenant_id == tenant_id if hasattr(Project, "tenant_id") else Project.workspace_id == workspace_id,
+                Project.workspace_id == workspace_id,
                 Project.is_system.is_(False),
                 Project.workspace_id == workspace_id,
             )
@@ -335,6 +335,35 @@ class WorkspaceAtlasService:
             .all()
         )
 
+        # Global atlas spine: keeps the whole infinite page visually anchored.
+        max_slot = max(slot_map.values(), default=0)
+        total_width = ATLAS_PADDING_X + (max_slot + 1) * (COLUMN_WIDTH + COLUMN_GUTTER)
+        scene.extend([
+            self._text(
+                self._id("atlas", "title"),
+                ATLAS_PADDING_X,
+                12,
+                max(COLUMN_WIDTH, total_width - ATLAS_PADDING_X),
+                32,
+                "SYNORA  •  PROJECT ATLAS",
+                22,
+                "#26362b",
+                bold=True,
+                custom_data={"atlas": {"type": "global_header"}},
+            ),
+            self._text(
+                self._id("atlas", "subtitle"),
+                ATLAS_PADDING_X,
+                39,
+                max(COLUMN_WIDTH, total_width - ATLAS_PADDING_X),
+                18,
+                "One living workspace  •  architecture first  •  evidence-backed knowledge  •  human attention only when context is unresolved",
+                10,
+                "#68756b",
+                custom_data={"atlas": {"type": "global_header"}},
+            ),
+        ])
+
         # Column 0 is always Context Inbox.
         scene.extend(self._unknown_column(unknown_items, db, workspace_id))
 
@@ -413,7 +442,7 @@ class WorkspaceAtlasService:
             )
         )
 
-        domain = self._project_domain(project)
+        domain = self._project_domain(project, db, tenant_id)
         if domain:
             scene.append(
                 self._text(
@@ -1142,7 +1171,21 @@ class WorkspaceAtlasService:
         }
 
     @staticmethod
-    def _project_domain(project: Project) -> str:
+    def _project_domain(project: Project, db: Session, tenant_id: str) -> str:
+        try:
+            from app.models.project_semantic_profile import ProjectSemanticProfile
+            profile = (
+                db.query(ProjectSemanticProfile)
+                .filter(
+                    ProjectSemanticProfile.project_id == project.id,
+                    ProjectSemanticProfile.tenant_id == tenant_id,
+                )
+                .first()
+            )
+            if profile and profile.domain:
+                return profile.domain[:110]
+        except Exception:
+            pass
         description = (project.description or "").strip().splitlines()
         for line in description:
             clean = line.strip()
