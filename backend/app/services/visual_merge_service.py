@@ -28,6 +28,7 @@ NOTE_CATEGORY_STYLES: Dict[str, Dict[str, str]] = {
     "INTEGRATION": {"background": "#fdf4ff", "stroke": "#c026d3", "text": "#86198f"},
     "OPEN_QUESTION": {"background": "#eff6ff", "stroke": "#2563eb", "text": "#1e40af"},
     "ARCHITECTURE_PRINCIPLE": {"background": "#f8fafc", "stroke": "#475569", "text": "#1e293b"},
+    "CONVERSATION": {"background": "#ffffff", "stroke": "#94a3b8", "text": "#334155"},
 }
 
 
@@ -465,9 +466,30 @@ class VisualMergeService:
         category = op.category.value if op.category else "DECISION"
         style = NOTE_CATEGORY_STYLES.get(category, NOTE_CATEGORY_STYLES["DECISION"])
 
-        note_w = 260
-        note_h = 80
-        x, y = self._find_free_slot(None, None, note_w, note_h, occupied_boxes)
+        note_w = 620 if category == "CONVERSATION" else 260
+        note_h = 108 if category == "CONVERSATION" else 80
+
+        if category == "CONVERSATION":
+            # Conversation cards form a strict chronological vertical stream.
+            conversation_cards = [
+                el for el in element_map.values()
+                if isinstance(el, dict) and el.get("semantic_type") == "note"
+                and str(el.get("id", "")).startswith("conversation_note_")
+            ]
+            node_right = max(
+                [
+                    float(el.get("x") or 0) + float(el.get("width") or 0)
+                    for el in element_map.values()
+                    if isinstance(el, dict)
+                    and el.get("semantic_type") == "node"
+                ],
+                default=BASE_X + NODE_WIDTH,
+            )
+            x = node_right + 80
+            y = BASE_Y + len(conversation_cards) * (note_h + 18)
+            occupied_boxes.append((x, y, x + note_w, y + note_h))
+        else:
+            x, y = self._find_free_slot(None, None, note_w, note_h, occupied_boxes)
 
         rect_element = {
             "id": note_id,
