@@ -33,6 +33,12 @@ NOTE_CATEGORY_STYLES: Dict[str, Dict[str, str]] = {
 
 
 class VisualMergeService:
+    """Three-Way Visual Merge Engine for Excalidraw scenes.
+
+    BASE is the common ancestor, USER is the current local state, and AI PATCH
+    contains semantic changes. User edits are preserved on semantic conflicts.
+    """
+
     _CONCEPT_ALIASES = {
         "kds": "kitchen display system",
         "kitchen display": "kitchen display system",
