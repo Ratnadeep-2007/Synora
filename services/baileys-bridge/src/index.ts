@@ -46,7 +46,7 @@ async function reportSessionStatus(
         {
           hostname: parsedUrl.hostname,
           port: parsedUrl.port || 80,
-          path: parsedUrl.pathname,
+          path: parsedUrl.pathname + parsedUrl.search,
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -83,7 +83,7 @@ async function forwardMessageToSynora(payload: {
   timestamp?: number;
 }) {
 
-  const url = `${BACKEND_URL}/connectors/whatsapp/webhook`;
+  const url = `${BACKEND_URL}/connectors/whatsapp/webhook?immediate=true`;
   const postData = JSON.stringify(payload);
 
   return new Promise((resolve, reject) => {
