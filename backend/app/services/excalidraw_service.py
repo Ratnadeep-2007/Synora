@@ -576,50 +576,45 @@ class ExcalidrawService:
         artifact = None
 
         if action.lower() == "approve":
+            diff_data = json.loads(proposal.diff_preview_json or "{}")
+            patch_data = diff_data.get("visual_patch")
+            if not patch_data:
+                raise ExcalidrawError(
+                    "This proposal was created by the legacy full-scene pipeline and cannot be approved. "
+                    "Regenerate it through the semantic visual patch pipeline."
+                )
+
+            artifact = (
+                db.query(ExcalidrawArtifact)
+                .filter(ExcalidrawArtifact.id == proposal.artifact_id)
+                .first()
+            )
+            if not artifact:
+                raise ExcalidrawError(
+                    f"Artifact '{proposal.artifact_id}' not found for proposal '{proposal.id}'."
+                )
+
+            from app.services.visual_patch_service import VisualPatchService
+            from app.services.visual_revision_service import VisualRevisionService
+
+            patch = VisualPatch.model_validate(patch_data)
+            patch_service = VisualPatchService(
+                revision_service=VisualRevisionService(audit_service=self.audit_service)
+            )
+            revision = patch_service.apply_patch(
+                project_id=proposal.project_id,
+                patch=patch,
+                db=db,
+                actor_id=actor_id,
+                tenant_id=tenant_id,
+                derived_from_project_state_version=proposal.derived_from_state_version,
+                proposal_id=proposal.id,
+            )
+
             proposal.status = ExcalidrawProposalStatus.APPROVED.value
             proposal.approved_at = now
             proposal.approved_by = actor_id
-
-            # Apply to artifact
-            artifact = db.query(ExcalidrawArtifact).filter(ExcalidrawArtifact.id == proposal.artifact_id).first()
-            if artifact:
-                diff_data = json.loads(proposal.diff_preview_json)
-                artifact.elements_json = proposal.proposed_elements_json
-                artifact.extracted_nodes_json = json.dumps(diff_data.get("nodes_after", []))
-                artifact.version += 1
-                artifact.updated_at = now
-
-                # Approval creates a NEW immutable visual revision: the current
-                # workspace is only ever advanced by appending, never overwritten.
-                from app.services.visual_revision_service import VisualRevisionService
-
-                evidence_ids = []
-                try:
-                    evidence_ids = json.loads(proposal.evidence_ids_json or "[]")
-                except Exception:
-                    evidence_ids = []
-                VisualRevisionService(audit_service=self.audit_service).commit_revision(
-                    project_id=proposal.project_id,
-                    scene=json.loads(proposal.proposed_elements_json or "[]"),
-                    db=db,
-                    tenant_id=tenant_id,
-                    app_state=json.loads(artifact.app_state_json) if artifact.app_state_json else {},
-                    operations=[
-                        {
-                            "op_type": "update",
-                            "payload": {
-                                "nodes_added": diff_data.get("nodes_added", []),
-                                "nodes_removed": diff_data.get("nodes_removed", []),
-                            },
-                            "source_evidence_ids": evidence_ids,
-                        }
-                    ],
-                    evidence_ids=evidence_ids,
-                    derived_from_project_state_version=proposal.derived_from_state_version,
-                    proposal_id=proposal.id,
-                    actor_id=actor_id,
-                    reason=f"Approved visual proposal {proposal.id}",
-                )
+            proposal.proposed_elements_json = revision.scene_json
 
             self.audit_service.record_event(
                 action="excalidraw_proposal_approved",
@@ -628,9 +623,19 @@ class ExcalidrawService:
                 resource_id=proposal.id,
                 db=db,
                 tenant_id=tenant_id,
-                after_state={"status": "approved", "artifact_version": artifact.version if artifact else None},
+                after_state={
+                    "status": "approved",
+                    "revision_id": revision.id,
+                    "revision_number": revision.revision_number,
+                    "mode": "semantic_patch",
+                },
             )
-            logger.info(f"Excalidraw proposal '{proposal.id}' approved by '{actor_id}'. Artifact updated to v{artifact.version if artifact else 'N/A'}")
+            logger.info(
+                "Excalidraw semantic proposal '%s' approved by '%s'; revision=%d",
+                proposal.id,
+                actor_id,
+                revision.revision_number,
+            )
 
         elif action.lower() == "reject":
             proposal.status = ExcalidrawProposalStatus.REJECTED.value
