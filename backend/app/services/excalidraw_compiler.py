@@ -176,10 +176,26 @@ class ExcalidrawCompiler:
             dst_pos = positions.get(rel.target)
             elements.append(self._arrow(rel, src, dst, index, src_pos, dst_pos))
 
-        # Architectural notes remain compact; conversation history is a separate vertical stream.
-        if plan.notes or plan.conversation_notes:
+        # Human context is synthesized from project state/evidence; it is not a transcript.
+        # Context cards are rendered first so a reader understands the "why/where we are"
+        # before scanning architectural details. Every card is stacked vertically.
+        if plan.notes or plan.context_notes:
             max_y = max(pos[1] for pos in positions.values())
             notes_hdr_y = max_y + NODE_HEIGHT + 55
+
+            if plan.context_notes:
+                elements.extend(self._render_note_section(
+                    header="PROJECT CONTEXT",
+                    notes=plan.context_notes[:5],
+                    start_y=notes_hdr_y,
+                    prefix="context_note",
+                    category_label="CONTEXT",
+                    width=760,
+                    note_height=108,
+                ))
+                notes_hdr_y += self._note_section_height(
+                    len(plan.context_notes[:5]), note_height=108
+                ) + 28
 
             if plan.notes:
                 elements.extend(self._render_note_section(
@@ -189,19 +205,8 @@ class ExcalidrawCompiler:
                     prefix="arch_note",
                     category_label="ARCHITECTURE",
                     width=540,
+                    note_height=96,
                 ))
-                notes_hdr_y = notes_hdr_y + 150 + min(len(plan.notes[:6]), 6) * 108
-
-            if plan.conversation_notes:
-                elements.extend(self._render_note_section(
-                    header="CONVERSATION NOTES",
-                    notes=plan.conversation_notes[:8],
-                    start_y=notes_hdr_y,
-                    prefix="conversation_note",
-                    category_label="CONVERSATION",
-                    width=760,
-                ))
-
 
         self.validate_scene(elements)
         return elements
@@ -278,6 +283,7 @@ class ExcalidrawCompiler:
         prefix: str,
         category_label: str,
         width: int,
+        note_height: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         elements: List[Dict[str, Any]] = []
         header_id = f"{prefix}_header"
@@ -302,7 +308,7 @@ class ExcalidrawCompiler:
         })
 
         note_y = start_y + 34
-        note_h = 92 if category_label == "CONVERSATION" else 96
+        note_h = note_height or (108 if category_label == "CONTEXT" else 96)
         for index, note in enumerate(notes):
             clean = str(note).strip()
             if not clean:
@@ -355,6 +361,13 @@ class ExcalidrawCompiler:
             })
             note_y += note_h + 18
         return elements
+
+    @staticmethod
+    def _note_section_height(count: int, note_height: int) -> int:
+        """Return deterministic vertical footprint for a note section."""
+        if count <= 0:
+            return 24
+        return 24 + 34 + count * note_height + max(0, count - 1) * 18
 
     # ------------------------------------------------------------------
     # Layout
