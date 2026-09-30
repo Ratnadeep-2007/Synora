@@ -74,9 +74,9 @@ class VisualPlan(BaseModel):
     change: List[str] = []
     remove: List[str] = []
     notes: List[str] = []
-    # Raw/near-verbatim conversation notes rendered as a vertical timeline.
-    # The architecture notes above remain separate from conversation history.
-    conversation_notes: List[str] = []
+    # Human-oriented synthesis of the overall project context.
+    # These are concise context cards, not a transcript or message timeline.
+    context_notes: List[str] = []
     model: str = ""
     prompt_version: str = ""
 
