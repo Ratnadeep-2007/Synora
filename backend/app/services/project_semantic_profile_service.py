@@ -224,6 +224,7 @@ class ProjectSemanticProfileService:
         profile.decisions_summary_json = json.dumps(decs_summary[:15])
         profile.visual_concepts_json = json.dumps(clean_list(visual_concepts)[:25])
         profile.representative_evidence_json = json.dumps(representative_evidence[:8])
+        profile.state_version = int(state_row.current_version) if state_row else 1
 
         # Generate and cache embedding vector
         composite_text = profile.to_composite_text()
