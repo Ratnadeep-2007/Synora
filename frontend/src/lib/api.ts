@@ -11,6 +11,7 @@ import {
   Project,
   ProjectAgent,
   WorkspaceAgent,
+  WorkspaceAtlasData,
   ProjectState,
   ProjectStateVersion,
   SourceConnection,
@@ -331,6 +332,13 @@ export const api = {
   // Deprecated legacy coordinator briefing (multi-agent era shape).
   getCoordinatorBriefing: (projectId: string): Promise<LegacyCoordinatorBriefing> =>
     request<LegacyCoordinatorBriefing>(`/projects/${projectId}/agents/coordinator-briefing`),
+
+  // 8b. Single infinite Project Atlas
+  getWorkspaceAtlas: (): Promise<WorkspaceAtlasData> =>
+    request<WorkspaceAtlasData>("/workspace/atlas"),
+
+  syncWorkspaceAtlas: (): Promise<WorkspaceAtlasData> =>
+    request<WorkspaceAtlasData>("/workspace/atlas/sync", { method: "POST" }),
 
   // 9. Excalidraw Visual Architecture
   getExcalidrawArtifact: (projectId: string): Promise<ExcalidrawArtifact> =>
