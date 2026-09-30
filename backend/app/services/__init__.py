@@ -14,6 +14,8 @@ from app.services.source_intelligence_pipeline import SourceIntelligencePipeline
 from app.services.unknown_context_service import UnknownContextService
 from app.services.visual_revision_service import VisualRevisionService
 from app.services.visual_plan_service import VisualPlanService
+from app.services.project_domain_service import ProjectDomainKnowledgeService
+from app.services.whatsapp_batch_service import WhatsAppBatchService
 
 __all__ = [
     "build_continuity_window",
@@ -30,5 +32,7 @@ __all__ = [
     "UnknownContextService",
     "VisualRevisionService",
     "VisualPlanService",
+    "ProjectDomainKnowledgeService",
+    "WhatsAppBatchService",
 ]
 

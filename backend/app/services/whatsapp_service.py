@@ -61,6 +61,9 @@ class WhatsAppIntelligenceService:
         payload: Dict[str, Any],
         db: Session,
         tenant_id: str = "default_tenant",
+        continuity_override: Optional[str] = None,
+        skip_visual: bool = False,
+        auto_apply_override: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         End-to-end processing of a WhatsApp group chat message.
@@ -106,9 +109,17 @@ class WhatsAppIntelligenceService:
                 "message": "Message ignored: casual chit-chat detected. All project evidence left untouched.",
             }
 
-        continuity = self._conversation_continuity(
-            group_name, raw_text, db, tenant_id,
-            group_jid=group_jid, sender_jid=sender_jid,
+        continuity = (
+            continuity_override
+            if continuity_override is not None
+            else self._conversation_continuity(
+                group_name,
+                raw_text,
+                db,
+                tenant_id,
+                group_jid=group_jid,
+                sender_jid=sender_jid,
+            )
         )
 
         meta_dict: Dict[str, Any] = {
@@ -201,15 +212,22 @@ class WhatsAppIntelligenceService:
         matched_project = db.query(Project).filter(Project.id == project_id).first()
         confidence = 1.0
 
-        auto_apply = bool(
-            payload.get("auto_apply_diagram", getattr(settings, "AUTO_APPLY_VISUAL_UPDATES", False))
+        auto_apply = (
+            bool(auto_apply_override)
+            if auto_apply_override is not None
+            else bool(
+                payload.get(
+                    "auto_apply_diagram",
+                    getattr(settings, "AUTO_APPLY_VISUAL_UPDATES", False),
+                )
+            )
         )
 
         proposal = None
         diagram_res = None
         excalidraw_updated = False
 
-        if auto_apply:
+        if auto_apply and not skip_visual:
             try:
                 diagram_res = self.excal_service.generate_diagram_from_text(
                     project_id=project_id,
@@ -227,7 +245,7 @@ class WhatsAppIntelligenceService:
             except Exception as exc:
                 logger.error(f"Error auto-applying Excalidraw diagram from WhatsApp: {exc}")
                 excalidraw_updated = False
-        else:
+        elif not skip_visual:
             # Visual changes are proposal-first when auto_apply is False:
             # the living workspace is not mutated without human review.
             proposal = self._propose_visual_update(
@@ -257,6 +275,8 @@ class WhatsAppIntelligenceService:
         msg_str = (
             f"Routed to project '{matched_project.name if matched_project else project_id}'."
         )
+        if skip_visual:
+            msg_str += " Visual update deferred until the current WhatsApp batch completes."
         if excalidraw_updated:
             msg_str += " Excalidraw whiteboard automatically updated with new architecture diagram."
         elif proposal:
@@ -283,6 +303,112 @@ class WhatsAppIntelligenceService:
             "diagram": diagram_res,
             "multimodal": multimodal_meta or None,
             "message": msg_str,
+        }
+
+    def process_incoming_batch(
+        self,
+        messages: List[Dict[str, Any]],
+        db: Session,
+        tenant_id: str = "default_tenant",
+        batch_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Process one durable WhatsApp batch and update Excalidraw once per project."""
+        if not messages:
+            return {
+                "batch_id": batch_id,
+                "processed": 0,
+                "visual_updates": 0,
+                "results": [],
+                "errors": [],
+                "visual_errors": [],
+            }
+
+        lines: List[str] = []
+        for message in messages[: settings.WHATSAPP_BATCH_MAX_MESSAGES]:
+            text = str(message.get("text") or message.get("caption") or "").strip()
+            if text:
+                sender = message.get("sender_name") or message.get("pushName") or "WhatsApp User"
+                lines.append(f"- {sender}: {text[:600]}")
+
+        batch_context = "CURRENT WHATSAPP BATCH:\n" + "\n".join(lines)
+        results: List[Dict[str, Any]] = []
+        errors: List[str] = []
+        project_messages: Dict[str, List[str]] = {}
+        project_evidence: Dict[str, List[str]] = {}
+
+        for message in messages[: settings.WHATSAPP_BATCH_MAX_MESSAGES]:
+            try:
+                result = self.process_incoming_message(
+                    dict(message),
+                    db,
+                    tenant_id=tenant_id,
+                    continuity_override=batch_context,
+                    skip_visual=True,
+                    auto_apply_override=False,
+                )
+                results.append(result)
+
+                matched = result.get("matched_project") or {}
+                project_id = matched.get("id")
+                text = str(message.get("text") or message.get("caption") or "").strip()
+                if project_id and text and result.get("status") not in ("unknown_context", "ignored"):
+                    project_messages.setdefault(project_id, []).append(text)
+                    evidence_id = result.get("evidence_id")
+                    if evidence_id:
+                        project_evidence.setdefault(project_id, []).append(evidence_id)
+            except Exception as exc:
+                logger.exception("whatsapp_batch_message_failed batch=%s", batch_id)
+                errors.append(str(exc))
+
+        visual_updates = 0
+        visual_errors: List[str] = []
+        for project_id, texts in project_messages.items():
+            try:
+                combined = "\n".join(texts)[:5000]
+                self.excal_service.generate_ai_visual_architecture(
+                    project_id=project_id,
+                    db=db,
+                    tenant_id=tenant_id,
+                    focus_prompt=(
+                        "Update the living visual project memory from this WhatsApp batch. "
+                        "Extract only meaningful project knowledge and represent it as concise "
+                        "visual notes, decisions, requirements, actions, questions, risks, and "
+                        "architecture relationships. Preserve useful current content and do not "
+                        "dump the transcript. Batch content:\n" + combined
+                    ),
+                    direct_apply=True,
+                    actor_id="whatsapp_batch_worker",
+                )
+                self.audit_service.record_event(
+                    action="whatsapp_batch_visual_updated",
+                    actor_id="whatsapp_batch_worker",
+                    resource_type="excalidraw_workspace",
+                    resource_id=project_id,
+                    db=db,
+                    tenant_id=tenant_id,
+                    after_state={
+                        "batch_id": batch_id,
+                        "project_id": project_id,
+                        "evidence_ids": list(dict.fromkeys(project_evidence.get(project_id, []))),
+                        "message_count": len(texts),
+                    },
+                )
+                visual_updates += 1
+            except Exception as exc:
+                logger.exception(
+                    "whatsapp_batch_visual_failed batch=%s project=%s",
+                    batch_id,
+                    project_id,
+                )
+                visual_errors.append(f"{project_id}: {exc}")
+
+        return {
+            "batch_id": batch_id,
+            "processed": len(results),
+            "visual_updates": visual_updates,
+            "results": results,
+            "errors": errors,
+            "visual_errors": visual_errors,
         }
 
     def _conversation_continuity(

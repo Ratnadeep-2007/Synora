@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 GROUP_MESSAGE_LIMIT = 6
@@ -51,12 +53,14 @@ def build_continuity_window(
     group_jid: Optional[str] = None,
     current_text: str = "",
     actor_jid: Optional[str] = None,
-    group_limit: int = GROUP_MESSAGE_LIMIT,
-    cross_limit: int = CROSS_SOURCE_LIMIT,
+    group_limit: Optional[int] = None,
+    cross_limit: Optional[int] = None,
 ) -> str:
     """Build the continuity window for one incoming WhatsApp message."""
     from app.models.source_event import SourceEvent
 
+    group_limit = group_limit or settings.WHATSAPP_CONTEXT_WINDOW_SIZE
+    cross_limit = cross_limit or CROSS_SOURCE_LIMIT
     lines: List[str] = []
     if group_name and group_name != "WhatsApp Group":
         lines.append(f"WhatsApp Group: {group_name}")
@@ -100,7 +104,12 @@ def build_continuity_window(
     for entry in list(reversed(same_group))[:group_limit]:
         lines.append(entry)
 
-    cross = build_cross_source_context(db, tenant_id=tenant_id, limit=cross_limit)
+    cross = build_cross_source_context(
+        db,
+        tenant_id=tenant_id,
+        current_text=current_text,
+        limit=cross_limit,
+    )
     if cross:
         lines.append("Related Meet discussion:")
         lines.append(cross)
@@ -113,20 +122,39 @@ def build_continuity_window(
 
 
 def build_cross_source_context(
-    db: Session, tenant_id: str = "default_tenant", limit: int = CROSS_SOURCE_LIMIT
+    db: Session,
+    tenant_id: str = "default_tenant",
+    current_text: str = "",
+    limit: int = CROSS_SOURCE_LIMIT,
 ) -> str:
-    """Recent Meet evidence, so a short WhatsApp reply resolves against it."""
+    """Return recent tenant-safe Meet context ranked by relevance."""
     try:
+        import re
         from app.models.evidence import Evidence
+        from app.models.source_event import SourceEvent
 
         rows = (
             db.query(Evidence)
-            .filter(Evidence.source == "google_meet")
+            .join(SourceEvent, Evidence.source_event_id == SourceEvent.event_id)
+            .filter(
+                Evidence.source == "google_meet",
+                SourceEvent.tenant_id == tenant_id,
+            )
             .order_by(Evidence.created_at.desc())
-            .limit(limit)
+            .limit(max(limit * 4, 12))
             .all()
         )
-        parts = [f"- Meet: {(r.content or '')[:220]}" for r in rows if r.content]
+        query_terms = set(re.findall(r"[a-z0-9]{3,}", (current_text or "").lower()))
+        scored = []
+        for row in rows:
+            content = (row.content or "").strip()
+            if not content:
+                continue
+            terms = set(re.findall(r"[a-z0-9]{3,}", content.lower()))
+            overlap = len(query_terms & terms)
+            scored.append((overlap, row))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        parts = [f"- Meet: {(row.content or '')[:220]}" for _, row in scored[:limit]]
         return "\n".join(parts)[:800]
     except Exception:
         return ""

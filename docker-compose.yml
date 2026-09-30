@@ -32,6 +32,36 @@ services:
     networks:
       - synesis-net
 
+  whatsapp-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: synesis-whatsapp-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.services.whatsapp_batch_worker"]
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://synesis_app:synesis_secure_pass_prod@db:5432/synesis_db
+      - SECRET_KEY=${SECRET_KEY:-synesis_production_secret_key_change_me_immediately_98765}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-q1w2e3r4t5y6u7i8o9p0a1s2d3c4v5b6n7m8}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - NVIDIA_MODEL=${NVIDIA_MODEL:-deepseek-ai/deepseek-v4.1-flash}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - LLM_PROVIDER=${LLM_PROVIDER:-nvidia}
+      - WHATSAPP_PROCESSING_INTERVAL_SECONDS=${WHATSAPP_PROCESSING_INTERVAL_SECONDS:-60}
+      - WHATSAPP_BATCH_POLL_SECONDS=${WHATSAPP_BATCH_POLL_SECONDS:-5}
+      - WHATSAPP_BATCH_MAX_MESSAGES=${WHATSAPP_BATCH_MAX_MESSAGES:-100}
+      - WHATSAPP_BATCH_MAX_RETRIES=${WHATSAPP_BATCH_MAX_RETRIES:-3}
+      - WHATSAPP_BATCH_RETRY_SECONDS=${WHATSAPP_BATCH_RETRY_SECONDS:-15}
+      - WHATSAPP_CONTEXT_WINDOW_SIZE=${WHATSAPP_CONTEXT_WINDOW_SIZE:-6}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synesis-net
+
   frontend:
     build:
       context: ./frontend

@@ -173,7 +173,7 @@ class SourceIntelligencePipeline:
 
         # 4. Parallel intelligence: Context || Knowledge on a shared snapshot.
         corpus = (
-            self.context_service._build_corpus(authorized, db) if not det_project_id else []
+            self.context_service._build_corpus(authorized, db, tenant_id=tenant_id) if not det_project_id else []
         )
         evidence_snapshot = [evidence]
 

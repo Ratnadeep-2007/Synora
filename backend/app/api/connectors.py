@@ -12,6 +12,7 @@ from app.api.deps import get_current_user, get_db
 from app.connectors.registry import registry
 from app.connectors.slack import SlackConnector
 from app.connectors.baileys import WhatsAppBaileysConnector
+from app.core.config import settings
 from app.core.rbac import Permission, enforce_permission
 from app.models.evidence import Evidence
 from app.models.source_event import SourceEvent
@@ -19,6 +20,7 @@ from app.models.user import User
 from app.services.ingestion_service import IngestionService
 from app.services.whatsapp_service import WhatsAppIntelligenceService
 from app.services.whatsapp_export_parser import WhatsAppZipParser
+from app.services.whatsapp_batch_service import WhatsAppBatchService
 from app.services.metrics import metrics
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/connectors", tags=["Connectors"])
 ingestion_service = IngestionService()
 whatsapp_service = WhatsAppIntelligenceService()
+whatsapp_batch_service = WhatsAppBatchService()
 
 
 @router.get("", summary="List All External Connectors and Status")
@@ -228,12 +231,11 @@ async def whatsapp_webhook(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    Webhook endpoint called by the Baileys daemon when a new WhatsApp group message is received.
-    Automatically:
-    1. Understands which project people are talking about across the workspace portfolio.
-    2. Ingests the message as immutable Evidence.
-    3. Extracts candidate decisions / requirements.
-    4. Applies visual updates directly to the target project's Excalidraw whiteboard!
+    Durable WhatsApp ingestion boundary.
+
+    The webhook only persists messages into a one-minute processing window.
+    AI/context/knowledge processing and the Excalidraw update happen in the
+    dedicated batch worker, keeping the connector responsive and contextual.
     """
     raw_body = await request.body()
     headers = dict(request.headers)
@@ -251,37 +253,78 @@ async def whatsapp_webhook(
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Malformed JSON: {exc}")
 
-    if isinstance(payload, list):
-        for msg in payload:
-            if isinstance(msg, dict):
-                msg.setdefault("auto_apply_diagram", True)
-        results = [whatsapp_service.process_incoming_message(msg, db) for msg in payload]
-        return {"ok": True, "count": len(results), "results": results}
-    elif isinstance(payload, dict) and "messages" in payload and isinstance(payload["messages"], list):
-        for msg in payload["messages"]:
-            if isinstance(msg, dict):
-                msg.setdefault("auto_apply_diagram", True)
-        results = [whatsapp_service.process_incoming_message(msg, db) for msg in payload["messages"]]
-        return {"ok": True, "count": len(results), "results": results}
+    if isinstance(payload, dict) and isinstance(payload.get("messages"), list):
+        messages = [m for m in payload["messages"] if isinstance(m, dict)]
+    elif isinstance(payload, list):
+        messages = [m for m in payload if isinstance(m, dict)]
+    elif isinstance(payload, dict):
+        messages = [payload]
     else:
-        if isinstance(payload, dict):
-            payload.setdefault("auto_apply_diagram", True)
-        result = whatsapp_service.process_incoming_message(payload, db)
-        return result
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported WhatsApp payload.")
 
-
-@router.post("/whatsapp/simulate", summary="Simulate WhatsApp Group Chat Message")
+    queued = []
+    duplicates = 0
+    for message in messages:
+        try:
+            result = whatsapp_batch_service.enqueue_message(
+                payload=message,
+                db=db,
+                tenant_id="default_tenant",
+            )
+            if result.get("duplicate"):
+                duplicates += 1
+            else:
+                queued.append(result)
+        except Exception as exc:
+            logger.exception("Failed to enqueue WhatsApp message")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"WhatsApp batch que@router.post("/whatsapp/simulate", summary="Simulate WhatsApp Group Chat Message")
 def simulate_whatsapp_message(
     payload: Dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """
-    Simulates receiving a WhatsApp group chat message.
-    Used for testing autonomous project understanding and real-time Excalidraw whiteboard updates.
-    """
+    """Enqueue a simulated WhatsApp message through the same production batching path."""
     if "text" not in payload or not str(payload["text"]).strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message 'text' is required.")
+
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    result = whatsapp_batch_service.enqueue_message(
+        payload=payload,
+        db=db,
+        tenant_id=tenant_id,
+    )
+    return {
+        "ok": True,
+        "processed": False,
+        "status": "queued",
+        "batch_id": result["batch_id"],
+        "message_id": result["message_id"],
+        "processing_interval_seconds": settings.WHATSAPP_PROCESSING_INTERVAL_SECONDS,
+        "message": "Simulated WhatsApp message queued for batch processing.",
+    }
+
+
+@router.post("/whatsapp/process-batches", summary="Process Due WhatsApp Batches")
+def process_whatsapp_batches(
+    force: bool = Query(
+        False,
+        description="Process queued batches immediately, even before their 60-second window expires.",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Manual reconciliation endpoint for local/admin testing of the batch worker."""
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    return whatsapp_batch_service.process_due_batches(
+        db=db,
+        tenant_id=tenant_id,
+        force=force,
+    )
+
+
+_400_BAD_REQUEST, detail="Message 'text' is required.")
 
     tenant_id = getattr(current_user, "tenant_id", "default_tenant")
     payload.setdefault("auto_apply_diagram", True)

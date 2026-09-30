@@ -51,6 +51,8 @@ from app.models.visual_revision import (
     VisualRevision,
     VisualOperation,
 )
+from app.models.whatsapp_batch import WhatsAppBatch, WhatsAppBatchItem
+from app.models.project_domain import ProjectDomainProfile
 
 __all__ = [
     "Workspace",
@@ -100,6 +102,9 @@ __all__ = [
     "VisualRevision",
     "ExcalidrawRevision",
     "VisualOperation",
+    "WhatsAppBatch",
+    "WhatsAppBatchItem",
+    "ProjectDomainProfile",
 ]
 
 

@@ -513,7 +513,7 @@ class ContextIntelligenceService:
 
         # B/C/D. Semantic + continuity + visual, delegated to a pure scoring step
         # so callers can run it concurrently with knowledge extraction.
-        corpus = self._build_corpus(projects, db) if projects else []
+        corpus = self._build_corpus(projects, db, tenant_id=tenant_id) if projects else []
         result = self.resolve_with_corpus(
             text=text,
             corpus=corpus,

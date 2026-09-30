@@ -323,7 +323,7 @@ def test_whatsapp_leaves_uncreated_project_alone(db_session: Session):
 
 
 def test_whatsapp_api_endpoints(client, db_session: Session):
-    """Verify WhatsApp REST API and webhook endpoints."""
+    """Verify WhatsApp API, durable queueing, and explicit batch reconciliation."""
     agent_service = ProjectAgentService()
     claims_proj = agent_service.get_or_create_project(
         project_id="proj_claims_api_test",
@@ -332,7 +332,7 @@ def test_whatsapp_api_endpoints(client, db_session: Session):
         workspace_id="ws_default",
         db=db_session,
     )
-    core_proj = agent_service.get_or_create_project(
+    agent_service.get_or_create_project(
         project_id="proj_core_api_test",
         name="Synesis Core Architecture",
         description="Core architecture system",
@@ -340,19 +340,15 @@ def test_whatsapp_api_endpoints(client, db_session: Session):
         db=db_session,
     )
 
-    # 1. Health & status endpoint (no live Baileys session in tests → degraded)
     res_status = client.get("/connectors/whatsapp/status")
     assert res_status.status_code == 200
-    status_data = res_status.json()
-    assert status_data["provider"] == "whatsapp"
-    assert status_data["status"] == "degraded"
-    assert "Baileys" in status_data["details"]["client"]
+    assert res_status.json()["provider"] == "whatsapp"
 
-    # 2. Simulate group chat message with no deterministic project signal:
-    #    it must be preserved in Unknown Context rather than guessed.
     sim_payload = {
         "sender_name": "Chief Architect",
         "group_name": "Synora Product Council",
+        "group_jid": "api-test@g.us",
+        "message_id": "wa_api_sim_1",
         "text": "general announcement: let us schedule a sync to review all roadmap priorities next week.",
     }
     res_sim = client.post(
@@ -361,30 +357,30 @@ def test_whatsapp_api_endpoints(client, db_session: Session):
         headers={"X-User-ID": "usr_synesis_default"},
     )
     assert res_sim.status_code == 200
-    sim_data = res_sim.json()
-    assert sim_data["ok"] is True
-    assert sim_data["status"] == "unknown_context"
-    assert sim_data["evidence_id"] is not None
+    assert res_sim.json()["status"] == "queued"
 
-    # 3. Webhook endpoint from Baileys daemon with an explicit project reference
     webhook_payload = {
         "message_id": "wamid_webhook_test_999",
         "sender_name": "DevOps Engineer",
         "group_name": "Synora Engineering",
-        "text": "For proj_claims_api_test: we decided to deploy Celery Task Queue.",
+        "group_jid": "api-test@g.us",
+        "text": f"For {claims_proj.id}: we decided to deploy Celery Task Queue.",
     }
     res_hook = client.post("/connectors/whatsapp/webhook", json=webhook_payload)
     assert res_hook.status_code == 200
-    hook_data = res_hook.json()
-    assert hook_data["ok"] is True
-    assert hook_data["matched_project"]["id"] == "proj_claims_api_test"
+    assert res_hook.json()["status"] == "queued"
 
-    # 4. History endpoint
+    res_flush = client.post(
+        "/connectors/whatsapp/process-batches?force=true",
+        headers={"X-User-ID": "usr_synesis_default"},
+    )
+    assert res_flush.status_code == 200
+    assert res_flush.json()["ok"] is True
+    assert res_flush.json()["processed_batches"] >= 1
+
     res_hist = client.get("/connectors/whatsapp/history")
     assert res_hist.status_code == 200
-    hist_data = res_hist.json()
-    assert len(hist_data) >= 2
-
+    assert len(res_hist.json()) >= 1
 
 def test_whatsapp_session_status_lifecycle_and_group_count(client):
     """

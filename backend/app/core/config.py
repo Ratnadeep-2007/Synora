@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     CONTEXT_RESOLUTION_CANDIDATE_LIMIT: int = Field(default=5)
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
     AUTO_APPLY_VISUAL_UPDATES: bool = Field(default=False, description="Whether incoming messages auto-apply diagrams directly to Excalidraw")
+    WHATSAPP_PROCESSING_INTERVAL_SECONDS: int = Field(default=60, ge=1)
+    WHATSAPP_BATCH_POLL_SECONDS: int = Field(default=5, ge=1)
+    WHATSAPP_BATCH_MAX_MESSAGES: int = Field(default=100, ge=1, le=1000)
+    WHATSAPP_BATCH_MAX_RETRIES: int = Field(default=3, ge=1, le=20)
+    WHATSAPP_BATCH_RETRY_SECONDS: int = Field(default=15, ge=1)
+    WHATSAPP_CONTEXT_WINDOW_SIZE: int = Field(default=6, ge=1, le=50)
 
     model_config = SettingsConfigDict(env_file=(".env", "backend/.env", "../.env"), env_file_encoding="utf-8", extra="ignore")
 
