@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Supported: gemini | groq | nvidia | deterministic
     LLM_PROVIDER: str = Field(default="gemini", description="gemini | groq | nvidia | deterministic")
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
 
