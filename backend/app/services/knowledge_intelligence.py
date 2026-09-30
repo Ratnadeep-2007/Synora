@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class AiStatus(str, Enum):
     """Truthful provenance of a knowledge extraction run."""
 
-    AI = "ai"  # NVIDIA NIM + DeepSeek produced the result
+    AI = "ai"  # Configured semantic provider produced the result
     DETERMINISTIC = "deterministic"  # Explicit deterministic rule engine produced the result
     UNAVAILABLE = "ai_unavailable"  # No semantic provider available; nothing was extracted
 
@@ -82,6 +82,10 @@ class KnowledgeIntelligenceService:
         provider = (settings.LLM_PROVIDER or "").lower()
         if provider == "deterministic":
             return DeterministicRuleLLMClient(), AiStatus.DETERMINISTIC.value
+        if provider == "gemini" and settings.is_gemini_configured:
+            from app.services.llm import get_default_llm_client
+
+            return get_default_llm_client(), AiStatus.AI.value
         if provider == "groq":
             if settings.is_groq_configured:
                 from app.services.llm import get_default_llm_client
