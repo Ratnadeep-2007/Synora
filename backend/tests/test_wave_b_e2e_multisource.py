@@ -1,10 +1,11 @@
+import json
 import pytest
 from sqlalchemy.orm import Session
 
 from app.connectors.google_meet import GoogleMeetConnector
 from app.connectors.slack import SlackConnector
 from app.models.intelligence import CandidateKnowledge
-from app.models.project_state import ApprovalStatus, ProjectState
+from app.models.project_state import ApprovalStatus, ProjectState, StateChange
 from app.services.ai_workforce import AIWorkforceService
 from app.services.conflict_service import ConflictService
 from app.services.ingestion_service import IngestionService
@@ -19,9 +20,8 @@ def test_end_to_end_multisource_pipeline(db_session: Session):
     Executes the complete knowledge pipeline from:
     1. Google Meet transcript entry -> Normalized SourceEvent -> Evidence -> Intelligence -> Candidate -> Proposal & Conflict
     2. Slack conversation message -> Normalized SourceEvent -> Evidence -> SAME Intelligence -> Candidate -> Proposal & Conflict
-    3. Verifies Authoritative Project State remains at v1 (Proposals do NOT mutate state)
-    4. Human approval advances Authoritative Project State to v2
-    5. AI Workforce executes against the updated Authoritative Project State (v2).
+    3. Verifies the same source-independent memory engine updates Project State automatically
+    4. AI Workforce executes against the updated Project State.
     """
     project_id = "proj_multisource_e2e"
     tenant_id = "tenant_enterprise"
@@ -71,7 +71,7 @@ def test_end_to_end_multisource_pipeline(db_session: Session):
     assert res_meet.success is True
     assert res_meet.events_ingested == 1
     assert res_meet.evidence_created == 1
-    assert res_meet.authoritative_version_after == 1  # UNCHANGED!
+    assert res_meet.authoritative_version_after >= 2
 
     # ==========================================================
     # SOURCE 2: SLACK
@@ -103,39 +103,26 @@ def test_end_to_end_multisource_pipeline(db_session: Session):
     assert res_slack.success is True
     assert res_slack.events_ingested == 1
     assert res_slack.evidence_created == 1
-    assert res_slack.authoritative_version_after == 1  # UNCHANGED!
+    assert res_slack.authoritative_version_after >= 2
 
-    # Verify Project State remains strictly at v1
+    # Project Memory is the shared canonical layer. Both source paths
+    # contribute to the same project-bounded state without manual approval.
     db_session.refresh(base_state)
-    assert base_state.current_version == 1
-
-    # ==========================================================
-    # HUMAN REVIEW & AUTHORITATIVE STATE ADVANCEMENT (v1 -> v2)
-    # ==========================================================
-    # Human Architect inspects proposals and approves the Security decision
-    from app.models.project_state import StateChange
-    proposals = (
+    assert base_state.current_version >= 3
+    decisions = json.loads(base_state.decisions_json)
+    requirements = json.loads(base_state.requirements_json)
+    assert any("PostgreSQL" in str(item) for item in decisions)
+    assert any("multi-factor" in str(item).lower() for item in requirements + decisions)
+    memory_audits = (
         db_session.query(StateChange)
         .filter(
             StateChange.project_id == project_id,
-            StateChange.approval_status == ApprovalStatus.PROPOSED.value,
+            StateChange.target_section == "memory",
+            StateChange.approval_status == ApprovalStatus.APPROVED.value,
         )
         .all()
     )
-    assert len(proposals) >= 1
-
-    selected_proposal = proposals[0]
-    approved_version = state_service.approve_state_change(
-        change_id=selected_proposal.id,
-        actor_id="human_security_officer",
-        db=db_session,
-        note="Approved architecture decision after cross-source verification.",
-    )
-
-    # Authoritative Project State successfully advanced to v2!
-    assert approved_version.version_number == 2
-    db_session.refresh(base_state)
-    assert base_state.current_version == 2
+    assert len(memory_audits) >= 1
 
     # ==========================================================
     # AI WORKFORCE EXECUTION AGAINST AUTHORITATIVE STATE (v2)
