@@ -1168,17 +1168,17 @@ class WorkspaceAtlasService:
             ]
         if key == "REQUIREMENT":
             return [
-                {"label": "NEED", "detail": "User / business need"},
+                {"label": "NEED", "detail": "User / business", "shape": "ellipse"},
                 {"label": "REQUIREMENT", "detail": anchor, "shape": "rectangle"},
                 {"label": "BEHAVIOUR", "detail": source_hint, "shape": "rectangle"},
-                {"label": "CHECK", "detail": "How we validate"},
+                {"label": "CHECK", "detail": "Validation", "shape": "ellipse"},
             ]
         if key == "ACTION":
             return [
                 {"label": "INPUT", "detail": "Starting signal", "shape": "ellipse"},
                 {"label": "ACTION", "detail": anchor, "shape": "rectangle"},
                 {"label": "VERIFY", "detail": source_hint, "shape": "diamond"},
-                {"label": "OUTCOME", "detail": "Result to capture"},
+                {"label": "OUTCOME", "detail": "Result", "shape": "ellipse"},
             ]
         if key == "OPEN QUESTION":
             return [
@@ -1205,7 +1205,7 @@ class WorkspaceAtlasService:
             {"label": "CONTEXT", "detail": "Recorded evidence"},
             {"label": "KNOWLEDGE", "detail": anchor},
             {"label": "INTERPRET", "detail": "Human reading"},
-            {"label": "OUTCOME", "detail": "Next understanding"},
+            {"label": "OUTCOME", "detail": "Next understanding", "shape": "ellipse"},
         ]
 
     def _place_mini_visual(
