@@ -134,6 +134,6 @@ def test_end_to_end_multisource_pipeline(db_session: Session):
         db=db_session,
     )
     assert agent_result.status == "completed"
-    assert agent_result.project_state_version == 2
+    assert agent_result.project_state_version == base_state.current_version
     assert agent_result.output_payload_json is not None
 
