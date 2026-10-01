@@ -38,9 +38,9 @@ ARCH_H = 670
 NOTES_Y = ARCH_Y + ARCH_H + 70
 NOTE_GAP = 26
 NOTE_W = int((COLUMN_WIDTH - (ARCH_X_PAD * 2) - NOTE_GAP) / 2)
-NOTE_H = 252
+NOTE_H = 286
 MINI_W = NOTE_W - 36
-MINI_H = 126
+MINI_H = 150
 
 UNKNOWN_CARD_H = 146
 
@@ -1022,13 +1022,7 @@ class WorkspaceAtlasService:
         x: float,
         y: float,
     ) -> List[Dict[str, Any]]:
-        """Render a knowledge note as a human-readable visual context explainer.
-
-        The diagram is deliberately explanatory rather than decorative:
-        the middle node anchors the exact recorded title, the surrounding
-        stages explain how a human should interpret the context, and the
-        source content remains readable underneath.
-        """
+        """Render a visual-first micro-dashboard for one project knowledge item."""
         category = str(note["category"]).upper()
         style_key = {
             "DECISION": "decision",
@@ -1076,6 +1070,18 @@ class WorkspaceAtlasService:
                 custom_data=custom,
             ),
             self._text(
+                f"{card_id}:human_question",
+                x + NOTE_W - 260,
+                y + 12,
+                242,
+                17,
+                self._human_question(category),
+                8,
+                "#748077",
+                bold=False,
+                custom_data=custom,
+            ),
+            self._text(
                 f"{card_id}:title",
                 x + 18,
                 y + 33,
@@ -1099,47 +1105,57 @@ class WorkspaceAtlasService:
                     note["content"],
                 ),
                 x=x + 18,
-                y=y + 65,
+                y=y + 64,
                 width=MINI_W,
                 height=MINI_H,
                 custom_data=custom,
             )
         )
 
+        takeaway = self._takeaway_text(note["content"])
         elements.extend([
             self._text(
-                f"{card_id}:meaning_label",
+                f"{card_id}:takeaway_label",
                 x + 18,
-                y + 199,
-                68,
+                y + 226,
+                76,
                 14,
-                "MEANING",
+                "TAKEAWAY",
                 8,
                 style["text"],
                 bold=True,
                 custom_data=custom,
             ),
             self._text(
-                f"{card_id}:content",
-                x + 88,
-                y + 198,
-                NOTE_W - 106,
-                40,
-                note["content"][:180],
+                f"{card_id}:takeaway",
+                x + 96,
+                y + 223,
+                NOTE_W - 114,
+                38,
+                takeaway,
                 10,
-                "#4b5563",
+                "#35413a",
+                bold=True,
                 custom_data=custom,
+            ),
+            self._line(
+                f"{card_id}:footer_line",
+                x + 18,
+                y + 264,
+                x + NOTE_W - 18,
+                y + 264,
             ),
             self._text(
                 f"{card_id}:evidence",
                 x + 18,
-                y + 230,
+                y + 269,
                 NOTE_W - 36,
                 13,
                 (
-                    f"Evidence linked: {len(note['evidence_ids'])}"
+                    f"Evidence linked • {len(note['evidence_ids'])} source"
+                    + ("s" if len(note["evidence_ids"]) != 1 else "")
                     if note["evidence_ids"]
-                    else "Source: project state knowledge"
+                    else "Project-state knowledge • no direct evidence link"
                 ),
                 8,
                 "#768176",
@@ -1148,63 +1164,80 @@ class WorkspaceAtlasService:
         ])
         return elements
 
+    @staticmethod
+    def _human_question(category: str) -> str:
+        questions = {
+            "DECISION": "Why this choice?",
+            "REQUIREMENT": "What must happen?",
+            "ACTION": "What should happen next?",
+            "CONSTRAINT": "What must not break?",
+            "OPEN QUESTION": "What is still unknown?",
+            "ASSUMPTION": "What are we trusting?",
+        }
+        return questions.get(str(category).upper(), "Why does this matter?")
+
+    @staticmethod
+    def _takeaway_text(content: str) -> str:
+        clean = " ".join((content or "").replace("\n", " ").split())
+        return clean[:180] or "No additional explanation recorded."
+
     def _mini_visual_stages(
         self,
         category: str,
         title: str,
         content: str,
     ) -> List[Dict[str, str]]:
-        """Return four compact stages that make the note's meaning explicit."""
+        """Turn one knowledge record into a compact visual narrative."""
         key = category.upper()
-        anchor = (title or key.title()).strip()[:16] or key.title()
-        source_hint = " ".join((content or "").split())[:28] or "Recorded context"
+        anchor = (title or key.title()).strip()[:18] or key.title()
+        source_hint = " ".join((content or "").replace("\n", " ").split())[:34] or "Recorded context"
 
         if key == "DECISION":
             return [
-                {"label": "CONTEXT", "detail": "What led here", "shape": "ellipse"},
+                {"label": "SITUATION", "detail": "Trigger / context", "shape": "ellipse"},
                 {"label": "CHOICE", "detail": anchor, "shape": "diamond"},
-                {"label": "BASIS", "detail": source_hint, "shape": "rectangle"},
-                {"label": "IMPACT", "detail": "Shapes the system"},
+                {"label": "REASON", "detail": source_hint, "shape": "rectangle"},
+                {"label": "CONSEQUENCE", "detail": "System impact", "shape": "ellipse"},
             ]
         if key == "REQUIREMENT":
             return [
                 {"label": "NEED", "detail": "User / business", "shape": "ellipse"},
                 {"label": "REQUIREMENT", "detail": anchor, "shape": "rectangle"},
                 {"label": "BEHAVIOUR", "detail": source_hint, "shape": "rectangle"},
-                {"label": "CHECK", "detail": "Validation", "shape": "ellipse"},
+                {"label": "VALIDATE", "detail": "Acceptance", "shape": "ellipse"},
             ]
         if key == "ACTION":
             return [
-                {"label": "INPUT", "detail": "Starting signal", "shape": "ellipse"},
+                {"label": "TRIGGER", "detail": "Starting signal", "shape": "ellipse"},
                 {"label": "ACTION", "detail": anchor, "shape": "rectangle"},
-                {"label": "VERIFY", "detail": source_hint, "shape": "diamond"},
+                {"label": "EVIDENCE", "detail": source_hint, "shape": "diamond"},
                 {"label": "OUTCOME", "detail": "Result", "shape": "ellipse"},
             ]
         if key == "OPEN QUESTION":
             return [
                 {"label": "KNOWN", "detail": "Current evidence", "shape": "ellipse"},
                 {"label": "GAP", "detail": anchor, "shape": "diamond"},
-                {"label": "EVIDENCE", "detail": source_hint, "shape": "rectangle"},
+                {"label": "NEED", "detail": source_hint, "shape": "rectangle"},
                 {"label": "RESOLVE", "detail": "Answer / decision", "shape": "ellipse"},
             ]
         if key == "CONSTRAINT":
             return [
                 {"label": "BOUNDARY", "detail": "What cannot move", "shape": "ellipse"},
                 {"label": "LIMIT", "detail": anchor, "shape": "diamond"},
-                {"label": "RESPONSE", "detail": source_hint, "shape": "rectangle"},
+                {"label": "DESIGN", "detail": source_hint, "shape": "rectangle"},
                 {"label": "IMPACT", "detail": "Affected behaviour", "shape": "ellipse"},
             ]
         if key == "ASSUMPTION":
             return [
                 {"label": "PREMISE", "detail": "What we believe", "shape": "ellipse"},
-                {"label": "ASSUMPTION", "detail": anchor, "shape": "diamond"},
-                {"label": "DEPENDENCY", "detail": source_hint, "shape": "rectangle"},
+                {"label": "ASSUME", "detail": anchor, "shape": "diamond"},
+                {"label": "DEPEND", "detail": source_hint, "shape": "rectangle"},
                 {"label": "VERIFY", "detail": "Evidence to confirm", "shape": "ellipse"},
             ]
         return [
-            {"label": "CONTEXT", "detail": "Recorded evidence"},
-            {"label": "KNOWLEDGE", "detail": anchor},
-            {"label": "INTERPRET", "detail": "Human reading"},
+            {"label": "CONTEXT", "detail": "Recorded evidence", "shape": "ellipse"},
+            {"label": "KNOWLEDGE", "detail": anchor, "shape": "rectangle"},
+            {"label": "INTERPRET", "detail": source_hint, "shape": "rectangle"},
             {"label": "OUTCOME", "detail": "Next understanding", "shape": "ellipse"},
         ]
 
@@ -1222,8 +1255,8 @@ class WorkspaceAtlasService:
         """Render a four-stage visual narrative with strong hierarchy and arrows."""
         stage_gap = 22
         box_width = max(76, int((width - stage_gap * 3) / 4))
-        box_height = 86
-        box_y = y + 20
+        box_height = 94
+        box_y = y + 18
         elements: List[Dict[str, Any]] = []
 
         for index, stage in enumerate(stages[:4]):
@@ -1239,15 +1272,20 @@ class WorkspaceAtlasService:
                 },
             }
             highlight = index == 1
-            box_style = {
-                "stroke": custom_data.get("atlas", {}).get("category") and "#8da095" or "#b8c6bb",
-                "background": "#ffffff",
+            category = str(custom_data.get("atlas", {}).get("category", "")).upper()
+            palette = {
+                "DECISION": ("#15803d", "#f0fdf4"),
+                "REQUIREMENT": ("#4338ca", "#eef2ff"),
+                "ACTION": ("#166534", "#f0fdf4"),
+                "CONSTRAINT": ("#c2410c", "#fff7ed"),
+                "OPEN QUESTION": ("#2563eb", "#eff6ff"),
+                "ASSUMPTION": ("#64748b", "#f8fafc"),
             }
-            if highlight:
-                box_style = {
-                    "stroke": "#355a3c",
-                    "background": "#f7fbf7",
-                }
+            accent, accent_bg = palette.get(category, ("#355a3c", "#f7fbf7"))
+            box_style = {
+                "stroke": accent if highlight else "#b8c6bb",
+                "background": accent_bg if highlight else "#ffffff",
+            }
 
             elements.append(
                 self._rect(
@@ -1284,8 +1322,8 @@ class WorkspaceAtlasService:
                     box_y + 34,
                     box_width - 16,
                     36,
-                    stage["detail"][:22],
-                    10 if highlight else 8,
+                    stage["detail"][:34],
+                    10 if highlight else 9,
                     "#1f2937" if highlight else "#475569",
                     bold=highlight,
                     custom_data=stage_data,
@@ -1312,7 +1350,7 @@ class WorkspaceAtlasService:
             self._text(
                 self._id(note_id, "mini_caption"),
                 x,
-                y + height - 4,
+                y + height - 8,
                 width,
                 14,
                 self._visual_caption(custom_data.get("atlas", {}).get("category", "")),
@@ -1327,17 +1365,14 @@ class WorkspaceAtlasService:
     @staticmethod
     def _visual_caption(category: str) -> str:
         captions = {
-            "DECISION": "Read left → right: situation → choice → basis → consequence.",
-            "REQUIREMENT": "Read left → right: need → behaviour → validation.",
-            "ACTION": "Read left → right: trigger → action → evidence → outcome.",
-            "OPEN QUESTION": "Read left → right: known facts → gap → needed evidence → resolution.",
-            "CONSTRAINT": "Read left → right: boundary → limit → design response → impact.",
-            "ASSUMPTION": "Read left → right: premise → assumption → dependency → verification.",
+            "DECISION": "Situation → choice → reason → consequence",
+            "REQUIREMENT": "Need → behaviour → validation",
+            "ACTION": "Trigger → action → evidence → outcome",
+            "OPEN QUESTION": "Known → gap → evidence → resolution",
+            "CONSTRAINT": "Boundary → design response → impact",
+            "ASSUMPTION": "Premise → dependency → verification",
         }
-        return captions.get(
-            str(category).upper(),
-            "Read left → right to understand the recorded context.",
-        )
+        return captions.get(str(category).upper(), "Context → meaning → outcome")
 
     @staticmethod
     def _arrow(
