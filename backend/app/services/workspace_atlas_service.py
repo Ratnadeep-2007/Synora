@@ -834,20 +834,20 @@ class WorkspaceAtlasService:
         """Select context records for the visual note layer (infinite vertical layout)."""
         cards: List[Dict[str, Any]] = []
 
-        for item in decs:
+        for item in decs[:2]:
             cards.append(self._knowledge_item("DECISION", item))
-        for item in reqs:
+        for item in reqs[:2]:
             cards.append(self._knowledge_item("REQUIREMENT", item))
-        for item in constraints:
+        for item in constraints[:1]:
             cards.append(self._knowledge_item("CONSTRAINT", item))
-        for item in (assumptions or []):
+        for item in (assumptions or [])[:1]:
             cards.append(self._knowledge_item("ASSUMPTION", item))
-        for item in questions:
+        for item in questions[:2]:
             cards.append(self._knowledge_item("OPEN QUESTION", item))
 
         if limit is not None:
             return cards[:limit]
-        return cards
+        return cards[:8]
 
     def _knowledge_item(self, category: str, item: Any) -> Dict[str, Any]:
         if isinstance(item, dict):
@@ -861,7 +861,7 @@ class WorkspaceAtlasService:
         return {
             "category": category,
             "title": str(title)[:70],
-            "content": str(content)[:120],
+            "content": str(content)[:180],
             "evidence_ids": evidence_ids[:4] if isinstance(evidence_ids, list) else [],
         }
 
@@ -974,8 +974,8 @@ class WorkspaceAtlasService:
                 x + 88,
                 y + 198,
                 NOTE_W - 106,
-                34,
-                note["content"][:150],
+                40,
+                note["content"][:180],
                 10,
                 "#4b5563",
                 custom_data=custom,
@@ -1007,47 +1007,48 @@ class WorkspaceAtlasService:
         """Return four compact stages that make the note's meaning explicit."""
         key = category.upper()
         anchor = (title or key.title()).strip()[:16] or key.title()
+        source_hint = " ".join((content or "").split())[:28] or "Recorded context"
 
         if key == "DECISION":
             return [
                 {"label": "CONTEXT", "detail": "What led here"},
                 {"label": "CHOICE", "detail": anchor},
-                {"label": "BASIS", "detail": "Recorded rationale"},
+                {"label": "BASIS", "detail": source_hint},
                 {"label": "IMPACT", "detail": "Shapes the system"},
             ]
         if key == "REQUIREMENT":
             return [
                 {"label": "NEED", "detail": "User / business need"},
                 {"label": "REQUIREMENT", "detail": anchor},
-                {"label": "BEHAVIOUR", "detail": "System response"},
+                {"label": "BEHAVIOUR", "detail": source_hint},
                 {"label": "CHECK", "detail": "How we validate"},
             ]
         if key == "ACTION":
             return [
                 {"label": "INPUT", "detail": "Starting signal"},
                 {"label": "ACTION", "detail": anchor},
-                {"label": "VERIFY", "detail": "Expected evidence"},
+                {"label": "VERIFY", "detail": source_hint},
                 {"label": "OUTCOME", "detail": "Result to capture"},
             ]
         if key == "OPEN QUESTION":
             return [
                 {"label": "KNOWN", "detail": "Current evidence"},
                 {"label": "GAP", "detail": anchor},
-                {"label": "EVIDENCE", "detail": "What is missing"},
+                {"label": "EVIDENCE", "detail": source_hint},
                 {"label": "RESOLVE", "detail": "Answer / decision"},
             ]
         if key == "CONSTRAINT":
             return [
                 {"label": "BOUNDARY", "detail": "What cannot move"},
                 {"label": "LIMIT", "detail": anchor},
-                {"label": "RESPONSE", "detail": "Design around it"},
+                {"label": "RESPONSE", "detail": source_hint},
                 {"label": "IMPACT", "detail": "Affected behaviour"},
             ]
         if key == "ASSUMPTION":
             return [
                 {"label": "PREMISE", "detail": "What we believe"},
                 {"label": "ASSUMPTION", "detail": anchor},
-                {"label": "DEPENDENCY", "detail": "What relies on it"},
+                {"label": "DEPENDENCY", "detail": source_hint},
                 {"label": "VERIFY", "detail": "Evidence to confirm"},
             ]
         return [
