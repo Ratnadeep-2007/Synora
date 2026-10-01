@@ -18,6 +18,7 @@ from app.services.ingestion_service import IngestionService
 from app.services.knowledge_intelligence import KnowledgeExtraction, KnowledgeIntelligenceService
 from app.services.metrics import metrics
 from app.services.unknown_context_service import UnknownContextService
+from app.services.project_memory_service import ProjectMemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class SourceIntelligencePipeline:
         knowledge_service: Optional[KnowledgeIntelligenceService] = None,
         unknown_service: Optional[UnknownContextService] = None,
         ingestion_service: Optional[IngestionService] = None,
+        memory_service: Optional[ProjectMemoryService] = None,
     ):
         self.context_service = context_service or ContextIntelligenceService()
         self.knowledge_service = knowledge_service or KnowledgeIntelligenceService()
@@ -78,6 +80,7 @@ class SourceIntelligencePipeline:
             context_service=self.context_service
         )
         self.ingestion = ingestion_service or IngestionService()
+        self.memory_service = memory_service or ProjectMemoryService()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -274,11 +277,38 @@ class SourceIntelligencePipeline:
             candidates = self.knowledge_service.persist_candidates(
                 extraction, project_id=resolved_project_id, db=db, meeting_id=meeting_id
             )
+            memory_result = self.memory_service.apply_candidates(
+                project_id=resolved_project_id,
+                candidates=candidates,
+                db=db,
+                source=source,
+                actor_id=actor_id or "synora_agent",
+            )
+            # Project Atlas is the visual projection of shared project memory.
+            # Refreshing here is fingerprint-gated, so unchanged workspaces do
+            # not create redundant visual revisions.
+            try:
+                from app.services.workspace_atlas_service import WorkspaceAtlasService
+
+                WorkspaceAtlasService().get_or_sync(
+                    db=db,
+                    tenant_id=tenant_id,
+                    workspace_id="ws_default",
+                    force=False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "source_memory_visual_sync_deferred: source=%s project=%s error=%s",
+                    source,
+                    resolved_project_id,
+                    exc,
+                )
             logger.info(
-                "source_routing_resolved: source=%s project_id=%s candidates=%d ai_status=%s",
+                "source_routing_resolved: source=%s project_id=%s candidates=%d memory_applied=%d ai_status=%s",
                 source,
                 resolved_project_id,
                 len(candidates),
+                int(memory_result.get("applied", 0)),
                 extraction.ai_status,
             )
             return SourceEventOutcome(
