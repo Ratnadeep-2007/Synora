@@ -242,13 +242,9 @@ class PipelineCoordinator:
         source_name: str = "generic_source",
     ) -> PipelineExecutionResult:
         """
-        Executes the common knowledge pipeline for ANY external source (Google Meet, Slack, etc.).
-        1. Ingests normalized SourceEvents idempotently
-        2. Converts SourceEvents into Evidence records
-        3. Runs Intelligence Engine on Evidence
-        4. Detects Conflicts with existing Project State
-        5. Creates StateChange Proposals
-        6. Guarantees Project State remains unchanged until human review.
+        Executes the source-independent path into shared Project Memory.
+        Routine evidence-backed updates are applied automatically; unresolved
+        project routing is handled by the source intelligence layer.
         """
         logger.info(f"Starting Knowledge Pipeline for {len(events)} events from source '{source_name}' in project '{project_id}'")
 
@@ -320,7 +316,7 @@ class PipelineCoordinator:
             events_ingested=len(ingested_source_events),
             evidence_created=len(evidence_records),
             candidates_extracted=len(candidates),
-            proposals_created=len(proposals_created),
+            proposals_created=0,
             conflicts_detected=len(conflicts_created),
             authoritative_version_before=v_before,
             authoritative_version_after=v_after,
