@@ -492,8 +492,25 @@ class WorkspaceAtlasService:
         # --------------------------------------------------------------
         # Dynamic Architecture Placement
         # --------------------------------------------------------------
-        arch_y = ATLAS_PADDING_Y + HEADER_H
+        arch_y = ATLAS_PADDING_Y + HEADER_H + 22
         arch_w = COLUMN_WIDTH - (ARCH_X_PAD * 2)
+        scene.append(
+            self._section_label(
+                self._id(project.id, "architecture_label"),
+                origin_x + ARCH_X_PAD,
+                arch_y - 18,
+                arch_w,
+                "ARCHITECTURE  •  VISUAL SYSTEM MAP",
+            )
+        )
+        scene.extend(
+            self._architecture_legend(
+                project.id,
+                origin_x + ARCH_X_PAD,
+                arch_y + 6,
+                arch_w,
+            )
+        )
 
         architecture_elements = self._architecture_from_artifact(artifact)
         if not architecture_elements:
@@ -513,7 +530,7 @@ class WorkspaceAtlasService:
                 self._place_architecture(
                     architecture_elements,
                     origin_x + ARCH_X_PAD,
-                    arch_y,
+                    arch_y + 58,
                     arch_w,
                     arch_h,
                     project.id,
@@ -714,6 +731,45 @@ class WorkspaceAtlasService:
             output.append(clone)
 
         return output
+
+    def _architecture_legend(
+        self,
+        project_id: str,
+        x: float,
+        y: float,
+        width: float,
+    ) -> List[Dict[str, Any]]:
+        items = [
+            ("EXPERIENCE", "#ede9fe", "#6d28d9"),
+            ("LOGIC", "#ffffff", "#0f766e"),
+            ("DATA", "#fef3c7", "#d97706"),
+            ("INTEGRATIONS", "#e0f2fe", "#0369a1"),
+        ]
+        gap = 12
+        item_w = int((width - gap * 3) / 4)
+        out: List[Dict[str, Any]] = []
+        for idx, (label, bg, stroke) in enumerate(items):
+            bx = x + idx * (item_w + gap)
+            out.append(self._rect(
+                self._id(project_id, f"arch_legend_box_{idx}"),
+                bx, y, item_w, 28,
+                {"stroke": stroke, "background": bg},
+                custom_data={"atlas": {"type": "architecture_legend"}},
+            ))
+            out.append(self._text(
+                self._id(project_id, f"arch_legend_text_{idx}"),
+                bx + 8, y + 7, item_w - 16, 14,
+                label, 8, stroke, bold=True,
+                custom_data={"atlas": {"type": "architecture_legend"}},
+            ))
+        out.append(self._text(
+            self._id(project_id, "arch_legend_hint"),
+            x, y + 34, width, 15,
+            "Follow arrows to read request, event, and data flow. Text inside nodes stays minimal; important meaning belongs in labels and notes below.",
+            8, "#738177",
+            custom_data={"atlas": {"type": "architecture_legend"}},
+        ))
+        return out
 
     def _fallback_architecture(
         self,
