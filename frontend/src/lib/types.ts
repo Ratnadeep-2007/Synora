@@ -396,6 +396,16 @@ export interface WorkspaceAtlasData {
     name: string;
     state_version: number;
     diagram_version: number;
+    memory?: {
+      knowledge: number;
+      requirements: number;
+      decisions: number;
+      architecture: number;
+      constraints: number;
+      assumptions: number;
+      open_questions: number;
+      updated_at: string | null;
+    };
   }>;
   unknown_context: {
     pending: number;
