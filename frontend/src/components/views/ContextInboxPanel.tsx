@@ -118,7 +118,7 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
           <div>
             <h2 className="text-sm font-semibold text-text-main">Context Inbox</h2>
             <p className="mt-1 max-w-2xl text-[11px] leading-5 text-text-muted">
-              Only ambiguous or genuinely unrecognized project evidence reaches you. Everything else is routed automatically.
+              Only evidence that falls outside Synora's safe project-routing boundary reaches you. Everything else is routed and written to project memory automatically.
             </p>
           </div>
         </div>
@@ -185,7 +185,7 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
               <div>
                 <AlertTriangle className="mx-auto h-5 w-5 text-warning" />
                 <div className="mt-2 font-medium">Select a context item</div>
-                <div className="mt-1">Synora will show why it is uncertain and the projects it considers plausible.</div>
+                <div className="mt-1">Synora will show the evidence and the projects that remain plausible.</div>
               </div>
             </div>
           ) : (
@@ -203,8 +203,8 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
                 </div>
                 <p className="mt-1 text-[11px] leading-5 text-text-muted">
                   {selectedProjectMatches.length
-                    ? "Multiple plausible project destinations exist, so Synora is waiting for one human routing decision."
-                    : "No sufficiently strong project match was found from the available context."}
+                    ? "Multiple plausible project destinations remain, so Synora has paused only the project assignment step."
+                    : "No safe project destination was established from the available context."}
                 </p>
               </div>
 
