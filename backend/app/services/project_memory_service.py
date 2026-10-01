@@ -112,6 +112,31 @@ class ProjectMemoryService:
             ],
         }
 
+    def summarize(self, project_id: str, db: Session, tenant_id: str = "default_tenant") -> Dict[str, Any]:
+        """Return compact counts for UI and observability, scoped to one project."""
+        context = self.build_context(
+            project_id=project_id,
+            db=db,
+            tenant_id=tenant_id,
+            limit_knowledge=1,
+            limit_evidence=1,
+        )
+        state = context["project_state"]
+        return {
+            "project_id": project_id,
+            "state_version": context["state_version"],
+            "knowledge": db.query(CandidateKnowledge).filter(
+                CandidateKnowledge.project_id == project_id
+            ).count(),
+            "requirements": len(state.get("requirements", [])),
+            "decisions": len(state.get("decisions", [])),
+            "architecture": len(state.get("architecture", [])),
+            "constraints": len(state.get("constraints", [])),
+            "assumptions": len(state.get("assumptions", [])),
+            "open_questions": len(state.get("open_questions", [])),
+            "updated_at": context["project_state"].get("updated_at"),
+        }
+
     def apply_candidates(
         self,
         project_id: str,
