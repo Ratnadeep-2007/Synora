@@ -328,3 +328,23 @@ def test_visual_compiler_uses_semantic_shapes_group_lanes_and_edge_labels():
         if el.get("type") == "text"
         and el.get("customData", {}).get("visual", {}).get("type") == "relationship_label"
     ) == 3
+
+
+def test_visual_compiler_swimlanes_expand_for_multirow_groups():
+    nodes = [
+        VisualNode(id=f"core_{i}", label=f"Core {i}", node_type="service", group="core")
+        for i in range(5)
+    ] + [
+        VisualNode(id="data_1", label="Primary DB", node_type="datastore", group="data")
+    ]
+    plan = VisualPlan(
+        title="Multirow Architecture",
+        nodes=nodes,
+        relationships=[],
+    )
+
+    positions = ExcalidrawCompiler()._layout(plan)
+
+    core_bottom = max(positions[f"core_{i}"][1] for i in range(5)) + 92
+    data_top = positions["data_1"][1]
+    assert data_top > core_bottom
