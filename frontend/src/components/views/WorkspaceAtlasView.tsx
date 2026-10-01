@@ -37,7 +37,7 @@ export function WorkspaceAtlasView({
           </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-text-main">Project Atlas</h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-text-muted">
-            One infinite Excalidraw canvas. Each project owns a fixed visual column; architecture stays dominant and project knowledge stays readable.
+            One infinite Excalidraw canvas. Read each project top-to-bottom: intent → visual architecture → evidence-backed context. Diagrams carry the story; text is used where precision matters.
           </p>
         </div>
 
@@ -108,6 +108,7 @@ export function WorkspaceAtlasView({
           ["Decision", "Situation → choice → basis → consequence"],
           ["Requirement", "Need → requirement → behaviour → validation"],
           ["Question", "Known → gap → evidence → resolution"],
+          ["Architecture", "Experience → services → data → integrations"],
         ].map(([label, flow]) => (
           <div key={label} className="rounded-lg border border-border bg-canvas px-3 py-2.5">
             <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-muted">{label}</div>
