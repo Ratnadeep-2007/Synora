@@ -110,14 +110,29 @@ class VisualPatchService:
         state: Dict[str, Any],
         current_rev: Optional[VisualRevision],
     ) -> Tuple[List[VisualPatchOperation], PatchSafetyClassification, str]:
-        """Generate high-level semantic operations with stable semantic IDs."""
+        """Create semantic visual updates while preserving the authored canvas.
+
+        The first pass remains deterministic for safety, but it now creates
+        richer visual relationships and text-backed context notes instead of
+        isolated keyword nodes.
+        """
         lower_text = text.lower()
         ops: List[VisualPatchOperation] = []
 
-        # Domain heuristic parsing (ensures 100% deterministic test reproducibility)
-        # DineIn domain concepts
+        def add_note(note_key: str, category: VisualNoteCategory, content: str) -> None:
+            ops.append(
+                VisualPatchOperation(
+                    op_type=VisualPatchOpType.ADD_NOTE,
+                    target_id=make_stable_semantic_id("note", note_key),
+                    category=category,
+                    content=content[:180],
+                )
+            )
+
+        # DineIn-domain signals become an understandable visual flow.
         if "qr" in lower_text or "table ordering" in lower_text:
             qr_node_id = make_stable_semantic_id("node", "Table QR Ordering")
+            web_id = make_stable_semantic_id("node", "Ordering Web App")
             ops.append(
                 VisualPatchOperation(
                     op_type=VisualPatchOpType.ADD_NODE,
@@ -127,23 +142,20 @@ class VisualPatchService:
                     emphasis="primary",
                 )
             )
-            # Add relationship if ordering service or web app exists
             ops.append(
                 VisualPatchOperation(
                     op_type=VisualPatchOpType.ADD_EDGE,
-                    target_id=f"edge_{qr_node_id}_ordering_app",
+                    target_id=f"edge_{qr_node_id}_{web_id}",
                     source=qr_node_id,
-                    target="Ordering Web App",
+                    target=web_id,
+                    label="order request",
                     style="solid",
                 )
             )
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NOTE,
-                    target_id=make_stable_semantic_id("note", "table_qr_ordering"),
-                    category=VisualNoteCategory.REQUIREMENT,
-                    content="Customers initiate orders through table QR code scanning.",
-                )
+            add_note(
+                "table_qr_ordering",
+                VisualNoteCategory.REQUIREMENT,
+                "Customers initiate an order from the table QR flow; the web ordering surface receives the request and continues the order journey.",
             )
 
         if "kds" in lower_text or "kitchen" in lower_text:
@@ -157,13 +169,10 @@ class VisualPatchService:
                     emphasis="primary",
                 )
             )
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NOTE,
-                    target_id=make_stable_semantic_id("note", "realtime_kds"),
-                    category=VisualNoteCategory.DECISION,
-                    content="Orders must reach KDS in realtime.",
-                )
+            add_note(
+                "realtime_kds",
+                VisualNoteCategory.DECISION,
+                "Kitchen tickets should reach KDS in realtime so preparation state reflects the live order lifecycle.",
             )
 
         if "pos" in lower_text or "billing" in lower_text:
@@ -172,38 +181,45 @@ class VisualPatchService:
                 VisualPatchOperation(
                     op_type=VisualPatchOpType.ADD_NODE,
                     target_id=pos_node_id,
-                    label="POS Integration Service",
+                    label="POS Integration",
                     node_type="service",
                     emphasis="normal",
                 )
             )
+            add_note(
+                "pos_settlement",
+                VisualNoteCategory.CONSTRAINT,
+                "Billing or settlement must stay consistent with the operational order state; the integration boundary should be explicit.",
+            )
 
-        # Fallback if no domain keyword matched: generic high-level component
         if not ops:
-            clean_title = text[:35].strip()
-            node_id = make_stable_semantic_id("node", clean_title)
+            clean_title = " ".join(text.split())[:42].strip()
+            node_id = make_stable_semantic_id("node", clean_title or "Context Update")
             ops.append(
                 VisualPatchOperation(
                     op_type=VisualPatchOpType.ADD_NODE,
                     target_id=node_id,
-                    label=clean_title,
+                    label=clean_title or "Context Update",
                     node_type="service",
                     emphasis="normal",
                 )
             )
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NOTE,
-                    target_id=make_stable_semantic_id("note", clean_title),
-                    category=VisualNoteCategory.ACTION,
-                    content=text[:80],
-                )
+            add_note(
+                clean_title or "context_update",
+                VisualNoteCategory.ACTION,
+                f"Incoming project evidence: {text[:150]}",
             )
 
-        # Classify safety: additions are safe; deletions or major rewrites require review
-        has_remove = any(op.op_type in (VisualPatchOpType.REMOVE_NODE, VisualPatchOpType.REMOVE_GROUP) for op in ops)
-        safety = PatchSafetyClassification.REVIEW_REQUIRED if has_remove else PatchSafetyClassification.SAFE_AUTO_APPLY
-        reason = f"Derived {len(ops)} semantic operations from evidence."
+        has_remove = any(
+            op.op_type in (VisualPatchOpType.REMOVE_NODE, VisualPatchOpType.REMOVE_GROUP)
+            for op in ops
+        )
+        safety = (
+            PatchSafetyClassification.REVIEW_REQUIRED
+            if has_remove
+            else PatchSafetyClassification.SAFE_AUTO_APPLY
+        )
+        reason = f"Derived {len(ops)} semantic visual operations from evidence."
         return ops, safety, reason
 
     def apply_patch(
