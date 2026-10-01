@@ -524,8 +524,35 @@ class WorkspaceAtlasService:
             # Scale horizontally to fit architecture width; keep height proportional
             scale = min(arch_w / raw_w, 1.0)
             scaled_h = raw_h * scale
-            # Dynamic height: unconstrained, expands as large as the architecture needs
             arch_h = max(300.0, scaled_h)
+
+            scene.append(
+                self._rect(
+                    self._id(project.id, "architecture_surface"),
+                    origin_x + ARCH_X_PAD,
+                    arch_y + 58,
+                    arch_w,
+                    arch_h,
+                    {"stroke": "#dfe7e1", "background": "#fbfcfb"},
+                    opacity=100,
+                    roundness=3,
+                    custom_data={"atlas": {"type": "architecture_surface", "project_id": project.id}},
+                )
+            )
+            scene.append(
+                self._text(
+                    self._id(project.id, "architecture_flow_hint"),
+                    origin_x + ARCH_X_PAD + 18,
+                    arch_y + 69,
+                    arch_w - 36,
+                    16,
+                    "FLOW  •  follow arrows from entry → processing → state → external outcomes",
+                    8,
+                    "#7a877c",
+                    bold=True,
+                    custom_data={"atlas": {"type": "architecture_flow_hint", "project_id": project.id}},
+                )
+            )
             scene.extend(
                 self._place_architecture(
                     architecture_elements,
@@ -1134,45 +1161,45 @@ class WorkspaceAtlasService:
 
         if key == "DECISION":
             return [
-                {"label": "CONTEXT", "detail": "What led here"},
-                {"label": "CHOICE", "detail": anchor},
-                {"label": "BASIS", "detail": source_hint},
+                {"label": "CONTEXT", "detail": "What led here", "shape": "ellipse"},
+                {"label": "CHOICE", "detail": anchor, "shape": "diamond"},
+                {"label": "BASIS", "detail": source_hint, "shape": "rectangle"},
                 {"label": "IMPACT", "detail": "Shapes the system"},
             ]
         if key == "REQUIREMENT":
             return [
                 {"label": "NEED", "detail": "User / business need"},
-                {"label": "REQUIREMENT", "detail": anchor},
-                {"label": "BEHAVIOUR", "detail": source_hint},
+                {"label": "REQUIREMENT", "detail": anchor, "shape": "rectangle"},
+                {"label": "BEHAVIOUR", "detail": source_hint, "shape": "rectangle"},
                 {"label": "CHECK", "detail": "How we validate"},
             ]
         if key == "ACTION":
             return [
-                {"label": "INPUT", "detail": "Starting signal"},
-                {"label": "ACTION", "detail": anchor},
-                {"label": "VERIFY", "detail": source_hint},
+                {"label": "INPUT", "detail": "Starting signal", "shape": "ellipse"},
+                {"label": "ACTION", "detail": anchor, "shape": "rectangle"},
+                {"label": "VERIFY", "detail": source_hint, "shape": "diamond"},
                 {"label": "OUTCOME", "detail": "Result to capture"},
             ]
         if key == "OPEN QUESTION":
             return [
-                {"label": "KNOWN", "detail": "Current evidence"},
-                {"label": "GAP", "detail": anchor},
-                {"label": "EVIDENCE", "detail": source_hint},
-                {"label": "RESOLVE", "detail": "Answer / decision"},
+                {"label": "KNOWN", "detail": "Current evidence", "shape": "ellipse"},
+                {"label": "GAP", "detail": anchor, "shape": "diamond"},
+                {"label": "EVIDENCE", "detail": source_hint, "shape": "rectangle"},
+                {"label": "RESOLVE", "detail": "Answer / decision", "shape": "ellipse"},
             ]
         if key == "CONSTRAINT":
             return [
-                {"label": "BOUNDARY", "detail": "What cannot move"},
-                {"label": "LIMIT", "detail": anchor},
-                {"label": "RESPONSE", "detail": source_hint},
-                {"label": "IMPACT", "detail": "Affected behaviour"},
+                {"label": "BOUNDARY", "detail": "What cannot move", "shape": "ellipse"},
+                {"label": "LIMIT", "detail": anchor, "shape": "diamond"},
+                {"label": "RESPONSE", "detail": source_hint, "shape": "rectangle"},
+                {"label": "IMPACT", "detail": "Affected behaviour", "shape": "ellipse"},
             ]
         if key == "ASSUMPTION":
             return [
-                {"label": "PREMISE", "detail": "What we believe"},
-                {"label": "ASSUMPTION", "detail": anchor},
-                {"label": "DEPENDENCY", "detail": source_hint},
-                {"label": "VERIFY", "detail": "Evidence to confirm"},
+                {"label": "PREMISE", "detail": "What we believe", "shape": "ellipse"},
+                {"label": "ASSUMPTION", "detail": anchor, "shape": "diamond"},
+                {"label": "DEPENDENCY", "detail": source_hint, "shape": "rectangle"},
+                {"label": "VERIFY", "detail": "Evidence to confirm", "shape": "ellipse"},
             ]
         return [
             {"label": "CONTEXT", "detail": "Recorded evidence"},
@@ -1208,6 +1235,7 @@ class WorkspaceAtlasService:
                     "type": "knowledge_mini_visual",
                     "stage": index,
                     "label": stage["label"],
+                    "shape": stage.get("shape", "rectangle"),
                 },
             }
             highlight = index == 1
@@ -1232,6 +1260,7 @@ class WorkspaceAtlasService:
                     opacity=100,
                     roundness=3,
                     custom_data=stage_data,
+                    element_type=stage.get("shape", "rectangle"),
                 )
             )
             elements.append(
@@ -1255,8 +1284,8 @@ class WorkspaceAtlasService:
                     box_y + 34,
                     box_width - 16,
                     36,
-                    stage["detail"][:28],
-                    10 if highlight else 9,
+                    stage["detail"][:22],
+                    10 if highlight else 8,
                     "#1f2937" if highlight else "#475569",
                     bold=highlight,
                     custom_data=stage_data,
@@ -1556,10 +1585,11 @@ class WorkspaceAtlasService:
         opacity: int = 100,
         roundness: int = 3,
         custom_data: Optional[Dict[str, Any]] = None,
+        element_type: str = "rectangle",
     ) -> Dict[str, Any]:
         return {
             "id": element_id,
-            "type": "rectangle",
+            "type": element_type,
             "x": x,
             "y": y,
             "width": width,
