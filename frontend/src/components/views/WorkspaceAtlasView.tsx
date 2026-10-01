@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { BrainCircuit, Layers3, Maximize2, PanelLeft, Sparkles } from "lucide-react";
+import { ArrowRight, BrainCircuit, Layers3, Maximize2, PanelLeft, Sparkles } from "lucide-react";
 import { ExcalidrawCanvas } from "@/components/canvas/ExcalidrawCanvas";
 import { Project, WorkspaceAtlasData } from "@/lib/types";
 import { ContextInboxPanel } from "@/components/views/ContextInboxPanel";
@@ -33,11 +33,11 @@ export function WorkspaceAtlasView({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary-soft px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
             <BrainCircuit className="h-3.5 w-3.5" />
-            One living workspace
+            One shared memory
           </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-text-main">Project Atlas</h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-text-muted">
-            One infinite Excalidraw canvas. Read each project top-to-bottom: intent → visual architecture → evidence-backed context. Diagrams carry the story; text is used where precision matters.
+            One infinite Excalidraw workspace. WhatsApp and completed meeting transcripts feed the same project-bounded memory, which Synora turns into visual notes automatically.
           </p>
         </div>
 
@@ -46,13 +46,13 @@ export function WorkspaceAtlasView({
             <Layers3 className="h-3.5 w-3.5 text-primary" />
             <span className="font-semibold text-text-main">{projectCount}</span> projects
           </div>
-          <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text-muted">
-            <Sparkles className="h-3.5 w-3.5 text-primary" />
-            <span className="font-semibold text-text-main">DB backed</span>
+          <div className="inline-flex items-center gap-2 rounded-lg border border-success/20 bg-success/5 px-3 py-2 text-xs text-success">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span className="font-semibold">AI auto-maintained</span>
           </div>
           <div className={"inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs " + (pending ? "border-warning/20 bg-warning/5 text-warning" : "border-success/20 bg-success/5 text-success")}>
             <PanelLeft className="h-3.5 w-3.5" />
-            {pending ? pending + " context item" + (pending === 1 ? "" : "s") + " need review" : "No context review needed"}
+            {pending ? pending + " context item" + (pending === 1 ? "" : "s") + " need attention" : "No unresolved context"}
           </div>
         </div>
       </header>
@@ -60,7 +60,7 @@ export function WorkspaceAtlasView({
       {activeName && (
         <div className="text-[11px] text-text-muted">
           Active project: <span className="font-semibold text-text-main">{activeName}</span>
-          <span className="ml-1.5">• the atlas shows every project, not just the active one.</span>
+          <span className="ml-1.5">• the atlas shows every project and never mixes their memory.</span>
         </div>
       )}
 
@@ -69,11 +69,11 @@ export function WorkspaceAtlasView({
           <div>
             <h2 className="text-sm font-semibold text-text-main">Infinite project canvas</h2>
             <p className="mt-0.5 text-[11px] text-text-muted">
-              Context Inbox → project intent → architecture → evidence-backed context stories
+              Sources → evidence → project memory → visual notes
             </p>
           </div>
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/5 px-2.5 py-1 text-[10px] font-semibold text-success">
-            AI synchronized
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-[10px] font-semibold text-primary">
+            Project boundaries enforced
           </div>
         </div>
 
@@ -105,17 +105,17 @@ export function WorkspaceAtlasView({
 
       <div className="grid gap-2 sm:grid-cols-4">
         {[
-          ["Architecture", "Experience → logic → data → integrations"],
-          ["Decision", "Situation → choice → basis → consequence"],
-          ["Requirement", "Need → behaviour → validation"],
-          ["Question", "Known → gap → evidence → resolution"],
-        ].map(([label, flow]) => (
+          ["Sources", "WhatsApp + completed meeting transcript"],
+          ["Memory", "One engine • one boundary per project"],
+          ["Notes", "Decision • requirement • constraint • question"],
+          ["Visual", "Architecture first • evidence-backed context"],
+        ].map(([label, flow], index) => (
           <div key={label} className="rounded-lg border border-border bg-canvas px-3 py-2.5">
-            <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-muted">{label}</div>
+            <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.14em] text-text-muted">
+              <span>{label}</span>
+              {index < 3 && <ArrowRight className="h-3 w-3" />}
+            </div>
             <div className="mt-1 text-[10px] font-medium text-text-main">{flow}</div>
-            {label === "Architecture" && (
-              <div className="mt-1 text-[9px] text-text-muted">Oval = actor/result • diamond = decision/gap • arrows = flow</div>
-            )}
           </div>
         ))}
       </div>
