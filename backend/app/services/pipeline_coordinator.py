@@ -11,6 +11,7 @@ from app.models.conflict import Conflict
 from app.services.ingestion_service import IngestionService
 from app.services.meeting_intelligence import MeetingIntelligenceService
 from app.services.project_state_service import ProjectStateService
+from app.services.project_memory_service import ProjectMemoryService
 from app.services.conflict_service import ConflictService
 
 logger = logging.getLogger(__name__)
@@ -51,11 +52,13 @@ class PipelineCoordinator:
         intelligence_service: Optional[MeetingIntelligenceService] = None,
         state_service: Optional[ProjectStateService] = None,
         conflict_service: Optional[ConflictService] = None,
+        memory_service: Optional[ProjectMemoryService] = None,
     ):
         self.ingestion_service = ingestion_service or IngestionService()
         self.intelligence_service = intelligence_service or MeetingIntelligenceService()
         self.state_service = state_service or ProjectStateService()
         self.conflict_service = conflict_service or ConflictService(self.state_service)
+        self.memory_service = memory_service or ProjectMemoryService(self.state_service)
 
     def process_meeting(
         self,
@@ -89,90 +92,122 @@ class PipelineCoordinator:
         tenant_id: str = "default_tenant",
         correlation_id: Optional[str] = None,
     ) -> PipelineExecutionResult:
+        """Process a completed meeting transcript into shared project memory.
+
+        A meeting is an input source, not a separate memory system. The complete
+        transcript is already persisted as Evidence by the Meet event worker.
+        Evidence is grouped by the project assigned to each transcript segment,
+        then the same memory engine used by WhatsApp promotes the extracted
+        knowledge automatically. Only project-routing uncertainty remains in
+        Unknown Context.
+        """
         logger.info(
             f"meet_transcript_processing_started: meeting_id={meeting_id} "
             f"project_id={project_id} workspace_id={workspace_id} "
             f"correlation_id={correlation_id}"
         )
 
-        # 0. Ensure Project State exists (baseline v1)
-        state = self.state_service.get_or_create_state(project_id, db)
-        v_before = state.current_version
-
-        # 1. Normalization & Evidence Creation (Phase 3)
-        evidence_records = self.ingestion_service.normalize_meeting_to_evidence(
-            meeting_id=meeting_id,
-            project_id=project_id,
-            db=db,
+        # Backwards-compatible manual trigger: populate Evidence when this
+        # endpoint is called before the event worker has normalized the meeting.
+        evidence_records = (
+            db.query(Evidence)
+            .filter(Evidence.meeting_id == meeting_id)
+            .order_by(Evidence.occurred_at.asc())
+            .all()
         )
-
-        # 2. Meeting Intelligence (Phase 4)
-        candidates = self.intelligence_service.analyze_meeting_evidence(
-            meeting_id=meeting_id,
-            project_id=project_id,
-            db=db,
-        )
-
-        # 3. Validation, Conflict Detection & State Proposals (Phases 5 & 6)
-        proposals_created: List[StateChange] = []
-        conflicts_created: List[Conflict] = []
-
-        for cand in candidates:
-            # Check for semantic / architectural / workflow conflicts
-            conflict = self.conflict_service.detect_conflicts_for_candidate(
-                candidate=cand,
+        if not evidence_records:
+            evidence_records = self.ingestion_service.normalize_meeting_to_evidence(
+                meeting_id=meeting_id,
+                project_id=project_id,
                 db=db,
-                tenant_id=tenant_id,
             )
-            if conflict:
-                conflicts_created.append(conflict)
 
-            # For high-impact items (proposals, decisions, requirements), create proposed StateChange records
-            if cand.category in ("proposal", "decision_candidate", "requirement_candidate"):
-                change = self.state_service.propose_change_from_candidate(
+        # Group evidence by its already-resolved project. Unknown Context is
+        # intentionally excluded from the memory write path.
+        grouped: Dict[str, List[Evidence]] = {}
+        for evidence in evidence_records:
+            target_project = evidence.project_id
+            if not target_project:
+                continue
+            from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+            if target_project == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
+                continue
+            grouped.setdefault(target_project, []).append(evidence)
+
+        candidates_by_project: Dict[str, List[CandidateKnowledge]] = {}
+        conflicts_created: List[Conflict] = []
+        memory_results: Dict[str, Dict[str, Any]] = {}
+
+        for target_project_id, project_evidence in grouped.items():
+            candidates = self.intelligence_service.analyze_evidence_records(
+                evidence_records=project_evidence,
+                project_id=target_project_id,
+                db=db,
+                meeting_id=meeting_id,
+                source_name="google_meet",
+            )
+            candidates_by_project[target_project_id] = candidates
+
+            for cand in candidates:
+                conflict = self.conflict_service.detect_conflicts_for_candidate(
                     candidate=cand,
                     db=db,
-                    actor_id=actor_id,
+                    tenant_id=tenant_id,
                 )
-                proposals_created.append(change)
+                if conflict:
+                    conflicts_created.append(conflict)
 
-        # 4. Verify Project State version is UNCHANGED!
-        db.refresh(state)
-        v_after = state.current_version
-        assert v_before == v_after, "PIPELINE VIOLATION: Authoritative Project State was silently mutated!"
+            memory_results[target_project_id] = self.memory_service.apply_candidates(
+                project_id=target_project_id,
+                candidates=candidates,
+                db=db,
+                source="google_meet",
+                actor_id=actor_id,
+            )
 
-        logger.info(
-            f"meet_transcript_processing_completed: meeting_id={meeting_id} "
-            f"project_id={project_id} workspace_id={workspace_id} "
-            f"correlation_id={correlation_id} evidence={len(evidence_records)} "
-            f"candidates={len(candidates)} conflicts={len(conflicts_created)} "
-            f"proposals={len(proposals_created)}. "
-            f"Authoritative Project State remained at v{v_after} (awaiting review)."
-        )
+        all_candidates = [c for items in candidates_by_project.values() for c in items]
 
-        # Sync the project's living Excalidraw workspace from validated state
-        # (visual sync only; no silent state mutation, no raw transcript dump).
+        # The visual workspace is a projection of memory. Rebuild once after
+        # the complete meeting has been processed across all project segments.
         try:
-            from app.services.project_agent_service import ProjectAgentService
+            from app.services.workspace_atlas_service import WorkspaceAtlasService
 
-            ProjectAgentService().sync_living_excalidraw_workspace(
-                project_id=project_id, db=db, tenant_id=tenant_id
+            WorkspaceAtlasService().get_or_sync(
+                db=db,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                force=False,
             )
         except Exception as exc:
             logger.warning(
-                f"meet_excalidraw_sync_deferred: meeting_id={meeting_id} "
-                f"project_id={project_id} error={exc}"
+                "meet_atlas_sync_deferred: meeting_id=%s error=%s",
+                meeting_id,
+                exc,
             )
+
+        target_state = self.state_service.get_or_create_state(project_id, db)
+        v_after = target_state.current_version
+        v_before = min(
+            [int(r.get("state_version_before", v_after)) for r in memory_results.values()]
+            or [v_after]
+        )
+
+        logger.info(
+            f"meet_transcript_processing_completed: meeting_id={meeting_id} "
+            f"projects={len(grouped)} evidence={len(evidence_records)} "
+            f"candidates={len(all_candidates)} conflicts={len(conflicts_created)} "
+            f"memory_auto_applied={sum(int(r.get('applied', 0)) for r in memory_results.values())}"
+        )
 
         return PipelineExecutionResult(
             success=True,
-            message="Knowledge pipeline executed successfully. Proposals and conflicts ready for review.",
+            message="Completed meeting transcript processed into shared project memory and visual notes automatically.",
             project_id=project_id,
             meeting_id=meeting_id,
             events_ingested=len(evidence_records),
             evidence_created=len(evidence_records),
-            candidates_extracted=len(candidates),
-            proposals_created=len(proposals_created),
+            candidates_extracted=len(all_candidates),
+            proposals_created=0,
             conflicts_detected=len(conflicts_created),
             authoritative_version_before=v_before,
             authoritative_version_after=v_after,
@@ -184,18 +219,9 @@ class PipelineCoordinator:
                     "title": c.title,
                     "content": c.content,
                 }
-                for c in candidates
+                for c in all_candidates
             ],
-            proposals=[
-                {
-                    "id": p.id,
-                    "target_section": p.target_section,
-                    "operation": p.operation,
-                    "status": p.approval_status,
-                    "reason": p.reason,
-                }
-                for p in proposals_created
-            ],
+            proposals=[],
             conflicts=[
                 {
                     "id": conf.id,
