@@ -86,6 +86,7 @@ class WorkspaceAtlasService:
         db: Session,
         tenant_id: str = "default_tenant",
         workspace_id: str = "ws_default",
+        force: bool = False,
     ) -> Dict[str, Any]:
         self._ensure_system_project(db, tenant_id, workspace_id)
         artifact = self.excal.get_or_create_artifact(
@@ -110,7 +111,7 @@ class WorkspaceAtlasService:
         slot_map = self._assign_slots(projects, app_state.get("atlas_slots") or {})
         fingerprint = self._fingerprint(projects, db, tenant_id, slot_map)
 
-        if app_state.get("atlas_fingerprint") != fingerprint:
+        if force or app_state.get("atlas_fingerprint") != fingerprint:
             scene, metadata = self._build_scene(
                 projects=projects,
                 db=db,
@@ -337,7 +338,6 @@ class WorkspaceAtlasService:
                 UnknownContextItem.status == UnknownItemStatus.PENDING.value,
             )
             .order_by(UnknownContextItem.created_at.desc())
-            .limit(8)
             .all()
         )
 
@@ -407,18 +407,7 @@ class WorkspaceAtlasService:
         scene: List[Dict[str, Any]] = []
         frame_id = self._id(project.id, "frame")
         header_id = self._id(project.id, "header")
-        scene.append(
-            self._rect(
-                frame_id,
-                origin_x,
-                ATLAS_PADDING_Y,
-                COLUMN_WIDTH,
-                self._column_height(state),
-                STYLE["frame"],
-                opacity=100,
-                roundness=3,
-            )
-        )
+
         scene.append(
             self._rect(
                 header_id,
@@ -500,25 +489,49 @@ class WorkspaceAtlasService:
             )
         )
 
+        # --------------------------------------------------------------
+        # Dynamic Architecture Placement
+        # --------------------------------------------------------------
+        arch_y = ATLAS_PADDING_Y + HEADER_H
+        arch_w = COLUMN_WIDTH - (ARCH_X_PAD * 2)
+
         architecture_elements = self._architecture_from_artifact(artifact)
         if not architecture_elements:
             architecture_elements = self._fallback_architecture(state)
-        scene.extend(
-            self._place_architecture(
-                architecture_elements,
-                origin_x + ARCH_X_PAD,
-                ARCH_Y,
-                ARCH_W,
-                ARCH_H,
-                project.id,
-            )
-        )
 
+        if architecture_elements:
+            bbox = self._bbox(architecture_elements)
+            min_x, min_y, max_x, max_y = bbox
+            raw_w = max(1.0, max_x - min_x)
+            raw_h = max(1.0, max_y - min_y)
+            # Scale horizontally to fit architecture width; keep height proportional
+            scale = min(arch_w / raw_w, 1.0)
+            scaled_h = raw_h * scale
+            # Dynamic height: unconstrained, expands as large as the architecture needs
+            arch_h = max(300.0, scaled_h)
+            scene.extend(
+                self._place_architecture(
+                    architecture_elements,
+                    origin_x + ARCH_X_PAD,
+                    arch_y,
+                    arch_w,
+                    arch_h,
+                    project.id,
+                )
+            )
+            arch_bottom = arch_y + arch_h
+        else:
+            arch_bottom = arch_y + 40
+
+        # --------------------------------------------------------------
+        # Dynamic Context & Knowledge Cards (Infinite Vertical Growth)
+        # --------------------------------------------------------------
+        notes_y = arch_bottom + 50
         scene.append(
             self._text(
                 self._id(project.id, "notes_header"),
                 origin_x + ARCH_X_PAD,
-                NOTES_Y,
+                notes_y,
                 COLUMN_WIDTH - (ARCH_X_PAD * 2),
                 26,
                 "CONTEXT & KNOWLEDGE",
@@ -532,9 +545,9 @@ class WorkspaceAtlasService:
             self._line(
                 self._id(project.id, "notes_divider"),
                 origin_x + ARCH_X_PAD,
-                NOTES_Y + 34,
+                notes_y + 34,
                 origin_x + COLUMN_WIDTH - ARCH_X_PAD,
-                NOTES_Y + 34,
+                notes_y + 34,
             )
         )
 
@@ -546,21 +559,59 @@ class WorkspaceAtlasService:
             constraints=constraints,
             assumptions=assumptions,
         )
-        for i, note in enumerate(notes[:8]):
-            row = i // 2
-            col = i % 2
-            nx = origin_x + ARCH_X_PAD + col * (NOTE_W + NOTE_GAP)
-            ny = NOTES_Y + 52 + row * (NOTE_H + NOTE_GAP)
-            scene.extend(self._note_card(project.id, note, nx, ny))
 
-        return scene
+        cards_start_y = notes_y + 52
+        if notes:
+            for i, note in enumerate(notes):
+                row = i // 2
+                col = i % 2
+                nx = origin_x + ARCH_X_PAD + col * (NOTE_W + NOTE_GAP)
+                ny = cards_start_y + row * (NOTE_H + NOTE_GAP)
+                scene.extend(self._note_card(project.id, note, nx, ny))
+            total_rows = (len(notes) + 1) // 2
+            content_bottom = cards_start_y + total_rows * (NOTE_H + NOTE_GAP)
+        else:
+            scene.append(
+                self._text(
+                    self._id(project.id, "notes_empty"),
+                    origin_x + ARCH_X_PAD,
+                    cards_start_y + 10,
+                    COLUMN_WIDTH - (ARCH_X_PAD * 2),
+                    30,
+                    "No context notes recorded yet.",
+                    12,
+                    "#738177",
+                    custom_data={"atlas": {"type": "knowledge_empty", "project_id": project.id}},
+                )
+            )
+            content_bottom = cards_start_y + 50
+
+        # Frame height expands dynamically with the full content of the column
+        column_bottom = content_bottom + 70
+        column_height = max(900, int(round(column_bottom - ATLAS_PADDING_Y)))
+
+        frame_rect = self._rect(
+            frame_id,
+            origin_x,
+            ATLAS_PADDING_Y,
+            COLUMN_WIDTH,
+            column_height,
+            STYLE["frame"],
+            opacity=100,
+            roundness=3,
+        )
+
+        return [frame_rect] + scene
 
     def _column_height(self, state: Optional[ProjectState]) -> int:
         reqs = len(self._json_list(state.requirements_json if state else "[]"))
         decs = len(self._json_list(state.decisions_json if state else "[]"))
         questions = len(self._json_list(state.open_questions_json if state else "[]"))
-        rows = max(2, (min(8, reqs + decs + questions + 1) + 1) // 2)
-        return NOTES_Y + 52 + rows * (NOTE_H + NOTE_GAP) + 90
+        constraints = len(self._json_list(state.constraints_json if state else "[]"))
+        assumptions = len(self._json_list(state.assumptions_json if state else "[]"))
+        total = reqs + decs + questions + constraints + assumptions
+        rows = max(1, (total + 1) // 2) if total > 0 else 1
+        return ARCH_Y + ARCH_H + 70 + 52 + rows * (NOTE_H + NOTE_GAP) + 80
 
     # ------------------------------------------------------------------
     # Architecture helpers
@@ -670,7 +721,7 @@ class WorkspaceAtlasService:
             return []
         architecture = self._json_list(state.architecture_json)
         nodes: List[Dict[str, Any]] = []
-        for idx, item in enumerate(architecture[:6]):
+        for idx, item in enumerate(architecture):
             if isinstance(item, dict):
                 label = item.get("component") or item.get("name") or item.get("title") or "Component"
             else:
@@ -778,22 +829,24 @@ class WorkspaceAtlasService:
         questions: List[Any],
         constraints: List[Any],
         assumptions: Optional[List[Any]] = None,
+        limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Select a balanced set of context records for the visual note layer."""
+        """Select context records for the visual note layer (infinite vertical layout)."""
         cards: List[Dict[str, Any]] = []
 
-        # Keep the eight-note surface balanced so one category cannot dominate
-        # the human-readable context story.
-        for item in decs[:2]:
+        for item in decs:
             cards.append(self._knowledge_item("DECISION", item))
-        for item in reqs[:2]:
+        for item in reqs:
             cards.append(self._knowledge_item("REQUIREMENT", item))
-        for item in constraints[:1]:
+        for item in constraints:
             cards.append(self._knowledge_item("CONSTRAINT", item))
-        for item in (assumptions or [])[:2]:
+        for item in (assumptions or []):
             cards.append(self._knowledge_item("ASSUMPTION", item))
-        for item in questions[:1]:
+        for item in questions:
             cards.append(self._knowledge_item("OPEN QUESTION", item))
+
+        if limit is not None:
+            return cards[:limit]
         return cards
 
     def _knowledge_item(self, category: str, item: Any) -> Dict[str, Any]:
@@ -1176,18 +1229,64 @@ class WorkspaceAtlasService:
         workspace_id: str,
     ) -> List[Dict[str, Any]]:
         origin_x = ATLAS_PADDING_X
-        height = max(900, NOTES_Y + 700)
-        scene: List[Dict[str, Any]] = [
-            self._rect(
-                self._id("unknown", "frame"),
-                origin_x,
-                ATLAS_PADDING_Y,
-                COLUMN_WIDTH,
-                height,
-                {"stroke": "#d9c7a3", "background": "#fffdf8"},
-                opacity=100,
-                roundness=3,
-            ),
+        card_y = ARCH_Y
+        cards_scene: List[Dict[str, Any]] = []
+
+        for item in items:
+            matches = (
+                db.query(PossibleProjectMatch)
+                .filter(PossibleProjectMatch.unknown_item_id == item.id)
+                .order_by(PossibleProjectMatch.created_at.desc())
+                .limit(2)
+                .all()
+            )
+            suggestion_names: List[str] = []
+            for match in matches:
+                p = db.query(Project).filter(Project.id == match.candidate_project_id).first()
+                if p:
+                    suggestion_names.append(p.name)
+
+            cards_scene.extend(
+                self._unknown_card(
+                    item=item,
+                    x=origin_x + ARCH_X_PAD,
+                    y=card_y,
+                    suggestions=suggestion_names,
+                )
+            )
+            card_y += UNKNOWN_CARD_H + 26
+
+        if not items:
+            cards_scene.append(
+                self._text(
+                    self._id("unknown", "empty"),
+                    origin_x + ARCH_X_PAD,
+                    ARCH_Y + 40,
+                    ARCH_W,
+                    50,
+                    "All source evidence is placed.",
+                    18,
+                    "#66736a",
+                    custom_data={"atlas": {"type": "unknown_context_empty"}},
+                )
+            )
+            card_y = ARCH_Y + 130
+
+        column_bottom = card_y + 40
+        column_height = max(900, int(round(column_bottom - ATLAS_PADDING_Y)))
+
+        frame_rect = self._rect(
+            self._id("unknown", "frame"),
+            origin_x,
+            ATLAS_PADDING_Y,
+            COLUMN_WIDTH,
+            column_height,
+            {"stroke": "#d9c7a3", "background": "#fffdf8"},
+            opacity=100,
+            roundness=3,
+        )
+
+        header_scene: List[Dict[str, Any]] = [
             self._rect(
                 self._id("unknown", "header"),
                 origin_x + 22,
@@ -1221,8 +1320,6 @@ class WorkspaceAtlasService:
                 "#8a6a41",
                 custom_data={"atlas": {"type": "unknown_context"}},
             ),
-        ]
-        scene.append(
             self._text(
                 self._id("unknown", "count"),
                 origin_x + 46,
@@ -1234,49 +1331,10 @@ class WorkspaceAtlasService:
                 "#9a7b4c",
                 bold=True,
                 custom_data={"atlas": {"type": "unknown_context"}},
-            )
-        )
+            ),
+        ]
 
-        card_y = ARCH_Y
-        for item in items[:6]:
-            matches = (
-                db.query(PossibleProjectMatch)
-                .filter(PossibleProjectMatch.unknown_item_id == item.id)
-                .order_by(PossibleProjectMatch.created_at.desc())
-                .limit(2)
-                .all()
-            )
-            suggestion_names: List[str] = []
-            for match in matches:
-                p = db.query(Project).filter(Project.id == match.candidate_project_id).first()
-                if p:
-                    suggestion_names.append(p.name)
-
-            scene.extend(
-                self._unknown_card(
-                    item=item,
-                    x=origin_x + ARCH_X_PAD,
-                    y=card_y,
-                    suggestions=suggestion_names,
-                )
-            )
-            card_y += UNKNOWN_CARD_H + 26
-
-        if not items:
-            scene.append(
-                self._text(
-                    self._id("unknown", "empty"),
-                    origin_x + ARCH_X_PAD,
-                    ARCH_Y + 40,
-                    ARCH_W,
-                    50,
-                    "All source evidence is placed.",
-                    18,
-                    "#66736a",
-                    custom_data={"atlas": {"type": "unknown_context_empty"}},
-                )
-            )
-        return scene
+        return [frame_rect] + header_scene + cards_scene
 
     def _unknown_card(
         self,
@@ -1443,6 +1501,7 @@ class WorkspaceAtlasService:
         y1: float,
         x2: float,
         y2: float,
+        stroke_width: int = 1,
     ) -> Dict[str, Any]:
         return {
             "id": element_id,

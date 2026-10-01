@@ -197,3 +197,84 @@ def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
             and el.get("height") == NOTE_H
             for el in elements
         )
+
+
+def test_atlas_build_scene_includes_divider_lines(db_session: Session):
+    project = _project(db_session, "proj_atlas_scene", "AtlasSceneTest")
+    state = ProjectState(
+        id="pstate_test_scene",
+        project_id=project.id,
+        current_version=1,
+        vision="Test Vision",
+        requirements_json=json.dumps([{"title": "Req 1", "content": "Content"}]),
+        architecture_json="[]",
+        decisions_json=json.dumps([{"title": "Dec 1", "content": "Content"}]),
+        constraints_json="[]",
+        assumptions_json="[]",
+    )
+    db_session.add(state)
+    db_session.commit()
+
+    service = WorkspaceAtlasService()
+    scene, metadata = service._build_scene(
+        projects=[project],
+        db=db_session,
+        tenant_id="default_tenant",
+        workspace_id="ws_atlas_test",
+        slot_map={project.id: 1},
+    )
+    assert len(scene) > 0
+    # Ensure line elements rendered properly without stroke_width error
+    lines = [el for el in scene if el.get("type") == "line"]
+    assert len(lines) > 0
+    assert all(line.get("strokeWidth") is not None for line in lines)
+
+
+def test_column_height_dynamically_increases_with_content(db_session: Session):
+    service = WorkspaceAtlasService()
+
+    # Project with minimal content (1 req, 1 dec)
+    proj_small = _project(db_session, "proj_height_small", "SmallProject")
+    state_small = ProjectState(
+        id="pstate_small",
+        project_id=proj_small.id,
+        current_version=1,
+        requirements_json=json.dumps([{"title": "R1", "content": "C1"}]),
+        decisions_json=json.dumps([{"title": "D1", "content": "C1"}]),
+    )
+    db_session.add(state_small)
+
+    # Project with large content (16 reqs, 14 decs = 30 items)
+    proj_large = _project(db_session, "proj_height_large", "LargeProject")
+    state_large = ProjectState(
+        id="pstate_large",
+        project_id=proj_large.id,
+        current_version=1,
+        requirements_json=json.dumps([{"title": f"Req {i}", "content": f"Content {i}"} for i in range(16)]),
+        decisions_json=json.dumps([{"title": f"Dec {i}", "content": f"Content {i}"} for i in range(14)]),
+    )
+    db_session.add(state_large)
+    db_session.commit()
+
+    scene_small = service._project_column(proj_small, db_session, "default_tenant", 100)
+    scene_large = service._project_column(proj_large, db_session, "default_tenant", 100)
+
+    frame_small = next(el for el in scene_small if el["id"] == service._id(proj_small.id, "frame"))
+    frame_large = next(el for el in scene_large if el["id"] == service._id(proj_large.id, "frame"))
+
+    # Large project column must be significantly taller than small project column
+    assert frame_large["height"] > frame_small["height"]
+    # 30 items in 2-column grid = 15 rows * (252 + 26) > 4000px
+    assert frame_large["height"] > 4000
+    # Small column wraps content cleanly
+    assert frame_small["height"] < 2500
+
+    # Ensure all 30 note cards are generated (no cap at 8)
+    note_cards_large = [
+        el for el in scene_large
+        if el.get("type") == "rectangle"
+        and el.get("customData", {}).get("atlas", {}).get("type") == "knowledge_note"
+    ]
+    assert len(note_cards_large) == 30
+
+

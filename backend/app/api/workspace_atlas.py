@@ -40,9 +40,11 @@ async def get_project_atlas(
 async def sync_project_atlas(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    force: bool = True,
 ):
     return service.get_or_sync(
         db=db,
         tenant_id=_tenant(current_user),
         workspace_id="ws_default",
+        force=force,
     )

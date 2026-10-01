@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import SynesisException
 from app.models.context_resolution import UnknownContextItem, UnknownItemStatus
 from app.models.project import Project
+from app.models.project_semantic_profile import ProjectSemanticProfile
 from app.models.unknown_cluster import UnknownCluster
 from app.schemas.visual_plan import VisualNode, VisualPlan, VisualRelationship
 from app.services.audit_service import AuditService
