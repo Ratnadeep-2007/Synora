@@ -6,59 +6,89 @@ Synora is a multi-source project intelligence system. It continuously turns auth
 
 ## Canonical Runtime Model
 
-There is **ONE SHARED SYNORA AGENT**.
+There is **ONE SHARED SYNORA AGENT** and **ONE SHARED MEMORY ENGINE**.
 
-A project is a **context and security boundary**, not a separate agent. The same logical agent operates on many projects by receiving an explicit project-scoped context and permissions. Specialist capabilities (Business Analysis, Project Planning, Functional Analysis, Technical Architecture, Frappe / ERP Implementation) are modular sub-capabilities of the single agent, not independent user-facing agents or separate memory silos.
+A project is a strict context and security boundary. The same logical agent operates
+across projects by receiving project-scoped memory and permissions. WhatsApp and
+completed meeting transcripts are input sources only; they do not create separate
+agents or separate memory stores.
 
 ```text
-Google Meet ─┐
-WhatsApp ────┼──→ Normalize → SourceEvent
-Slack ───────┤                    │
-Excalidraw ──┘                    │
-                                  ▼
-                ┌───────────────────────────────────┐
-                │   Unified Context Intelligence    │
-                │    (ContextResolutionService)     │
-                └─────────────────┬─────────────────┘
-                                  │
-                    ┌─────────────┴─────────────┐
-                    ▼                           ▼
-            Context Resolution          Knowledge Extraction
-         ("Which project is this?")     ("What does this mean?")
-                    │                           │
-                    └─────────────┬─────────────┘
-                                  ▼
-                            Resolution Join
-                                  │
-              ┌───────────────────┼───────────────────┐
-              ▼                   ▼                   ▼
-          Resolved            Ambiguous          Unresolved
-       (Authorized)               │                   │
-              │                   └─────────┬─────────┘
-              ▼                             ▼
-        Target Project               Unknown Context
-              │                   (proj_unknown_context)
-              │                             │
-              │                     Human Triage Queue
-              │                 (Assign / Keep / Create)
-              ▼
-   PostgreSQL Project State
-              │
-       ┌──────┴──────┐
-       ▼             ▼
- Governed State   VisualPlan
-     Change          │
-       │             ▼
-       │     ExcalidrawCompiler (Deterministic)
-       │             │
-       └──────┬──────┘
-              ▼
-       Human Approval (Proposals & Visual Diff)
-              │
-              ▼
-  Living Excalidraw Workspace (Immutable Revisions)
+WhatsApp ─────────────┐
+Completed Meet ───────┤
+                      ▼
+               Normalize → Evidence
+                      │
+                      ▼
+           Unified Context Intelligence
+                      │
+           ┌──────────┴──────────┐
+           ▼                     ▼
+    Project resolved       Project unresolved
+           │                     │
+           ▼                     ▼
+    Shared Project Memory   Unknown Context
+           │                (human attention only)
+           │
+    ┌──────┼─────────┐
+    ▼      ▼         ▼
+  State  Knowledge  Provenance
+    │      │         │
+    └──────┼─────────┘
+           ▼
+      Visual Projection
+           │
+           ▼
+   Deterministic Excalidraw
+        / Project Atlas
 ```
 
+### Project Memory Contract
+
+Project Memory is a logical layer over the existing PostgreSQL records:
+
+- `ProjectState` — canonical current project snapshot.
+- `ProjectStateVersion` — immutable history of automatic memory updates.
+- `CandidateKnowledge` — detailed extracted knowledge ledger.
+- `Evidence` — immutable source provenance.
+- `ProjectMemoryService` — shared orchestration boundary for reads and automatic promotion.
+
+Routine evidence-backed knowledge is written automatically. Memory writes are always
+scoped to the resolved `project_id`; a candidate belonging to another project is never
+promoted. Normal note updates do not require a human approval step.
+
+The only intentional human interaction in the source pipeline is **project routing
+when Synora cannot establish a safe destination**. This is an ambiguity boundary, not
+a note-editing workflow.
+
+## Meeting Input Model
+
+Google Meet is processed **after the meeting transcript is complete**. The event worker
+retrieves the transcript and its entries, preserves speaker/timestamp provenance, and
+routes transcript segments to project context. The same Project Memory engine then
+processes the resolved evidence used by WhatsApp.
+
+```text
+Meeting ends
+   ↓
+Transcript ready event
+   ↓
+Retrieve complete transcript
+   ↓
+Persist transcript + entries
+   ↓
+Resolve segment → project
+   ↓
+Extract knowledge
+   ↓
+Update that project's memory
+   ↓
+Refresh Project Atlas visual notes
+```
+
+A single meeting can contribute to multiple projects. Each segment is grouped by its
+resolved project before memory promotion; Unknown Context segments are not written
+into a real project's memory.
 ## Unified Context Intelligence (Source-Agnostic)
 
 Context resolution is strictly source-agnostic and centralized in `ContextResolutionService` (`backend/app/services/context_resolution_service.py` / `ContextIntelligenceService`).
@@ -80,16 +110,16 @@ For every incoming `SourceEvent`, the intelligence layer executes two concurrent
   - High confidence ($\ge 0.75$) with authorized project: Auto-routed (`resolved`).
   - Low confidence or multiple competing projects: Flagged as `ambiguous` or `unresolved`, routed to **Unknown Context**.
 
-## Unknown Context & Human Triage
+## Unknown Context & Human Attention
 
 Synora never forces uncertain information into an arbitrary project.
 
 - **Quarantine Project**: Unassigned, ambiguous, or unmapped events route to a dedicated system project: `proj_unknown_context` ("Unknown Context").
 - **Explainable Candidates**: Ambiguous items include ranked `ContextCandidate` / `PossibleProjectMatch` entries displaying deterministic score, semantic score, combined confidence, and an explanation.
 - **Human Triage Actions**:
-  1. **Assign to Project**: Moves the evidence and extracted knowledge to an existing authorized project, triggering state and visual proposals.
-  2. **Keep Unknown**: Retains the event in Unknown Context without project assignment.
-  3. **Create New Project**: Seeds a new project workspace initialized with the triage evidence.
+  1. **Assign to Project**: Routes quarantined evidence into an authorized project and triggers memory/visual synchronization.
+  2. **Keep Unknown**: Retains the evidence outside project memory.
+  3. **Create New Project**: Seeds a new project workspace initialized from the evidence.
 
 ## Google Meet Multi-Context Intelligence
 
@@ -120,8 +150,8 @@ Excalidraw is the living visual workspace and a primary source of visual evidenc
   - Renders rectangles, diamonds, ellipses, text elements, and binding arrows.
   - Applies design-system color tokens (e.g., `#e0e7ff` / `#3730a3` for infrastructure).
   - Enforces deterministic collision avoidance, automatic spacing, and container sizing.
-- High-impact visual modifications follow the governance gate:
-  `VisualPlan Proposal → Visual Diff Preview → Human Approval → ExcalidrawRevision Committed`.
+- Normal memory-driven visual synchronization is automatic and produces an immutable revision.
+- Existing proposal/review endpoints remain available for explicit/manual visual changes, but routine source-driven note updates do not require them.
 
 ## Governed State & Evidence Traceability
 
