@@ -12,6 +12,7 @@ from app.models.context_resolution import PossibleProjectMatch, UnknownContextIt
 from app.models.excalidraw import ExcalidrawArtifact
 from app.models.project import Project
 from app.models.project_state import ProjectState
+from app.models.intelligence import CandidateKnowledge
 from app.services.excalidraw_service import ExcalidrawService
 from app.services.visual_revision_service import VisualRevisionService
 
@@ -188,6 +189,16 @@ class WorkspaceAtlasService:
                     "state_version": self._state_version(p.id, db),
                     "diagram_version": self._diagram_version(p.id, db, tenant_id),
                     "atlas_slot": slot_map.get(p.id),
+                    "memory": {
+                        "knowledge": db.query(CandidateKnowledge).filter(CandidateKnowledge.project_id == p.id).count(),
+                        "requirements": self._state_count(p.id, db, "requirements"),
+                        "decisions": self._state_count(p.id, db, "decisions"),
+                        "architecture": self._state_count(p.id, db, "architecture"),
+                        "constraints": self._state_count(p.id, db, "constraints"),
+                        "assumptions": self._state_count(p.id, db, "assumptions"),
+                        "open_questions": self._state_count(p.id, db, "open_questions"),
+                        "updated_at": self._state_updated_at(p.id, db),
+                    },
                 }
                 for p in projects
             ],
@@ -301,6 +312,26 @@ class WorkspaceAtlasService:
         return int(row.current_version) if row else 0
 
     @staticmethod
+    def _state_count(project_id: str, db: Session, field: str) -> int:
+        row = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
+        if not row:
+            return 0
+        column = {
+            "requirements": "requirements_json",
+            "decisions": "decisions_json",
+            "architecture": "architecture_json",
+            "constraints": "constraints_json",
+            "assumptions": "assumptions_json",
+            "open_questions": "open_questions_json",
+        }[field]
+        return len(WorkspaceAtlasService._json_list(getattr(row, column, "[]")))
+
+    @staticmethod
+    def _state_updated_at(project_id: str, db: Session) -> Optional[str]:
+        row = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
+        return row.updated_at.isoformat() if row and row.updated_at else None
+
+    @staticmethod
     def _diagram_version(
         project_id: str,
         db: Session,
@@ -403,6 +434,22 @@ class WorkspaceAtlasService:
             )
             .first()
         )
+        recent_knowledge = (
+            db.query(CandidateKnowledge)
+            .filter(CandidateKnowledge.project_id == project.id)
+            .order_by(CandidateKnowledge.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        state = db.query(ProjectState).filter(ProjectState.project_id == project.id).first()
+        artifact = (
+            db.query(ExcalidrawArtifact)
+            .filter(
+                ExcalidrawArtifact.project_id == project.id,
+                ExcalidrawArtifact.tenant_id == tenant_id,
+            )
+            .first()
+        )
 
         scene: List[Dict[str, Any]] = []
         frame_id = self._id(project.id, "frame")
@@ -458,6 +505,17 @@ class WorkspaceAtlasService:
         constraints = self._json_list(state.constraints_json if state else "[]")
         assumptions = self._json_list(state.assumptions_json if state else "[]")
 
+        memory_counts = {
+            "knowledge": len(recent_knowledge),
+            "requirements": len(reqs),
+            "decisions": len(decs),
+            "architecture": len(self._json_list(state.architecture_json if state else "[]")),
+            "constraints": len(constraints),
+            "assumptions": len(assumptions),
+            "open_questions": len(questions),
+            "updated_at": state.updated_at.isoformat() if state and state.updated_at else None,
+        }
+
         intent = self._project_intent(state)
         if intent:
             scene.append(
@@ -482,7 +540,7 @@ class WorkspaceAtlasService:
                 ATLAS_PADDING_Y + 151,
                 COLUMN_WIDTH - 92,
                 18,
-                f"STATE v{state_version}   •   {len(reqs)} requirements   •   {len(decs)} decisions   •   {len(questions)} questions   •   {len(constraints)} constraints   •   {len(assumptions)} assumptions",
+                f"MEMORY v{state_version}   •   {len(reqs)} requirements   •   {len(decs)} decisions   •   {len(questions)} questions   •   {len(constraints)} constraints   •   {len(assumptions)} assumptions",
                 10,
                 "#66736a",
                 custom_data={"atlas": {"type": "project_metrics", "project_id": project.id}},
