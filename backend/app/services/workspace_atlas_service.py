@@ -654,7 +654,9 @@ class WorkspaceAtlasService:
         min_x, min_y, max_x, max_y = bbox
         width = max(1.0, max_x - min_x)
         height = max(1.0, max_y - min_y)
-        scale = min(target_w / width, target_h / height, 1.0)
+        scale = min(target_w / width, 1.0)
+        if height * scale > target_h:
+            scale = target_h / height
         offset_x = target_x + (target_w - width * scale) / 2 - min_x * scale
         offset_y = target_y + (target_h - height * scale) / 2 - min_y * scale
 
@@ -717,89 +719,154 @@ class WorkspaceAtlasService:
         self,
         state: Optional[ProjectState],
     ) -> List[Dict[str, Any]]:
+        """Create a layered visual architecture when no authored diagram exists."""
         if not state:
             return []
         architecture = self._json_list(state.architecture_json)
-        nodes: List[Dict[str, Any]] = []
-        for idx, item in enumerate(architecture):
+        if not architecture:
+            return []
+
+        tier_names = {
+            "client": "EXPERIENCE",
+            "frontend": "EXPERIENCE",
+            "actor": "EXPERIENCE",
+            "service": "CORE SERVICES",
+            "api": "CORE SERVICES",
+            "backend": "CORE SERVICES",
+            "datastore": "DATA",
+            "database": "DATA",
+            "infrastructure": "INFRASTRUCTURE",
+            "external": "EXTERNAL SYSTEMS",
+        }
+        tier_order = ["EXPERIENCE", "CORE SERVICES", "DATA", "INFRASTRUCTURE", "EXTERNAL SYSTEMS"]
+        grouped: Dict[str, List[str]] = {tier: [] for tier in tier_order}
+
+        for item in architecture[:18]:
             if isinstance(item, dict):
-                label = item.get("component") or item.get("name") or item.get("title") or "Component"
+                label = str(
+                    item.get("component") or item.get("name") or item.get("title") or "Component"
+                ).strip()
+                raw_type = str(
+                    item.get("type") or item.get("layer") or item.get("node_type") or "service"
+                ).lower()
             else:
-                label = str(item)
-            nodes.append(
-                {
-                    "id": f"fallback_{idx}",
+                label = str(item).strip()
+                raw_type = "service"
+            tier = tier_names.get(raw_type, "CORE SERVICES")
+            if label:
+                grouped[tier].append(label[:44])
+
+        elements: List[Dict[str, Any]] = []
+        tier_y = 0
+        populated = []
+        for tier in tier_order:
+            labels = grouped[tier]
+            if not labels:
+                continue
+            populated.append(tier)
+            group_id = f"fallback_group_{tier.lower().replace(' ', '_')}"
+            group_w = min(1000, max(760, 240 + len(labels) * 180))
+            elements.append({
+                "id": group_id,
+                "type": "rectangle",
+                "x": 0, "y": tier_y, "width": group_w, "height": 126,
+                "angle": 0,
+                "strokeColor": "#c6d0c8",
+                "backgroundColor": "#f8faf8",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 1,
+                "opacity": 100,
+                "roundness": {"type": 3},
+                "boundElements": [],
+                "isDeleted": False,
+                "customData": {"atlas": {"type": "architecture_tier", "tier": tier}},
+            })
+            elements.append({
+                "id": f"{group_id}:label",
+                "type": "text",
+                "x": 18, "y": tier_y + 11, "width": group_w - 36, "height": 18,
+                "text": tier, "originalText": tier,
+                "fontSize": 10, "fontFamily": 1, "textAlign": "left",
+                "verticalAlign": "top", "baseline": 10, "autoResize": False,
+                "strokeColor": "#66736a", "backgroundColor": "transparent",
+                "fillStyle": "solid", "strokeWidth": 1, "roughness": 1,
+                "opacity": 100, "isDeleted": False,
+                "customData": {"atlas": {"type": "architecture_tier_label", "tier": tier}},
+            })
+
+            box_gap = 18
+            box_w = max(150, min(240, int((group_w - 36 - max(0, len(labels)-1)*box_gap) / max(1, len(labels)))))
+            for idx, label in enumerate(labels):
+                bx = 18 + idx * (box_w + box_gap)
+                node_id = f"{group_id}:node:{idx}"
+                elements.append({
+                    "id": node_id,
                     "type": "rectangle",
-                    "x": 0,
-                    "y": idx * 140,
-                    "width": 300,
-                    "height": 86,
+                    "x": bx, "y": tier_y + 40, "width": box_w, "height": 68,
                     "angle": 0,
-                    "strokeColor": "#356346",
+                    "strokeColor": "#46745a",
                     "backgroundColor": "#ffffff",
                     "fillStyle": "solid",
-                    "strokeWidth": 2,
-                    "roughness": 1,
-                    "opacity": 100,
+                    "strokeWidth": 2 if idx == 0 else 1,
+                    "roughness": 1, "opacity": 100,
                     "roundness": {"type": 3},
-                    "boundElements": [{"type": "text", "id": f"fallback_text_{idx}"}],
+                    "boundElements": [{"type": "text", "id": f"{node_id}:text"}],
                     "isDeleted": False,
-                    "customData": {"atlas": {"type": "fallback_architecture"}},
-                }
-            )
-            nodes.append(
-                {
-                    "id": f"fallback_text_{idx}",
+                    "customData": {"atlas": {"type": "architecture_node", "tier": tier}},
+                })
+                elements.append({
+                    "id": f"{node_id}:text",
                     "type": "text",
-                    "x": 12,
-                    "y": idx * 140 + 30,
-                    "width": 276,
-                    "height": 24,
-                    "text": str(label)[:48],
-                    "originalText": str(label)[:48],
-                    "fontSize": 16,
-                    "fontFamily": 1,
-                    "textAlign": "center",
-                    "verticalAlign": "middle",
-                    "baseline": 15,
-                    "containerId": f"fallback_{idx}",
-                    "strokeColor": "#243127",
-                    "backgroundColor": "transparent",
-                    "fillStyle": "solid",
-                    "strokeWidth": 1,
-                    "roughness": 1,
-                    "opacity": 100,
-                    "groupIds": [],
-                    "isDeleted": False,
-                }
-            )
-            if idx > 0:
-                nodes.append(
-                    {
-                        "id": f"fallback_edge_{idx}",
-                        "type": "arrow",
-                        "x": 150,
-                        "y": (idx - 1) * 140 + 86,
-                        "width": 0,
-                        "height": 54,
-                        "angle": 0,
-                        "strokeColor": "#738177",
-                        "backgroundColor": "transparent",
-                        "fillStyle": "solid",
-                        "strokeWidth": 1,
-                        "strokeStyle": "solid",
-                        "roughness": 1,
-                        "opacity": 100,
-                        "points": [[0, 0], [0, 54]],
-                        "startBinding": {"elementId": f"fallback_{idx - 1}", "focus": 0, "gap": 4},
-                        "endBinding": {"elementId": f"fallback_{idx}", "focus": 0, "gap": 4},
-                        "startArrowhead": None,
-                        "endArrowhead": "arrow",
-                        "isDeleted": False,
-                        "customData": {"atlas": {"type": "fallback_architecture"}},
-                    }
-                )
-        return nodes
+                    "x": bx + 10, "y": tier_y + 53,
+                    "width": box_w - 20, "height": 40,
+                    "text": label, "originalText": label,
+                    "fontSize": 12 if len(label) > 26 else 14,
+                    "fontFamily": 1, "textAlign": "center", "verticalAlign": "middle",
+                    "baseline": 12, "autoResize": False,
+                    "strokeColor": "#26362b", "backgroundColor": "transparent",
+                    "fillStyle": "solid", "strokeWidth": 1, "roughness": 1,
+                    "opacity": 100, "isDeleted": False,
+                    "customData": {"atlas": {"type": "architecture_node_label", "tier": tier}},
+                })
+            tier_y += 154
+
+        # Show the system's vertical story explicitly.
+        for idx in range(1, len(populated)):
+            y = 154 * idx - 28
+            elements.append({
+                "id": f"fallback_flow_{idx}",
+                "type": "arrow",
+                "x": 500, "y": y, "width": 0, "height": 34, "angle": 0,
+                "strokeColor": "#6b7b70", "backgroundColor": "transparent",
+                "fillStyle": "solid", "strokeWidth": 2, "strokeStyle": "solid",
+                "roughness": 1, "opacity": 100, "points": [[0,0],[0,34]],
+                "startArrowhead": None, "endArrowhead": "arrow",
+                "isDeleted": False,
+                "customData": {"atlas": {"type": "architecture_flow"}},
+            })
+        return elements
+
+    @staticmethod
+    def _section_label(
+        element_id: str,
+        x: float,
+        y: float,
+        width: float,
+        text: str,
+    ) -> Dict[str, Any]:
+        return {
+            "id": element_id,
+            "type": "text",
+            "x": x, "y": y, "width": width, "height": 18,
+            "text": text, "originalText": text,
+            "fontSize": 9, "fontFamily": 1, "textAlign": "left",
+            "verticalAlign": "top", "baseline": 9, "autoResize": False,
+            "strokeColor": "#6b7b70", "backgroundColor": "transparent",
+            "fillStyle": "solid", "strokeWidth": 1, "roughness": 1,
+            "opacity": 100, "isDeleted": False,
+            "customData": {"atlas": {"type": "section_label"}},
+        }
 
     @staticmethod
     def _bbox(elements: List[Dict[str, Any]]) -> Tuple[float, float, float, float]:
