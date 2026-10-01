@@ -399,15 +399,16 @@ class ExcalidrawCompiler:
             grouped.setdefault(group, []).append(node)
 
         if len(grouped) > 1:
-            lane_index = 0
+            lane_y = BASE_Y
             for _, group_nodes in grouped.items():
+                rows = max(1, (len(group_nodes) + COLUMN_WRAP - 1) // COLUMN_WRAP)
                 for index, node in enumerate(group_nodes):
                     col = index % COLUMN_WRAP
                     row = index // COLUMN_WRAP
                     x = BASE_X + col * (NODE_WIDTH + H_GAP)
-                    y = BASE_Y + lane_index * (NODE_HEIGHT + V_GAP + 64) + row * (NODE_HEIGHT + V_GAP)
+                    y = lane_y + row * (NODE_HEIGHT + V_GAP)
                     positions[node.id] = (x, y)
-                lane_index += 1
+                lane_y += rows * (NODE_HEIGHT + V_GAP) + 64
             return positions
 
         horizontal = plan.layout_direction == "horizontal"
