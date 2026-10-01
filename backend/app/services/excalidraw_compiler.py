@@ -16,6 +16,8 @@ NODE_STYLES: Dict[str, Dict[str, Any]] = {
     "decision": {"background": "#ecfdf5", "stroke": "#16a34a"},
     "requirement": {"background": "#eef2ff", "stroke": "#4338ca"},
     "infrastructure": {"background": "#e0e7ff", "stroke": "#3730a3"},
+    "queue": {"background": "#fce7f3", "stroke": "#be185d"},
+    "external": {"background": "#e0f2fe", "stroke": "#0369a1"},
     "group": {"background": "#f6f7f5", "stroke": "#68706a"},
     "note": {"background": "#fef9c3", "stroke": "#ca8a04"},
 }
@@ -57,10 +59,24 @@ class ExcalidrawCompiler:
             text_id = f"label_{node.id}"
             node_element_ids[node.id] = rect_id
 
+            node_shape = {
+                "actor": "ellipse",
+                "decision": "diamond",
+                "requirement": "rectangle",
+                "service": "rectangle",
+                "client": "rectangle",
+                "datastore": "rectangle",
+                "queue": "rectangle",
+                "external": "rectangle",
+                "infrastructure": "rectangle",
+                "group": "rectangle",
+                "note": "rectangle",
+            }.get(node.node_type, "rectangle")
+
             elements.append(
                 {
                     "id": rect_id,
-                    "type": "rectangle",
+                    "type": node_shape,
                     "x": x,
                     "y": y,
                     "width": NODE_WIDTH,
@@ -76,6 +92,14 @@ class ExcalidrawCompiler:
                     "roundness": {"type": 3},
                     "boundElements": [{"type": "text", "id": text_id}],
                     "isDeleted": False,
+                    "customData": {
+                        "visual": {
+                            "semantic_id": node.id,
+                            "node_type": node.node_type,
+                            "group": node.group,
+                            "emphasis": node.emphasis,
+                        }
+                    },
                 }
             )
 
@@ -103,7 +127,7 @@ class ExcalidrawCompiler:
                     "containerId": rect_id,
                     "lineHeight": 1.25,
                     "baseline": 12 if is_long else 14,
-                    "autoResize": True,
+                    "autoResize": False,
                     "strokeColor": txt_color,
                     "backgroundColor": "transparent",
                     "fillStyle": "solid",
@@ -160,7 +184,10 @@ class ExcalidrawCompiler:
                 continue
             src_pos = positions.get(rel.source)
             dst_pos = positions.get(rel.target)
-            elements.append(self._arrow(rel, src, dst, index, src_pos, dst_pos))
+            arrow = self._arrow(rel, src, dst, index, src_pos, dst_pos)
+            elements.append(arrow)
+            if rel.label:
+                elements.append(self._edge_label(rel, arrow, index))
 
         # First-class architectural sticky notes from plan.notes
         if plan.notes:
@@ -293,6 +320,54 @@ class ExcalidrawCompiler:
             positions[node.id] = (x, y)
         return positions
 
+    def _edge_label(
+        self,
+        rel: VisualRelationship,
+        arrow: Dict[str, Any],
+        index: int,
+    ) -> Dict[str, Any]:
+        """Render relationship labels as small readable chips, not paragraphs."""
+        points = arrow.get("points") or [[0, 0], [0, 0]]
+        end = points[-1] if isinstance(points[-1], list) else [0, 0]
+        dx = float(end[0] or 0)
+        dy = float(end[1] or 0)
+        x = float(arrow.get("x") or 0) + dx / 2 - 48
+        y = float(arrow.get("y") or 0) + dy / 2 - 12
+        label = str(rel.label).strip()[:34]
+        return {
+            "id": f"edge_label_{index}_{rel.source}_{rel.target}",
+            "type": "text",
+            "x": x,
+            "y": y,
+            "width": 96,
+            "height": 20,
+            "text": label,
+            "originalText": label,
+            "fontSize": 9,
+            "fontFamily": 1,
+            "textAlign": "center",
+            "verticalAlign": "middle",
+            "lineHeight": 1.15,
+            "baseline": 9,
+            "autoResize": False,
+            "strokeColor": "#425248",
+            "backgroundColor": "#ffffff",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "roughness": 1,
+            "opacity": 90,
+            "angle": 0,
+            "groupIds": [],
+            "isDeleted": False,
+            "customData": {
+                "visual": {
+                    "type": "relationship_label",
+                    "source": rel.source,
+                    "target": rel.target,
+                }
+            },
+        }
+
     def _arrow(
         self,
         rel,
@@ -353,6 +428,14 @@ class ExcalidrawCompiler:
             "endBinding": {"elementId": target_element_id, "focus": 0, "gap": 6},
             "endArrowhead": "arrow",
             "isDeleted": False,
+            "customData": {
+                "visual": {
+                    "type": "relationship",
+                    "source": rel.source,
+                    "target": rel.target,
+                    "label": rel.label,
+                }
+            },
         }
 
     # ------------------------------------------------------------------
