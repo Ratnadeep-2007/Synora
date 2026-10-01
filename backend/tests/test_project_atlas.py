@@ -177,6 +177,7 @@ def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
         )
         assert len(stages) == 4
         assert all(stage["label"] and stage["detail"] for stage in stages)
+        assert all(stage.get("shape") in {"ellipse", "diamond", "rectangle"} for stage in stages)
 
         elements = service._note_card(
             project.id,
