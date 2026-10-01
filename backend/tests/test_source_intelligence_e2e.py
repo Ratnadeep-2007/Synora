@@ -70,6 +70,41 @@ def test_unknown_context_to_assignment_flow(db_session: Session):
     assert item.source_event_id == "wa_e2e_1"
 
 
+def test_resolved_source_auto_syncs_shared_project_memory(db_session: Session):
+    """Resolved WhatsApp evidence is promoted into ProjectState automatically."""
+    _project(db_session, "proj_memory_auto", "Memory Auto Project")
+
+    pipeline = SourceIntelligencePipeline()
+    outcome = pipeline.process(
+        source="whatsapp",
+        payload={"text": "We decided to use Redis for session storage."},
+        db=db_session,
+        tenant_id=TENANT,
+        actor_id="Tester",
+        project_id="proj_memory_auto",
+        source_event_id="wa_memory_auto_1",
+    )
+
+    assert outcome.outcome == "resolved"
+    assert outcome.candidates_created >= 1
+
+    from app.models.project_state import StateChange
+    state = db_session.query(ProjectState).filter(
+        ProjectState.project_id == "proj_memory_auto"
+    ).first()
+    assert state is not None
+    decisions = __import__("json").loads(state.decisions_json)
+    assert any("Redis" in str(item) for item in decisions)
+    assert state.current_version >= 2
+
+    audit = db_session.query(StateChange).filter(
+        StateChange.project_id == "proj_memory_auto",
+        StateChange.target_section == "memory",
+        StateChange.approval_status == "approved",
+    ).first()
+    assert audit is not None
+
+
 # 27. Meet -> project A + project B (segment routing), meeting stays one row ---
 def _connection(db: Session, encryption: EncryptionService, user_id: str) -> SourceConnection:
     conn = SourceConnection(
