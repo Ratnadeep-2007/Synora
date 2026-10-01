@@ -333,6 +333,15 @@ export const api = {
   getCoordinatorBriefing: (projectId: string): Promise<LegacyCoordinatorBriefing> =>
     request<LegacyCoordinatorBriefing>(`/projects/${projectId}/agents/coordinator-briefing`),
 
+  // 8c. Shared Project Memory
+  getProjectMemory: (projectId: string): Promise<{
+    tenant_id: string;
+    project_id: string;
+    state_version: number;
+    project_state: Record<string, any>;
+    knowledge: CandidateKnowledgeItem[];
+    evidence: EvidenceItem[];
+  }> => request(`/projects/${projectId}/memory`),
   // 8b. Single infinite Project Atlas
   getWorkspaceAtlas: (): Promise<WorkspaceAtlasData> =>
     request<WorkspaceAtlasData>("/workspace/atlas"),
