@@ -532,7 +532,7 @@ class WorkspaceAtlasService:
                     origin_x + ARCH_X_PAD,
                     arch_y + 58,
                     arch_w,
-                    arch_h,
+                    arch_h + 44,
                     {"stroke": "#dfe7e1", "background": "#fbfcfb"},
                     opacity=100,
                     roundness=3,
@@ -557,13 +557,13 @@ class WorkspaceAtlasService:
                 self._place_architecture(
                     architecture_elements,
                     origin_x + ARCH_X_PAD,
-                    arch_y + 58,
+                    arch_y + 94,
                     arch_w,
                     arch_h,
                     project.id,
                 )
             )
-            arch_bottom = arch_y + arch_h
+            arch_bottom = arch_y + 94 + arch_h
         else:
             arch_bottom = arch_y + 40
 
