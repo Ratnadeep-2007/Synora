@@ -103,16 +103,19 @@ export function WorkspaceAtlasView({
         </div>
       </section>
 
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-4">
         {[
+          ["Architecture", "Experience → logic → data → integrations"],
           ["Decision", "Situation → choice → basis → consequence"],
-          ["Requirement", "Need → requirement → behaviour → validation"],
+          ["Requirement", "Need → behaviour → validation"],
           ["Question", "Known → gap → evidence → resolution"],
-          ["Architecture", "Experience → services → data → integrations"],
         ].map(([label, flow]) => (
           <div key={label} className="rounded-lg border border-border bg-canvas px-3 py-2.5">
             <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-text-muted">{label}</div>
             <div className="mt-1 text-[10px] font-medium text-text-main">{flow}</div>
+            {label === "Architecture" && (
+              <div className="mt-1 text-[9px] text-text-muted">Oval = actor/result • diamond = decision/gap • arrows = flow</div>
+            )}
           </div>
         ))}
       </div>
