@@ -6,6 +6,9 @@ from app.models.context_feedback import ContextFeedback
 from app.models.project import Project, Workspace
 from app.models.project_state import ProjectState
 from app.services.project_semantic_profile_service import ProjectSemanticProfileService
+from app.schemas.visual_plan import VisualNode, VisualPlan, VisualRelationship
+from app.services.excalidraw_compiler import ExcalidrawCompiler
+
 from app.services.workspace_atlas_service import (
     COLUMN_GUTTER,
     COLUMN_GUTTER_CM,
@@ -280,3 +283,47 @@ def test_column_height_dynamically_increases_with_content(db_session: Session):
     assert len(note_cards_large) > 0
 
 
+
+
+def test_visual_compiler_uses_semantic_shapes_group_lanes_and_edge_labels():
+    plan = VisualPlan(
+        title="DineIn Flow",
+        layout_direction="horizontal",
+        nodes=[
+            VisualNode(id="actor", label="Customer", node_type="actor", group="experience"),
+            VisualNode(id="order", label="Ordering Service", node_type="service", group="core", emphasis="primary"),
+            VisualNode(id="decision", label="Fraud Check", node_type="decision", group="core"),
+            VisualNode(id="db", label="Orders DB", node_type="datastore", group="data"),
+        ],
+        relationships=[
+            VisualRelationship(source="actor", target="order", label="order request"),
+            VisualRelationship(source="order", target="decision", label="validate"),
+            VisualRelationship(source="decision", target="db", label="persist result"),
+        ],
+        notes=[],
+    )
+
+    scene = ExcalidrawCompiler().compile(plan)
+
+    assert any(
+        el.get("type") == "ellipse"
+        and el.get("customData", {}).get("visual", {}).get("node_type") == "actor"
+        for el in scene
+    )
+    assert any(
+        el.get("type") == "diamond"
+        and el.get("customData", {}).get("visual", {}).get("node_type") == "decision"
+        for el in scene
+    )
+    assert sum(
+        1
+        for el in scene
+        if el.get("customData", {}).get("visual", {}).get("type") == "architecture_group"
+    ) == 3
+    assert sum(1 for el in scene if el.get("type") == "arrow") == 3
+    assert sum(
+        1
+        for el in scene
+        if el.get("type") == "text"
+        and el.get("customData", {}).get("visual", {}).get("type") == "relationship_label"
+    ) == 3
