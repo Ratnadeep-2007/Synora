@@ -1,4 +1,3 @@
-from datetime import datetime
 import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
@@ -6,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.evidence import Evidence
 from app.models.intelligence import CandidateKnowledge
-from app.models.project_state import ProjectState, StateChange
+from app.models.project_state import ProjectState
 from app.models.conflict import Conflict
 from app.services.ingestion_service import IngestionService
 from app.services.meeting_intelligence import MeetingIntelligenceService
@@ -29,7 +28,7 @@ class PipelineExecutionResult(BaseModel):
     proposals_created: int
     conflicts_detected: int = 0
     authoritative_version_before: int
-    authoritative_version_after: int  # Must match before! (Proposals do NOT mutate state)
+    authoritative_version_after: int
     candidates: List[Dict[str, Any]] = []
     proposals: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
@@ -39,11 +38,10 @@ class PipelineCoordinator:
     """
     Coordinates the end-to-end knowledge pipeline:
     Google Meet -> Source Events -> Evidence -> Meeting Intelligence ->
-    Candidate Knowledge -> Conflict Detection -> Project State Proposals.
-    
-    IMPORTANT:
-    The pipeline STOPS before mutating Authoritative Project State.
-    Proposals and conflicts remain in 'proposed' / 'open' status awaiting explicit human approval.
+    Candidate Knowledge -> Conflict Detection -> Project Memory -> Visual Atlas.
+
+    Routine evidence-backed memory updates are automatic. Only unresolved
+    project routing remains in Unknown Context.
     """
 
     def __init__(
@@ -262,7 +260,7 @@ class PipelineCoordinator:
         ingested_source_events = self.ingestion_service.ingest_events(events, db)
         evidence_records = self.ingestion_service.normalize_events_to_evidence(ingested_source_events, db)
 
-        # 2. Intelligence on Evidence
+        # 2. Intelligence -> shared Project Memory
         candidates = self.intelligence_service.analyze_evidence_records(
             evidence_records=evidence_records,
             project_id=project_id,
@@ -270,10 +268,7 @@ class PipelineCoordinator:
             source_name=source_name,
         )
 
-        # 3. Validation, Conflict Detection & State Proposals
-        proposals_created: List[StateChange] = []
         conflicts_created: List[Conflict] = []
-
         for cand in candidates:
             conflict = self.conflict_service.detect_conflicts_for_candidate(
                 candidate=cand,
@@ -283,24 +278,37 @@ class PipelineCoordinator:
             if conflict:
                 conflicts_created.append(conflict)
 
-            if cand.category in ("proposal", "decision_candidate", "requirement_candidate"):
-                change = self.state_service.propose_change_from_candidate(
-                    candidate=cand,
-                    db=db,
-                    actor_id=actor_id,
-                )
-                proposals_created.append(change)
+        memory_result = self.memory_service.apply_candidates(
+            project_id=project_id,
+            candidates=candidates,
+            db=db,
+            source=source_name,
+            actor_id=actor_id,
+        )
 
-        # 4. Verify Project State version is UNCHANGED!
+        try:
+            from app.services.workspace_atlas_service import WorkspaceAtlasService
+            WorkspaceAtlasService().get_or_sync(
+                db=db,
+                tenant_id=tenant_id,
+                workspace_id="ws_default",
+                force=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "source_memory_visual_sync_deferred: source=%s project=%s error=%s",
+                source_name,
+                project_id,
+                exc,
+            )
+
         db.refresh(state)
         v_after = state.current_version
-        assert v_before == v_after, "PIPELINE VIOLATION: Authoritative Project State was silently mutated!"
-
         logger.info(
             f"Multi-source pipeline completed for source '{source_name}': "
             f"events={len(ingested_source_events)}, evidence={len(evidence_records)}, "
-            f"candidates={len(candidates)}, conflicts={len(conflicts_created)}, proposals={len(proposals_created)}. "
-            f"Authoritative Project State remained at v{v_after} (awaiting review)."
+            f"candidates={len(candidates)}, memory_applied={memory_result.get('applied', 0)}, "
+            f"conflicts={len(conflicts_created)}, state=v_before->{v_after}."
         )
 
         return PipelineExecutionResult(
@@ -326,16 +334,7 @@ class PipelineCoordinator:
                 }
                 for c in candidates
             ],
-            proposals=[
-                {
-                    "id": p.id,
-                    "target_section": p.target_section,
-                    "operation": p.operation,
-                    "status": p.approval_status,
-                    "reason": p.reason,
-                }
-                for p in proposals_created
-            ],
+            proposals=[],
             conflicts=[
                 {
                     "id": conf.id,
