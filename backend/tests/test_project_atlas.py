@@ -192,7 +192,12 @@ def test_knowledge_notes_include_visual_explainer_steps(db_session: Session):
         assert sum(1 for el in elements if el.get("type") == "arrow") >= 3
         assert any(
             el.get("type") == "text"
-            and "Read left" in el.get("text", "")
+            and "TAKEAWAY" in el.get("text", "")
+            for el in elements
+        )
+        assert any(
+            el.get("type") == "text"
+            and service._human_question(note["category"]) in el.get("text", "")
             for el in elements
         )
         assert any(
