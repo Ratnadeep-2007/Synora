@@ -1010,7 +1010,7 @@ class WorkspaceAtlasService:
             evidence_ids = []
         return {
             "category": category,
-            "title": str(title)[:70],
+            "title": str(title)[:58],
             "content": str(content)[:180],
             "evidence_ids": evidence_ids[:4] if isinstance(evidence_ids, list) else [],
         }
@@ -1087,7 +1087,7 @@ class WorkspaceAtlasService:
                 y + 33,
                 NOTE_W - 36,
                 30,
-                note["title"][:70],
+                note["title"][:58],
                 15,
                 "#1f2937",
                 bold=True,
