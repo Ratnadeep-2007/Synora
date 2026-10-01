@@ -52,6 +52,8 @@ class ExcalidrawCompiler:
         elements: List[Dict[str, Any]] = []
         node_element_ids: Dict[str, str] = {}
 
+        elements.extend(self._group_backdrops(plan, positions))
+
         for node in plan.nodes:
             x, y = positions[node.id]
             style = NODE_STYLES.get(node.node_type, DEFAULT_STYLE)
@@ -300,12 +302,114 @@ class ExcalidrawCompiler:
         self.validate_scene(elements)
         return elements
 
+    def _group_backdrops(
+        self,
+        plan: VisualPlan,
+        positions: Dict[str, Tuple[float, float]],
+    ) -> List[Dict[str, Any]]:
+        """Render subtle swimlanes so related components read as one system layer."""
+        grouped: Dict[str, List[VisualNode]] = {}
+        for node in plan.nodes:
+            group = (node.group or "").strip() or "main"
+            grouped.setdefault(group, []).append(node)
+
+        if len(grouped) <= 1:
+            return []
+
+        palette = [
+            ("#f8fafc", "#cbd5e1"),
+            ("#f0fdf4", "#bbdbc4"),
+            ("#eff6ff", "#bfdbfe"),
+            ("#fff7ed", "#fed7aa"),
+            ("#fdf4ff", "#e9d5ff"),
+        ]
+        output: List[Dict[str, Any]] = []
+
+        for index, (group, nodes) in enumerate(grouped.items()):
+            coords = [positions[n.id] for n in nodes if n.id in positions]
+            if not coords:
+                continue
+
+            min_x = min(p[0] for p in coords) - 28
+            min_y = min(p[1] for p in coords) - 28
+            max_x = max(p[0] for p in coords) + NODE_WIDTH + 28
+            max_y = max(p[1] for p in coords) + NODE_HEIGHT + 42
+            bg, stroke = palette[index % len(palette)]
+            label = group.replace("_", " ").strip().upper()
+
+            output.append({
+                "id": f"group_backdrop_{index}_{group}",
+                "type": "rectangle",
+                "x": min_x,
+                "y": min_y,
+                "width": max_x - min_x,
+                "height": max_y - min_y,
+                "angle": 0,
+                "strokeColor": stroke,
+                "backgroundColor": bg,
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 1,
+                "opacity": 45,
+                "roundness": {"type": 3},
+                "boundElements": [],
+                "isDeleted": False,
+                "customData": {"visual": {"type": "architecture_group", "group": group}},
+            })
+            output.append({
+                "id": f"group_label_{index}_{group}",
+                "type": "text",
+                "x": min_x + 14,
+                "y": min_y + 8,
+                "width": max_x - min_x - 28,
+                "height": 16,
+                "text": label,
+                "originalText": label,
+                "fontSize": 9,
+                "fontFamily": 1,
+                "textAlign": "left",
+                "verticalAlign": "top",
+                "lineHeight": 1.15,
+                "baseline": 9,
+                "autoResize": False,
+                "strokeColor": "#66736a",
+                "backgroundColor": "transparent",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 1,
+                "opacity": 100,
+                "angle": 0,
+                "groupIds": [],
+                "isDeleted": False,
+                "customData": {"visual": {"type": "architecture_group_label", "group": group}},
+            })
+
+        return output
+
     # ------------------------------------------------------------------
     # Layout
     # ------------------------------------------------------------------
     def _layout(self, plan: VisualPlan) -> Dict[str, Tuple[float, float]]:
-        """Deterministic grid layout with stable ordering and spacing."""
+        """Deterministic group-aware layout with readable horizontal component flow."""
         positions: Dict[str, Tuple[float, float]] = {}
+        grouped: Dict[str, List[VisualNode]] = {}
+
+        for node in plan.nodes:
+            group = (node.group or "").strip() or "main"
+            grouped.setdefault(group, []).append(node)
+
+        if len(grouped) > 1:
+            lane_index = 0
+            for _, group_nodes in grouped.items():
+                for index, node in enumerate(group_nodes):
+                    col = index % COLUMN_WRAP
+                    row = index // COLUMN_WRAP
+                    x = BASE_X + col * (NODE_WIDTH + H_GAP)
+                    y = BASE_Y + lane_index * (NODE_HEIGHT + V_GAP + 64) + row * (NODE_HEIGHT + V_GAP)
+                    positions[node.id] = (x, y)
+                lane_index += 1
+            return positions
+
         horizontal = plan.layout_direction == "horizontal"
         for index, node in enumerate(plan.nodes):
             if horizontal:
