@@ -11,6 +11,7 @@ from app.services.ingestion_service import IngestionService
 from app.services.meeting_intelligence import MeetingIntelligenceService
 from app.services.project_state_service import ProjectStateService
 from app.services.project_memory_service import ProjectMemoryService
+from app.services.meeting_session_intelligence import MeetingSessionIntelligenceService
 from app.services.conflict_service import ConflictService
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class PipelineExecutionResult(BaseModel):
     candidates: List[Dict[str, Any]] = []
     proposals: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
+    meeting_intelligence: Optional[Dict[str, Any]] = None
 
 
 class PipelineCoordinator:
@@ -57,6 +59,7 @@ class PipelineCoordinator:
         self.state_service = state_service or ProjectStateService()
         self.conflict_service = conflict_service or ConflictService(self.state_service)
         self.memory_service = memory_service or ProjectMemoryService(self.state_service)
+        self.meeting_session_service = MeetingSessionIntelligenceService()
 
     def process_meeting(
         self,
@@ -67,8 +70,9 @@ class PipelineCoordinator:
     ) -> PipelineExecutionResult:
         """
         Executes the full pipeline for a meeting.
-        Guarantees that Authoritative Project State is NOT modified.
-        High-impact candidates become proposals awaiting human approval.
+        Processes a completed meeting through the shared Evidence, Intelligence,
+        Project Memory, and Visual Atlas pipeline. Meet-specific session intelligence
+        is persisted only as a meeting projection; Project Memory remains shared.
         """
         return self.process_meeting_with_context(
             meeting_id=meeting_id,
@@ -165,6 +169,26 @@ class PipelineCoordinator:
 
         all_candidates = [c for items in candidates_by_project.values() for c in items]
 
+        # Meet has additional session-level structure (speakers, timestamps,
+        # segments, action-item owner hints and memory deltas). This is a
+        # source-specific projection over the SAME shared Evidence/Candidate/
+        # Memory records; it is not a second memory store.
+        meeting_intelligence = None
+        try:
+            meeting_intelligence = self.meeting_session_service.get_or_build(
+                meeting_id=meeting_id,
+                db=db,
+                candidates=all_candidates,
+                memory_results=memory_results,
+                persist=True,
+            )
+        except Exception as exc:
+            logger.warning(
+                "meet_session_intelligence_deferred: meeting_id=%s error=%s",
+                meeting_id,
+                exc,
+            )
+
         # The visual workspace is a projection of memory. Rebuild once after
         # the complete meeting has been processed across all project segments.
         try:
@@ -230,6 +254,7 @@ class PipelineCoordinator:
                 }
                 for conf in conflicts_created
             ],
+            meeting_intelligence=meeting_intelligence,
         )
 
     def process_source_events(
