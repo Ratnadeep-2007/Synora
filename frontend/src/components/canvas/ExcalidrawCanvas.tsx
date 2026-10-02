@@ -248,6 +248,11 @@ export function ExcalidrawCanvas({
     () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
     [compareMode, compareElements, initialElements]
   );
+  const latestVisibleElementsRef = useRef<any[]>([]);
+  useEffect(() => {
+    latestVisibleElementsRef.current = visibleElements;
+  }, [visibleElements]);
+
   const initialScene = useMemo(
     () => sanitizeExcalidrawElements(initialElements),
     [initialElements]
@@ -280,33 +285,20 @@ export function ExcalidrawCanvas({
     if (!excalidrawAPI) return;
     if (appliedSceneKeyRef.current === externalSceneKey) return;
 
-    // Never recenter because React props changed. The only automatic centering
-    // happens when a genuinely new project/revision is loaded and only once.
-    const shouldCenter = appliedSceneKeyRef.current === null || !appliedSceneKeyRef.current.startsWith(
-      `${projectId || "project"}:`
-    );
-
+    // The backend controls scene content; Excalidraw controls its own viewport.
+    // Only replace the scene when the external document identity changes.
+    // Never call scrollToContent here: polling/refetches must not move the user's
+    // current zoom or pan position.
     appliedSceneKeyRef.current = externalSceneKey;
     try {
       excalidrawAPI.updateScene({
-        elements: visibleElements,
+        elements: latestVisibleElementsRef.current,
         commitToHistory: false,
       });
-      if (shouldCenter && visibleElements.length > 0) {
-        setTimeout(() => {
-          try {
-            excalidrawAPI.scrollToContent(undefined, {
-              fitToViewport: true,
-              viewportZoomFactor: 0.85,
-              animate: false,
-            });
-          } catch {}
-        }, 100);
-      }
     } catch (error) {
       console.warn("Failed to load Excalidraw scene", error);
     }
-  }, [excalidrawAPI, externalSceneKey, projectId, visibleElements]);
+  }, [excalidrawAPI, externalSceneKey]);
 
   const center = useCallback(() => {
     try {
@@ -333,7 +325,8 @@ export function ExcalidrawCanvas({
           theme: appState?.theme || "light",
         },
       });
-      setSaveSuccessPlaceholder(setIsSaving);
+      setSaveSuccess(true);
+      window.setTimeout(() => setSaveSuccess(false), 2500);
     } catch (error) {
       console.error("Failed to save Excalidraw diagram:", error);
       alert("Failed to save diagram changes. Please try again.");
@@ -503,9 +496,3 @@ export function ExcalidrawCanvas({
   );
 }
 
-function setSaveSuccessPlaceholder(setIsSaving: React.Dispatch<React.SetStateAction<boolean>>) {
-  // Kept outside the render path so the save flow does not couple canvas
-  // viewport state to React renders. The success indicator is handled by the
-  // caller's existing state.
-  void setIsSaving;
-}
