@@ -189,18 +189,26 @@ Project State → Excalidraw
 ```
 
 - Every decision/requirement/proposal/conflict references evidence ids.
-- The Project Agent receives project-scoped context (workspace, project,
-  relevant state/knowledge/evidence, tool permissions) and decides whether
-  to record knowledge, create candidates, trigger specialist capabilities,
-  propose state updates, update Excalidraw, or request human approval.
-- High-impact changes (architecture, confirmed decisions, workflow,
-  destructive operations) require human approval via the Conflict Center.
+- The same project-scoped Synora Agent and Context Intelligence used by
+  WhatsApp process Meet Evidence. Meet does not create a specialist agent
+  or a separate memory store.
+- `ProjectMemoryService` automatically promotes routine evidence-backed
+  requirements, confirmed decisions, architecture updates, questions,
+  assumptions, and supported knowledge into the resolved project's memory.
+  Project boundaries are enforced deterministically; unknown/ambiguous
+  routing goes to Unknown Context instead of guessing.
+- `MeetingSessionIntelligenceService` adds only Meet-specific session
+  structure over those shared records: 45-second / bounded transcript
+  windows, ordered speakers, timestamps, topic labels derived from extracted
+  knowledge, action-item owner/due hints, key decision/requirement/question
+  lists, and per-project memory version deltas. It is persisted inside the
+  existing `Meeting.metadata_json` projection, not a second memory database.
 - Excalidraw updates use structured visual operations (architecture
   diagrams, flows, dependency graphs, decision/requirement cards, small
   evidence labels). No transcript dumps, no raw LLM output injection.
-- `process_meeting_with_context` syncs the living Excalidraw workspace
-  after validated processing; failures defer with a warning, never fail
-  the pipeline.
+- `process_meeting_with_context` rebuilds the visual workspace only after
+  shared memory processing and Meet session intelligence; visualization
+  failures defer with a warning, never fail the core evidence pipeline.
 
 ## 10. Reconciliation
 
