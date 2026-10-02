@@ -180,7 +180,7 @@ Resolution order:
 maps one to a real project. Evidence created under `proj_unassigned`
 moves with the meeting on assignment (project_id carried on new records).
 
-## 9. Evidence → Agent → State → Excalidraw
+## 9. Evidence → Shared Intelligence → Project Memory → Meet Session Intelligence → Excalidraw
 
 ```text
 TranscriptEntry → SourceEvent → Evidence → Intelligence →
