@@ -276,6 +276,10 @@ export function ExcalidrawCanvas({
     () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
     [compareMode, compareElements, initialElements]
   );
+  const latestVisibleElementsRef = useRef<any[]>([]);
+  useEffect(() => {
+    latestVisibleElementsRef.current = visibleElements;
+  }, [visibleElements]);
 
   const initialData = useMemo(() => {
     return {
@@ -324,14 +328,7 @@ export function ExcalidrawCanvas({
   useEffect(() => {
     if (!excalidrawAPI) return;
 
-    const sceneFingerprint = `${externalSceneKey}:${visibleElements.length}`;
-    if (appliedSceneKeyRef.current === sceneFingerprint) return;
-
-    // Never recenter because React props changed. The only automatic centering
-    // happens when a genuinely new project/revision is loaded and only once.
-    const shouldCenter =
-      appliedSceneKeyRef.current === null ||
-      !appliedSceneKeyRef.current.startsWith(`${projectId || "project"}:`);
+    if (appliedSceneKeyRef.current === externalSceneKey) return;
 
     // In active manual edit mode with unsaved changes, protect user drawings from external polling
     if (isDirtyRef.current && isEditable && !readOnly) {
@@ -343,10 +340,10 @@ export function ExcalidrawCanvas({
       const appState = excalidrawAPI.getAppState?.();
       if (appState?.draggingElement || appState?.resizingElement || appState?.editingElement) {
         const timer = setTimeout(() => {
-          if (appliedSceneKeyRef.current !== sceneFingerprint) {
-            appliedSceneKeyRef.current = sceneFingerprint;
+          if (appliedSceneKeyRef.current !== externalSceneKey) {
+            appliedSceneKeyRef.current = externalSceneKey;
             excalidrawAPI.updateScene({
-              elements: visibleElements,
+              elements: latestVisibleElementsRef.current,
               commitToHistory: false,
             });
           }
@@ -355,30 +352,20 @@ export function ExcalidrawCanvas({
       }
     } catch {}
 
-    appliedSceneKeyRef.current = sceneFingerprint;
-
+    // The backend controls scene content; Excalidraw controls its own viewport.
+    // Only replace the scene when the external document identity changes.
+    // Never call scrollToContent here: polling/refetches must not move the user's
+    // current zoom or pan position.
+    appliedSceneKeyRef.current = externalSceneKey;
     try {
       excalidrawAPI.updateScene({
-        elements: visibleElements,
+        elements: latestVisibleElementsRef.current,
         commitToHistory: false,
       });
-
-      if (shouldCenter && visibleElements.length > 0) {
-        const centerTimer = setTimeout(() => {
-          try {
-            excalidrawAPI.scrollToContent(undefined, {
-              fitToViewport: true,
-              viewportZoomFactor: 0.85,
-              animate: false,
-            });
-          } catch {}
-        }, 150);
-        return () => clearTimeout(centerTimer);
-      }
     } catch (error) {
       console.warn("Failed to load Excalidraw scene", error);
     }
-  }, [excalidrawAPI, externalSceneKey, projectId, visibleElements, isEditable, readOnly]);
+  }, [excalidrawAPI, externalSceneKey, isEditable, readOnly]);
 
   const center = useCallback(() => {
     try {
@@ -413,7 +400,7 @@ export function ExcalidrawCanvas({
         String(elements?.length || 0),
       ].join(":");
       setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2500);
+      window.setTimeout(() => setSaveSuccess(false), 2500);
     } catch (error) {
       console.error("Failed to save Excalidraw diagram:", error);
       alert("Failed to save diagram changes. Please try again.");
