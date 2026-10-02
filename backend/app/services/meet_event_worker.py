@@ -30,6 +30,7 @@ from app.services.context_intelligence import ContextIntelligenceService
 from app.services.google_meet import GoogleMeetService, _parse_iso_datetime
 from app.services.google_oauth import GoogleOAuthService
 from app.services.ingestion_service import IngestionService
+from app.services.meeting_session_intelligence import MeetingSessionIntelligenceService
 from app.services.metrics import metrics
 from app.services.unknown_context_service import UnknownContextService
 
@@ -334,32 +335,19 @@ class MeetEventWorker:
     # Segment-level context routing (one meeting may span projects)
     # ------------------------------------------------------------------
     def _segment_entries(
-        self, entries: List[TranscriptEntry], window_size: int = 12, gap_seconds: int = 240
+        self, entries: List[TranscriptEntry], window_size: int = 12, gap_seconds: int = 45
     ) -> List[List[TranscriptEntry]]:
-        """Group transcript entries into context windows.
+        """Group transcript entries into stable semantic windows.
 
-        A single meeting often discusses several projects, so evidence is routed
-        per segment rather than per meeting.
+        Google Meet keeps one conference for the whole discussion, so routing is
+        performed per bounded transcript window. Speaker turns remain available
+        inside each window for Meeting Session Intelligence.
         """
-        ordered = sorted(entries, key=lambda e: e.start_time or _now())
-        windows: List[List[TranscriptEntry]] = []
-        current: List[TranscriptEntry] = []
-        for entry in ordered:
-            if current:
-                prev = current[-1].start_time
-                cur = entry.start_time
-                gap_exceeded = (
-                    prev is not None
-                    and cur is not None
-                    and (cur - prev).total_seconds() > gap_seconds
-                )
-                if gap_exceeded or len(current) >= window_size:
-                    windows.append(current)
-                    current = []
-            current.append(entry)
-        if current:
-            windows.append(current)
-        return windows
+        return MeetingSessionIntelligenceService.segment_entries(
+            entries=entries,
+            window_size=window_size,
+            gap_seconds=gap_seconds,
+        )
 
     def _route_transcript_segments(
         self,
