@@ -26,9 +26,9 @@ class MeetingIntelligenceService:
     from immutable Evidence records.
     
     IMPORTANT ARCHITECTURAL RULE:
-    The LLM is NOT the source of truth.
-    The LLM creates CandidateKnowledge.
-    CandidateKnowledge does NOT modify authoritative Project State.
+    The LLM is NOT the source of truth. It creates CandidateKnowledge with evidence IDs.
+    ProjectMemoryService is the shared memory write boundary. MeetingSessionIntelligence
+    is a projection over shared Evidence/CandidateKnowledge and never owns project truth.
     """
 
     def __init__(self, llm_client: Optional[LLMClient] = None):
@@ -174,7 +174,7 @@ class MeetingIntelligenceService:
             db.refresh(cand)
 
         logger.info(
-            f"Meeting intelligence completed for meeting '{meeting_id}': "
+            f"Meeting candidate extraction completed for meeting '{meeting_id}': "
             f"{len(persisted_candidates)} candidates extracted in {latency_ms:.1f}ms."
         )
         return persisted_candidates
