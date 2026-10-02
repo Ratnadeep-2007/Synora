@@ -4,12 +4,14 @@ This service is intentionally source-specific only at the *meeting session* laye
 It does not own a separate memory store or project knowledge system.
 
 It turns a completed transcript into a compact, persisted meeting projection:
-- timestamped semantic windows
+- a complete-transcript intelligence view over persisted Synora evidence
+- bounded routing/timeline windows for speaker/timestamp navigation
 - participants/speakers per window
 - topic labels derived from extracted knowledge
 - action items with evidence-backed owner hints
 - decision / requirement / question highlights
 - per-project memory version deltas
+- explicit one-sync provenance showing that no Google API call is needed after persistence
 
 The canonical project memory remains ProjectMemoryService.
 """
@@ -44,7 +46,7 @@ class MeetingSessionIntelligenceService:
     existing Meeting.metadata_json field.
     """
 
-    VERSION = "v1"
+    VERSION = "v2"
 
     @staticmethod
     def segment_entries(
@@ -52,11 +54,12 @@ class MeetingSessionIntelligenceService:
         window_size: int = 12,
         gap_seconds: int = 45,
     ) -> List[List[TranscriptEntry]]:
-        """Create stable semantic transcript windows.
+        """Create bounded windows for routing and timeline presentation only.
 
         Windows are bounded by a 45-second timestamp gap or a maximum number
-        of entries. Speaker turns remain visible inside each window instead of
-        splitting every conversational turn into a separate project context.
+        of entries. They are never used as independent intelligence passes:
+        shared intelligence receives the full persisted transcript/evidence
+        assigned to each project so long-range conversational context is kept.
         """
         ordered = sorted(
             [entry for entry in entries if entry.text],
@@ -190,8 +193,10 @@ class MeetingSessionIntelligenceService:
                 .all()
             )
 
-        # Evidence -> semantic window lets extracted knowledge become meeting topics
-        # without creating a second source-specific intelligence store.
+        # Routing/timeline windows are only a navigational projection. Candidate
+        # extraction and project intelligence are based on the complete persisted
+        # Evidence set, so a decision or action is not fragmented at a 45-second
+        # boundary. This service never calls the Google API; it reads Synora DB only.
         entry_to_segment: Dict[str, int] = {}
         for segment_index, window in enumerate(windows):
             for entry in window:
@@ -308,6 +313,18 @@ class MeetingSessionIntelligenceService:
         if project_ids:
             summary += f" across {len(project_ids)} project{'s' if len(project_ids) != 1 else ''}"
 
+        sync_metadata: Dict[str, Any] = {}
+        try:
+            meeting_metadata = json.loads(meeting.metadata_json or "{}")
+            sync_metadata = dict(meeting_metadata.get("synora_meet_sync") or {})
+        except (TypeError, ValueError):
+            sync_metadata = {}
+
+        sync_metadata.setdefault("retrieval_mode", "completed_meeting_once")
+        sync_metadata["intelligence_input"] = "full_persisted_transcript"
+        sync_metadata["google_api_calls_after_persistence"] = 0
+        sync_metadata["transcript_entry_count"] = len(entries)
+
         return {
             "version": self.VERSION,
             "meeting_id": meeting_id,
@@ -315,6 +332,8 @@ class MeetingSessionIntelligenceService:
             "summary": summary,
             "participant_count": len(participant_names),
             "participants": participant_names,
+            "transcript_entry_count": len(entries),
+            "routing_window_count": len(segments),
             "segment_count": len(segments),
             "segments": segments,
             "decisions": typed["decisions"],
@@ -324,6 +343,7 @@ class MeetingSessionIntelligenceService:
             "constraints": typed["constraints"],
             "assumptions": typed["assumptions"],
             "memory_delta": memory_delta,
+            "source_sync": sync_metadata,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -370,7 +390,12 @@ class MeetingSessionIntelligenceService:
         except (TypeError, ValueError):
             cached = None
 
-        if cached and not candidates and not memory_results:
+        if (
+            cached
+            and cached.get("version") == self.VERSION
+            and not candidates
+            and not memory_results
+        ):
             return cached
 
         payload = self.build_session_intelligence(
