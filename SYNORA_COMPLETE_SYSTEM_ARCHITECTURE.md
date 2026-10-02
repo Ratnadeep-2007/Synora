@@ -73,22 +73,27 @@ Meeting ends
    ↓
 Transcript ready event
    ↓
-Retrieve complete transcript
+ONE synchronization phase
+  ├─ transcript metadata
+  ├─ conference metadata
+  ├─ participants
+  └─ complete transcript entries
    ↓
-Persist transcript + entries
+Persist complete transcript + Evidence
    ↓
-Resolve segment → project
+Route bounded windows only if the meeting spans multiple projects
    ↓
-Extract knowledge
+Shared intelligence over the full persisted evidence
    ↓
-Update that project's memory
+Update each resolved project's shared memory
    ↓
 Refresh Project Atlas visual notes
 ```
 
-A single meeting can contribute to multiple projects. Each segment is grouped by its
-resolved project before memory promotion; Unknown Context segments are not written
-into a real project's memory.
+A single meeting can contribute to multiple projects. Bounded windows are a routing aid,
+not separate intelligence contexts. After transcript persistence, the intelligence
+pipeline performs zero additional Google API calls. Unknown Context evidence is not
+written into a real project's memory.
 ## Unified Context Intelligence (Source-Agnostic)
 
 Context resolution is strictly source-agnostic and centralized in `ContextResolutionService` (`backend/app/services/context_resolution_service.py` / `ContextIntelligenceService`).
@@ -123,12 +128,14 @@ Synora never forces uncertain information into an arbitrary project.
 
 ## Google Meet Multi-Context Intelligence
 
-Meetings are not treated as monolithic single-project events. A multi-turn Google Meet transcript is segmented into semantic windows using speaker shifts and time gaps ($\ge 45$ seconds). Each segment is independently resolved:
-- Segment 1 (e.g. Synora authentication) $\rightarrow$ Routes to Synora.
-- Segment 2 (e.g. Healthcare Claims) $\rightarrow$ Routes to Healthcare project.
-- Segment 3 (e.g. Unrelated discussion) $\rightarrow$ Routes to Unknown Context.
+Meetings are not forced into a single project. When trusted project binding is absent,
+bounded windows (45 seconds / 12 entries) may be used to resolve which project owns each
+part of the complete transcript. The windows exist for routing only; they are not
+independent intelligence passes.
 
-Meeting evidence is linked by `segment_id` and provenance timestamps back to the provider conference.
+After routing, all evidence assigned to the same project is processed together from
+Synora's persisted DB, preserving long-range conversational context. Meeting evidence
+retains segment/timestamp provenance back to the provider conference.
 
 ### Meet Session Intelligence (source-specific projection)
 
@@ -136,11 +143,11 @@ Meet is intentionally specialized only after it enters the common evidence pipel
 session layer adds conversational structure that is useful for a completed meeting:
 
 ```text
-Complete transcript
+Complete persisted transcript
       ↓
-45s / 12-entry bounded windows
+Routing/timeline windows (only for bounded project resolution when needed)
       ↓
-Speaker order + timestamps + entry/evidence linkage
+Full-project Evidence context
       ↓
 Shared Candidate Knowledge
       ↓
