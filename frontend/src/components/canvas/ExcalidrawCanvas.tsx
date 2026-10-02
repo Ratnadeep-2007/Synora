@@ -321,12 +321,17 @@ export const ExcalidrawCanvas = React.memo(function ExcalidrawCanvas({
 
   const syncingSceneRef = useRef(false);
   const latestVisibleElementsRef = useRef<any[]>([]);
+  // True once the camera has been framed for this mount. Set during the
+  // initialData memo when a cached viewport is seeded, so we never re-frame
+  // a camera the user (or a previous visit) already established.
+  const hasAutoFittedRef = useRef(false);
   useEffect(() => {
     latestVisibleElementsRef.current = visibleElements;
   }, [visibleElements]);
 
   const initialData = useMemo(() => {
     const savedVp = viewportCache.get(viewportKey) || getSessionViewport(viewportKey);
+    hasAutoFittedRef.current = !!savedVp;
     return {
       elements: sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
       appState: {
@@ -347,6 +352,29 @@ export const ExcalidrawCanvas = React.memo(function ExcalidrawCanvas({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // One-time auto-fit on first paint, but ONLY when no camera was restored
+  // from cache. `scrollToContent: false` above suppresses Excalidraw's own
+  // mount-time framing, so without this a cold first visit would sit at
+  // scroll 0 / zoom 1 and look like the snap-back bug. Runs exactly once per
+  // mount; the user's camera is never touched again.
+  useEffect(() => {
+    if (!excalidrawAPI) return;
+    if (hasAutoFittedRef.current) return;
+    hasAutoFittedRef.current = true;
+
+    const timer = window.setTimeout(() => {
+      try {
+        if (latestVisibleElementsRef.current.length === 0) return;
+        excalidrawAPI.scrollToContent(undefined, {
+          fitToViewport: true,
+          viewportZoomFactor: 0.85,
+          animate: false,
+        });
+      } catch {}
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [excalidrawAPI]);
 
   const handleExcalidrawAPI = useCallback((api: any) => {
     setExcalidrawAPI(api);
