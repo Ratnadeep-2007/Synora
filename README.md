@@ -12,9 +12,10 @@ Synora bridges unstructured discussions across communication channels (Google Me
    - **WhatsApp Baileys Bridge**: Native multi-device WebSocket connection for real-time group and direct chat ingestion.
    - **Manual Transcript Uploader**: Instant text & file pipeline ingestion.
 
-2. **Deterministic-First Synthesis Pipeline**
-   - Resilient architectural component extraction, dependency graph generation, and risk matrix compilation.
-   - High-performance, zero-latency deterministic baseline ensuring 100% system availability even without cloud LLM keys.
+2. **Shared Intelligence & Project Memory**
+   - WhatsApp and Google Meet enter through source-specific adapters, then use the same normalized Evidence, Context Intelligence, Candidate Knowledge, and project-bounded Project Memory.
+   - Meet adds a source-specific session projection for speakers, timestamps, transcript windows, action items, decisions, requirements, and memory deltas without creating a second memory store.
+   - Routine evidence-backed memory updates are automatic; unresolved project routing is isolated in Unknown Context.
 
 3. **AI Visual Canvas Engine (Excalidraw)**
    - Powered by **Gemini 3.8 Flash** for architecture planning and structured intelligence, with **Gemini Embedding 2** for semantic project retrieval.
