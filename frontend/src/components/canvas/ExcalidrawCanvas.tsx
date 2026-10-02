@@ -259,7 +259,6 @@ export function ExcalidrawCanvas({
   const [isSaving, setIsSaving] = useState(false);
   const isDirtyRef = useRef(false);
   const appliedSceneKeyRef = useRef<string | null>(null);
-  const lastCenteredTargetRef = useRef<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -268,6 +267,12 @@ export function ExcalidrawCanvas({
     () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
     [compareMode, compareElements, initialElements]
   );
+
+  const syncingSceneRef = useRef(false);
+  const latestVisibleElementsRef = useRef<any[]>([]);
+  useEffect(() => {
+    latestVisibleElementsRef.current = visibleElements;
+  }, [visibleElements]);
 
   const initialData = useMemo(() => {
     return {
@@ -308,6 +313,7 @@ export function ExcalidrawCanvas({
   }, [excalidrawAPI]);
 
   const handleCanvasChange = useCallback((elements: readonly any[]) => {
+    if (syncingSceneRef.current) return;
     if (isEditable && !readOnly) {
       isDirtyRef.current = true;
     }
@@ -316,73 +322,68 @@ export function ExcalidrawCanvas({
   useEffect(() => {
     if (!excalidrawAPI) return;
 
-    const currentTarget = `${projectId || "project"}:${compareMode ? "compare" : "live"}`;
-    const sceneFingerprint = `${currentTarget}:${version}:${visibleElements.length}`;
+    const externalSceneKey = [
+      projectId || "project",
+      compareMode ? "compare" : "live",
+      compareMode ? String(compareToRevision ?? "na") : String(version),
+    ].join(":");
 
-    // Center on initial mount or when switching project / compare target
-    if (lastCenteredTargetRef.current !== currentTarget && visibleElements.length > 0) {
-      lastCenteredTargetRef.current = currentTarget;
-      isDirtyRef.current = false;
-      appliedSceneKeyRef.current = sceneFingerprint;
+    if (appliedSceneKeyRef.current === externalSceneKey) return;
 
-      try {
-        excalidrawAPI.updateScene({
-          elements: visibleElements,
-          commitToHistory: false,
-        });
-      } catch (err) {
-        console.warn("Failed to load initial Excalidraw scene", err);
-      }
+    // Protect unsaved local edits from backend polling/reconciliation.
+    if (isDirtyRef.current && isEditable && !readOnly) return;
 
-      const centerTimer = setTimeout(() => {
-        try {
-          excalidrawAPI.scrollToContent(undefined, {
-            fitToViewport: true,
-            viewportZoomFactor: 0.85,
-            animate: false,
-          });
-        } catch {}
-      }, 150);
-
-      return () => clearTimeout(centerTimer);
-    }
-
-    // If identical scene is already loaded, skip to avoid gesture interruptions
-    if (appliedSceneKeyRef.current === sceneFingerprint) return;
-
-    // In active manual edit mode with unsaved changes, protect user drawings from external polling
-    if (isDirtyRef.current && isEditable && !readOnly) {
-      return;
-    }
-
-    // If user is currently dragging/typing, defer update
+    // Defer a remote scene replacement until an active interaction finishes.
+    // This never changes Excalidraw's camera/viewport.
     try {
       const appState = excalidrawAPI.getAppState?.();
       if (appState?.draggingElement || appState?.resizingElement || appState?.editingElement) {
-        const timer = setTimeout(() => {
-          if (appliedSceneKeyRef.current !== sceneFingerprint) {
-            appliedSceneKeyRef.current = sceneFingerprint;
+        const timer = window.setTimeout(() => {
+          if (appliedSceneKeyRef.current === externalSceneKey) return;
+          if (isDirtyRef.current && isEditable && !readOnly) return;
+
+          try {
+            syncingSceneRef.current = true;
             excalidrawAPI.updateScene({
-              elements: visibleElements,
+              elements: latestVisibleElementsRef.current,
               commitToHistory: false,
             });
+            appliedSceneKeyRef.current = externalSceneKey;
+            window.queueMicrotask(() => {
+              syncingSceneRef.current = false;
+            });
+          } catch (error) {
+            syncingSceneRef.current = false;
+            console.warn("Failed to update Excalidraw scene", error);
           }
         }, 600);
-        return () => clearTimeout(timer);
+        return () => window.clearTimeout(timer);
       }
     } catch {}
 
-    appliedSceneKeyRef.current = sceneFingerprint;
-
     try {
+      syncingSceneRef.current = true;
       excalidrawAPI.updateScene({
-        elements: visibleElements,
+        elements: latestVisibleElementsRef.current,
         commitToHistory: false,
       });
+      appliedSceneKeyRef.current = externalSceneKey;
+      window.queueMicrotask(() => {
+        syncingSceneRef.current = false;
+      });
     } catch (error) {
+      syncingSceneRef.current = false;
       console.warn("Failed to update Excalidraw scene", error);
     }
-  }, [excalidrawAPI, projectId, compareMode, version, visibleElements, isEditable, readOnly]);
+  }, [
+    excalidrawAPI,
+    projectId,
+    compareMode,
+    compareToRevision,
+    version,
+    isEditable,
+    readOnly,
+  ]);
 
   const center = useCallback(() => {
     try {
@@ -410,12 +411,7 @@ export function ExcalidrawCanvas({
         },
       });
       isDirtyRef.current = false;
-      appliedSceneKeyRef.current = [
-        projectId || "project",
-        "live",
-        String((version || 1) + 1),
-        String(elements?.length || 0),
-      ].join(":");
+      appliedSceneKeyRef.current = null;
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (error) {
