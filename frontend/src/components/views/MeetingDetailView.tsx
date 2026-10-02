@@ -5,6 +5,9 @@ import {
   ArrowLeft,
   Clock,
   User,
+  ListChecks,
+  MessageSquareText,
+  Users,
 } from "lucide-react";
 import { CandidateKnowledgeItem } from "@/lib/types";
 
@@ -57,6 +60,78 @@ export function MeetingDetailView({
           </h1>
         </div>
       </div>
+
+      {/* Meet-only session intelligence: a projection over the same shared evidence/memory. */}
+      {meetingData?.session_intelligence && (
+        <section className="p-5 rounded-xl bg-surface border border-border shadow-xs space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-text-main">
+                Meeting Session Intelligence
+              </h3>
+              <p className="text-xs text-text-muted mt-1">
+                Conversation structure from Meet; project knowledge still lives in shared Synora memory.
+              </p>
+            </div>
+            <span className="text-[10px] font-mono px-2 py-1 rounded bg-primary-soft text-primary border border-primary/20">
+              {meetingData.session_intelligence.segment_count || 0} segments
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: "Participants", value: meetingData.session_intelligence.participant_count || 0, icon: Users },
+              { label: "Decisions", value: (meetingData.session_intelligence.decisions || []).length, icon: MessageSquareText },
+              { label: "Action items", value: (meetingData.session_intelligence.action_items || []).length, icon: ListChecks },
+              { label: "Open questions", value: (meetingData.session_intelligence.open_questions || []).length, icon: MessageSquareText },
+            ].map(({ label, value, icon: Icon }) => (
+              <div key={label} className="rounded-lg border border-border bg-canvas p-3">
+                <div className="flex items-center gap-2 text-text-muted">
+                  <Icon className="w-3.5 h-3.5" />
+                  <span className="text-[10px] uppercase tracking-wider font-semibold">{label}</span>
+                </div>
+                <div className="text-xl font-semibold text-text-main mt-1">{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-border bg-canvas p-4 space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Action items</div>
+              {(meetingData.session_intelligence.action_items || []).length === 0 ? (
+                <p className="text-xs text-text-muted">No action items extracted from this meeting.</p>
+              ) : (
+                meetingData.session_intelligence.action_items.slice(0, 6).map((item: any) => (
+                  <div key={item.id} className="rounded-md border border-border bg-surface p-3 space-y-1">
+                    <div className="text-xs font-semibold text-text-main">{item.title}</div>
+                    <div className="text-[11px] text-text-muted">{item.content}</div>
+                    <div className="flex flex-wrap gap-2 text-[10px] font-mono text-text-muted">
+                      {item.owner_hints?.[0] && <span>Owner: {item.owner_hints[0]}</span>}
+                      {item.due_hint && <span>Due: {item.due_hint}</span>}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="rounded-lg border border-border bg-canvas p-4 space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Memory delta</div>
+              {(meetingData.session_intelligence.memory_delta || []).length === 0 ? (
+                <p className="text-xs text-text-muted">No project memory update recorded for this meeting yet.</p>
+              ) : (
+                meetingData.session_intelligence.memory_delta.map((delta: any) => (
+                  <div key={delta.project_id} className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2">
+                    <span className="text-xs font-mono text-text-main">{delta.project_id}</span>
+                    <span className="text-[10px] font-mono text-text-muted">
+                      v{delta.version_before ?? "—"} → v{delta.version_after ?? "—"} · {delta.applied || 0} applied
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Desktop two primary columns: Transcript + Intelligence (independently scrollable) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
