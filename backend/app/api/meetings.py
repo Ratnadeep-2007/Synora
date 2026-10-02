@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import logging
 import re
 from typing import List, Optional
@@ -35,6 +36,7 @@ from app.schemas.meeting import (
     TranscriptRead,
 )
 from app.services.google_meet import GoogleMeetService
+from app.services.meeting_session_intelligence import MeetingSessionIntelligenceService
 from app.services.pipeline_coordinator import PipelineCoordinator
 
 logger = logging.getLogger(__name__)
@@ -154,6 +156,47 @@ async def list_meetings(
 
 
 @router.get(
+    "/{meeting_id}/intelligence",
+    summary="Get Meet Session Intelligence",
+    description=(
+        "Returns the Meet-specific session projection: timestamped transcript windows, "
+        "participants, topics derived from extracted knowledge, action items, key "
+        "decisions/requirements/questions, and the memory version delta. This is "
+        "a projection over shared Synora memory, not a separate memory store."
+    ),
+)
+async def get_meeting_intelligence(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(Meeting.id == meeting_id, Meeting.user_id == current_user.id)
+        .first()
+    )
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting '{meeting_id}' not found.",
+        )
+
+    service = MeetingSessionIntelligenceService()
+    try:
+        metadata = json.loads(meeting.metadata_json or "{}")
+    except (TypeError, ValueError):
+        metadata = {}
+    cached = metadata.get("session_intelligence")
+    if cached:
+        return cached
+
+    try:
+        return service.get_or_build(meeting_id=meeting_id, db=db, persist=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get(
     "/{meeting_id}",
     response_model=MeetingDetailRead,
     summary="Get Meeting Details",
@@ -182,7 +225,13 @@ async def get_meeting(
             detail=f"Meeting '{meeting_id}' not found for user '{current_user.id}'.",
         )
 
-    return MeetingDetailRead.model_validate(meeting)
+    detail = MeetingDetailRead.model_validate(meeting)
+    try:
+        metadata = json.loads(meeting.metadata_json or "{}")
+    except (TypeError, ValueError):
+        metadata = {}
+    detail.session_intelligence = metadata.get("session_intelligence")
+    return detail
 
 
 @router.get(
