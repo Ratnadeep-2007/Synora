@@ -332,16 +332,17 @@ class MeetEventWorker:
         return None, "unmapped"
 
     # ------------------------------------------------------------------
-    # Segment-level context routing (one meeting may span projects)
+    # Bounded context routing (one meeting may span projects)
     # ------------------------------------------------------------------
     def _segment_entries(
         self, entries: List[TranscriptEntry], window_size: int = 12, gap_seconds: int = 45
     ) -> List[List[TranscriptEntry]]:
-        """Group transcript entries into stable semantic windows.
+        """Create routing/timeline windows; never run intelligence per window.
 
-        Google Meet keeps one conference for the whole discussion, so routing is
-        performed per bounded transcript window. Speaker turns remain available
-        inside each window for Meeting Session Intelligence.
+        The completed transcript is fetched and persisted first. The bounded
+        windows below are only a context-routing aid for meetings that may span
+        multiple projects. After routing, each project receives its full
+        persisted evidence set in the shared intelligence pipeline.
         """
         return MeetingSessionIntelligenceService.segment_entries(
             entries=entries,
@@ -367,6 +368,9 @@ class MeetEventWorker:
             .order_by(TranscriptEntry.start_time.asc())
             .all()
         )
+        # The transcript is already complete and persisted before routing begins.
+        # These windows are a routing/timeline aid only; no per-window intelligence
+        # pass is performed here.
         windows = self._segment_entries(entries)
         routed: Dict[str, int] = {}
         unknown_segments = 0
@@ -695,6 +699,28 @@ class MeetEventWorker:
             trusted_project_id=trusted_project_id,
         )
 
+        # Record one completed external synchronization phase. The session
+        # intelligence service and ProjectMemory pipeline consume only these
+        # persisted DB records; they do not call Google after this point.
+        try:
+            sync_metadata = json.loads(meeting.metadata_json or "{}")
+        except (TypeError, ValueError):
+            sync_metadata = {}
+        sync_metadata["synora_meet_sync"] = {
+            "retrieval_mode": "completed_meeting_once",
+            "retrieval_completed_at": _now().isoformat(),
+            "transcript_resource": record.transcript_resource,
+            "conference_record_id": record.conference_record_id,
+            "transcript_entry_count": entries_synced,
+            "routing_window_count": int(routing.get("segments", 0) or 0),
+            "trusted_project_mapping": bool(trusted_project_id),
+            "intelligence_input": "full_persisted_transcript",
+            "google_api_calls_after_persistence": 0,
+        }
+        meeting.metadata_json = json.dumps(sync_metadata, ensure_ascii=False)
+        db.add(meeting)
+        db.flush()
+
         events_created = self._create_transcript_ready_event(
             db=db,
             record=record,
@@ -707,6 +733,9 @@ class MeetEventWorker:
             "meeting_id": meeting.id,
             "transcript_id": transcript.id,
             "entries_synced": entries_synced,
+            "sync_mode": "completed_meeting_once",
+            "intelligence_input": "full_persisted_transcript",
+            "google_api_calls_after_persistence": 0,
             "events_created": events_created,
             "project_id": project_id,
             "trusted_project_id": trusted_project_id,
