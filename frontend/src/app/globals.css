@@ -153,6 +153,11 @@ body {
   overflow: hidden !important;
 }
 
+/* Hide shape creation toolbar on read-only / preview canvases so clicking and dragging pans naturally */
+.atlas-readonly-canvas .App-toolbar-container {
+  display: none !important;
+}
+
 /* Ensure Excalidraw toolbar SVGs never blow out to full screen */
 .excalidraw .ToolIcon__icon svg,
 .excalidraw .unlocked-icon svg,

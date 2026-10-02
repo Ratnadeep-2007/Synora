@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { AlertTriangle, Check, Eye, Info, Layers, Maximize2, Minimize2, PenTool, Save, ZoomIn } from "lucide-react";
+import { AlertTriangle, Check, Eye, Hand, Info, Layers, Maximize2, Minimize2, MousePointer, PenTool, Save, ZoomIn } from "lucide-react";
 
 export function sanitizeExcalidrawElements(elements: any[]): any[] {
   if (!Array.isArray(elements)) return [];
@@ -243,10 +243,17 @@ export function ExcalidrawCanvas({
   onSaveCanvas,
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
-  const [isEditable, setIsEditable] = useState(false);
+  const [isEditable, setIsEditable] = useState(!readOnly);
+  const [isHandTool, setIsHandTool] = useState(readOnly);
 
   useEffect(() => {
-    if (readOnly) setIsEditable(false);
+    if (readOnly) {
+      setIsEditable(false);
+      setIsHandTool(true);
+    } else {
+      setIsEditable(true);
+      setIsHandTool(false);
+    }
   }, [readOnly]);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -269,6 +276,7 @@ export function ExcalidrawCanvas({
         viewBackgroundColor: "#ffffff",
         gridSize: 20,
         theme: "light",
+        activeTool: { type: readOnly ? "hand" : "selection" },
         ...(initialAppState || {}),
       },
       scrollToContent: false,
@@ -279,6 +287,25 @@ export function ExcalidrawCanvas({
   const handleExcalidrawAPI = useCallback((api: any) => {
     setExcalidrawAPI(api);
   }, []);
+
+  // Sync activeTool (Hand for dragging canvas, Selection for dragging elements)
+  useEffect(() => {
+    if (!excalidrawAPI) return;
+    try {
+      excalidrawAPI.setActiveTool({ type: (isHandTool || readOnly) ? "hand" : "selection" });
+    } catch {}
+  }, [excalidrawAPI, isHandTool, readOnly]);
+
+  const toggleHandTool = useCallback(() => {
+    if (!excalidrawAPI) return;
+    setIsHandTool((prev) => {
+      const next = !prev;
+      try {
+        excalidrawAPI.setActiveTool({ type: next ? "hand" : "selection" });
+      } catch {}
+      return next;
+    });
+  }, [excalidrawAPI]);
 
   const handleCanvasChange = useCallback((elements: readonly any[]) => {
     if (isEditable && !readOnly) {
@@ -445,7 +472,18 @@ export function ExcalidrawCanvas({
           {/* Mode toggle */}
           {!readOnly && (
             <button
-              onClick={() => setIsEditable((val) => !val)}
+              onClick={() => {
+                setIsEditable((val) => {
+                  const next = !val;
+                  if (!next) {
+                    isDirtyRef.current = false;
+                    setIsHandTool(true);
+                  } else {
+                    setIsHandTool(false);
+                  }
+                  return next;
+                });
+              }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-muted hover:bg-canvas hover:text-text-main transition-colors"
               title={isEditable ? "Switch to read-only preview mode" : "Switch to editable canvas mode"}
             >
@@ -462,6 +500,34 @@ export function ExcalidrawCanvas({
               )}
             </button>
           )}
+
+          {/* Pan / Select Tool Toggle */}
+          <button
+            onClick={toggleHandTool}
+            className={
+              "inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium transition-colors " +
+              (isHandTool
+                ? "bg-primary text-white shadow-xs"
+                : "bg-surface text-text-muted hover:bg-canvas hover:text-text-main")
+            }
+            title={
+              isHandTool
+                ? "Pan mode active (drag canvas to move around). Click to switch to Select mode."
+                : "Select mode active (drag elements to reposition them). Click to switch to Pan mode."
+            }
+          >
+            {isHandTool ? (
+              <>
+                <Hand className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Pan</span>
+              </>
+            ) : (
+              <>
+                <MousePointer className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Select</span>
+              </>
+            )}
+          </button>
 
           {/* Save Diagram button */}
           {onSaveCanvas && !readOnly && (
@@ -507,12 +573,18 @@ export function ExcalidrawCanvas({
         </div>
       </div>
 
-      <div className="excalidraw-wrapper relative w-full" style={{ height: isFullscreen ? "calc(100vh - 57px)" : "620px" }}>
+      <div
+        className={
+          "excalidraw-wrapper relative w-full " +
+          (readOnly || !isEditable ? "atlas-readonly-canvas" : "")
+        }
+        style={{ height: isFullscreen ? "calc(100vh - 57px)" : "620px" }}
+      >
         <CanvasErrorBoundary onReset={center}>
           <Excalidraw
             excalidrawAPI={handleExcalidrawAPI}
             onChange={handleCanvasChange}
-            viewModeEnabled={readOnly || !isEditable}
+            viewModeEnabled={false}
             initialData={initialData}
             UIOptions={EXCALIDRAW_UI_OPTIONS}
           />
@@ -523,16 +595,23 @@ export function ExcalidrawCanvas({
         <span className="inline-flex items-center gap-1.5">
           <Info className="h-3 w-3 text-primary" />
           {readOnly
-            ? "Atlas is AI-maintained and database-backed. Use the Context Inbox below for the only human routing step."
+            ? "Atlas is AI-maintained. Click and drag anywhere to pan across project columns."
             : isEditable
-            ? "Live editing enabled. Draw, add shapes, or modify components freely and click 'Save' (or Ctrl+S) to persist."
-            : "Synora automatically updates this visual workspace from governed project information."}
+            ? isHandTool
+              ? "Pan mode: click and drag anywhere to move around the workspace. Click 'Select' to drag elements."
+              : "Select mode: click and drag elements to arrange them. Hold Spacebar or click 'Pan' to move the canvas."
+            : "Preview mode: click and drag to pan. Click 'Edit Mode' to move components or draw."}
         </span>
         <span className="hidden font-mono sm:inline">
-          {isEditable ? (
+          {isHandTool ? (
+            <span className="inline-flex items-center gap-1.5 font-semibold text-primary">
+              <Hand className="h-3 w-3" />
+              Pan mode
+            </span>
+          ) : isEditable ? (
             <span className="inline-flex items-center gap-1.5 font-semibold text-primary">
               <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-              Editable
+              Edit mode
             </span>
           ) : (
             <span className="text-text-muted">View only</span>
