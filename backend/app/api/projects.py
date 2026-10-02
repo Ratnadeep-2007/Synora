@@ -1223,3 +1223,305 @@ async def generate_excalidraw_proposal(
         actor_id=current_user.id,
     )
     return excal_service.format_proposal_read(proposal)
+
+
+
+@router.post(
+    "/{project_id}/excalidraw/ai-generate",
+    summary="AI Visual Architecture Generator (Excalidraw)",
+    description="Synthesizes an intelligent, multi-tier system architecture diagram with DeepSeek AI, Living Decisions, and Core Services.",
+)
+async def ai_generate_excalidraw_diagram(
+    project_id: str,
+    body: Optional[AiGenerateDiagramRequest] = None,
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    focus = body.focus_prompt if body else None
+    direct = body.direct_apply if (body and body.direct_apply is not None) else True
+
+    proposal, artifact = excal_service.generate_ai_visual_architecture(
+        project_id=project_id,
+        db=db,
+        tenant_id=tenant_id,
+        focus_prompt=focus,
+        direct_apply=direct,
+        actor_id=current_user.id,
+    )
+    return {
+        "proposal": excal_service.format_proposal_read(proposal),
+        "artifact": excal_service.format_artifact_read(artifact) if artifact else None,
+        "direct_applied": direct,
+        "message": "AI Visual Architecture diagram generated successfully for Excalidraw.",
+    }
+
+
+@router.post(
+    "/{project_id}/excalidraw/text-to-diagram",
+    summary="Automated Text to Excalidraw Generator",
+    description="Direct automated pipeline: Text -> Model Analysis -> Excalidraw Output.",
+)
+async def text_to_excalidraw_diagram(
+    project_id: str,
+    body: TextToDiagramRequest,
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    result = excal_service.generate_diagram_from_text(
+        project_id=project_id,
+        text=body.text,
+        db=db,
+        tenant_id=tenant_id,
+        auto_apply=body.auto_apply,
+        actor_id=current_user.id,
+        title=body.title,
+    )
+    return result
+
+
+
+@router.post(
+    "/{project_id}/excalidraw/proposals/{proposal_id}/review",
+    summary="Review Excalidraw Proposal (Human Gate)",
+    description="Human review gate: Approves or rejects a visual architecture change proposal. Strictly enforces Output Safety.",
+)
+async def review_excalidraw_proposal(
+    project_id: str,
+    proposal_id: str,
+    body: ExcalidrawProposalReviewRequest,
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    try:
+        proposal, artifact = excal_service.review_proposal(
+            proposal_id=proposal_id,
+            action=body.action,
+            actor_id=current_user.id,
+            db=db,
+            tenant_id=tenant_id,
+            reason=body.reason,
+        )
+        return {
+            "proposal": excal_service.format_proposal_read(proposal),
+            "artifact": excal_service.format_artifact_read(artifact) if artifact else None,
+            "message": f"Proposal '{proposal_id}' was successfully {proposal.status}.",
+        }
+    except ExcalidrawError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        logger.error(f"Proposal review failed: {exc}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Review failed: {str(exc)}")
+
+
+# ==============================================================================
+# Visual Revision History (immutable living workspace revisions)
+# ==============================================================================
+
+@router.get(
+    "/{project_id}/visual/revisions",
+    summary="List visual revisions",
+    description="Lists immutable visual revisions for a project's living workspace, newest first.",
+)
+async def list_visual_revisions(
+    project_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = VisualRevisionService()
+    revisions = service.list_revisions(project_id, db, limit=limit)
+    return {
+        "project_id": project_id,
+        "current_revision_number": (
+            service.current_revision(project_id, db).revision_number
+            if service.current_revision(project_id, db)
+            else None
+        ),
+        "revisions": [service.format_revision_read(r) for r in revisions],
+    }
+
+
+@router.get(
+    "/{project_id}/visual/current",
+    summary="Get the current visual revision",
+    description="Returns the latest revision, which IS the current visual workspace.",
+)
+async def get_current_visual_revision(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = VisualRevisionService()
+    revision = service.current_revision(project_id, db)
+    if not revision:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No visual revisions exist for project '{project_id}'.",
+        )
+    return service.format_revision_read(revision)
+
+
+@router.get(
+    "/{project_id}/visual/revisions/compare",
+    summary="Compare two visual revisions",
+    description="Structured diff: added, removed, changed elements and relationship changes.",
+)
+async def compare_visual_revisions(
+    project_id: str,
+    from_revision: int = Query(..., description="Baseline revision number"),
+    to_revision: int = Query(..., description="Target revision number"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return VisualRevisionService().compare(project_id, from_revision, to_revision, db)
+    except VisualRevisionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get(
+    "/{project_id}/visual/revisions/{revision_number}",
+    summary="Get a visual revision",
+    description="Returns one immutable historical revision, including its elements and provenance.",
+)
+async def get_visual_revision(
+    project_id: str,
+    revision_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        revision = VisualRevisionService().get_revision(project_id, revision_number, db)
+    except VisualRevisionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return VisualRevisionService().format_revision_read(revision)
+
+
+@router.post(
+    "/{project_id}/visual/revisions/{revision_number}/restore",
+    summary="Restore a previous visual revision",
+    description="Restores a historical revision by creating a NEW revision. Never destructive.",
+)
+async def restore_visual_revision(
+    project_id: str,
+    revision_number: int,
+    reason: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    service = VisualRevisionService()
+    try:
+        revision = service.restore_as_new_revision(
+            project_id=project_id,
+            target_revision_number=revision_number,
+            db=db,
+            actor_id=current_user.id,
+            tenant_id=tenant_id,
+            reason=reason,
+        )
+    except VisualRevisionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {
+        "success": True,
+        "message": f"Created revision {revision.revision_number} from revision {revision_number}.",
+        "revision": service.format_revision_read(revision),
+    }
+
+
+# ==============================================================================
+# Central Workspace Super-Agent Endpoints (One Central Agent Handling All Projects)
+# ==============================================================================
+
+workspace_router = APIRouter(tags=["Workspace Central Agent"])
+
+
+@workspace_router.get(
+    "/workspace/agent",
+    response_model=WorkspaceAgentRead,
+    summary="Get Central Workspace Agent",
+    description="Retrieves the single central Workspace Agent that handles and oversees all projects across the organization.",
+)
+async def get_default_workspace_agent(
+    workspace_id: str = Query("ws_default", description="Workspace ID"),
+    project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    agent = project_agent_service.get_or_provision_workspace_agent(workspace_id=workspace_id, db=db)
+    return project_agent_service.format_workspace_agent_read(agent, db)
+
+
+@workspace_router.get(
+    "/workspaces/{workspace_id}/agent",
+    response_model=WorkspaceAgentRead,
+    summary="Get Workspace Central Agent by ID",
+    description="Retrieves the central Workspace Agent for a specific workspace.",
+)
+async def get_workspace_agent_by_id(
+    workspace_id: str,
+    project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    agent = project_agent_service.get_or_provision_workspace_agent(workspace_id=workspace_id, db=db)
+    return project_agent_service.format_workspace_agent_read(agent, db)
+
+
+@workspace_router.post(
+    "/workspace/agent/dispatch",
+    summary="Dispatch Capability via Central Workspace Agent",
+    description="Dispatches a specialist capability coordinated by the central Workspace Agent, with optional project target focus.",
+)
+async def dispatch_workspace_agent_capability(
+    body: WorkspaceAgentDispatchRequest,
+    workspace_id: str = Query("ws_default", description="Workspace ID"),
+    project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    execution = project_agent_service.dispatch_workspace_capability(
+        workspace_id=workspace_id,
+        capability_id=body.capability_id,
+        project_id=body.project_id,
+        task_description=body.task_description,
+        custom_query=body.custom_query,
+        db=db,
+    )
+    return {
+        "status": "success",
+        "message": f"Central Workspace Agent coordinated execution of '{body.capability_id}'",
+        "execution": AgentExecutionRead.model_validate(execution),
+    }
+
+
+@workspace_router.post(
+    "/workspace/agent/memory",
+    summary="Update Central Workspace Agent Portfolio Memory",
+    description="Updates portfolio memory context and cross-project priorities for the central Workspace Agent.",
+)
+async def update_workspace_agent_memory(
+    body: WorkspaceAgentMemoryUpdate,
+    workspace_id: str = Query("ws_default", description="Workspace ID"),
+    project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    agent = project_agent_service.update_workspace_agent_memory(
+        workspace_id=workspace_id,
+        priorities=body.priorities,
+        milestones=body.milestones,
+        insights=body.insights,
+        memory_updates=body.memory_updates,
+        db=db,
+    )
+    return json.loads(agent.memory_context_json) if agent.memory_context_json else {}
+
+
+

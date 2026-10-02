@@ -88,7 +88,7 @@ def test_resolved_source_auto_syncs_shared_project_memory(db_session: Session):
     assert outcome.outcome == "resolved"
     assert outcome.candidates_created >= 1
 
-    from app.models.project_state import StateChange
+    from app.models.project_state import ProjectState, StateChange
     state = db_session.query(ProjectState).filter(
         ProjectState.project_id == "proj_memory_auto"
     ).first()

@@ -127,12 +127,12 @@ export function MeetingDetailView({
                 {meetingData.session_intelligence.segments.slice(0, 10).map((segment: any) => (
                   <div key={segment.segment_id} className="min-w-[250px] max-w-[290px] rounded-md border border-border bg-surface p-3 space-y-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-semibold font-mono text-primary">{segment.segment_id.split(\":\").pop()}</span>
+                      <span className="text-[10px] font-semibold font-mono text-primary">{segment.segment_id.split(":").pop()}</span>
                       <span className="text-[10px] font-mono text-text-muted">{segment.entry_count || 0} turns</span>
                     </div>
                     <div className="text-[10px] font-mono text-text-muted">
-                      {segment.start_time ? new Date(segment.start_time).toLocaleTimeString([], { hour: \"2-digit\", minute: \"2-digit\" }) : \"—\"}
-                      {segment.end_time ? \" → \" + new Date(segment.end_time).toLocaleTimeString([], { hour: \"2-digit\", minute: \"2-digit\" }) : \"\"}
+                      {segment.start_time ? new Date(segment.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                      {segment.end_time ? " → " + new Date(segment.end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {(segment.speakers || []).slice(0, 4).map((speaker: string) => (
@@ -141,10 +141,10 @@ export function MeetingDetailView({
                     </div>
                     {(segment.topics || []).length > 0 && (
                       <div className="text-[11px] font-medium text-text-main">
-                        {(segment.topics || []).slice(0, 2).join(\" · \")}
+                        {(segment.topics || []).slice(0, 2).join(" · ")}
                       </div>
                     )}
-                    <p className="text-[10px] text-text-muted leading-relaxed line-clamp-4">{segment.preview || \"No preview available.\"}</p>
+                    <p className="text-[10px] text-text-muted leading-relaxed line-clamp-4">{segment.preview || "No preview available."}</p>
                   </div>
                 ))}
               </div>

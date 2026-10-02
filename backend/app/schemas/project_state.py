@@ -12,9 +12,9 @@ class ProjectStateRead(BaseModel):
     architecture: List[Dict[str, Any]] = []
     agent_workflow: List[str] = []
     decisions: List[Dict[str, Any]] = []
-    constraints: List[str] = []
-    assumptions: List[str] = []
-    open_questions: List[str] = []
+    constraints: List[Any] = []
+    assumptions: List[Any] = []
+    open_questions: List[Any] = []
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

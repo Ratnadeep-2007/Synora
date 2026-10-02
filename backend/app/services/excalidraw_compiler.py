@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.exceptions import SynesisException
-from app.schemas.visual_plan import VisualPlan
+from app.schemas.visual_plan import VisualNode, VisualPlan, VisualRelationship
 
 logger = logging.getLogger(__name__)
 

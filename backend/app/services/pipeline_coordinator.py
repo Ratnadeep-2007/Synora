@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.evidence import Evidence
 from app.models.intelligence import CandidateKnowledge
-from app.models.project_state import ProjectState
+from app.models.project_state import ProjectState, StateChange
 from app.models.conflict import Conflict
 from app.services.ingestion_service import IngestionService
 from app.services.meeting_intelligence import MeetingIntelligenceService
@@ -137,6 +137,7 @@ class PipelineCoordinator:
             grouped.setdefault(target_project, []).append(evidence)
 
         candidates_by_project: Dict[str, List[CandidateKnowledge]] = {}
+        proposals_created: List[StateChange] = []
         conflicts_created: List[Conflict] = []
         memory_results: Dict[str, Dict[str, Any]] = {}
 
@@ -150,6 +151,7 @@ class PipelineCoordinator:
             )
             candidates_by_project[target_project_id] = candidates
 
+            cand_conflicts = set()
             for cand in candidates:
                 conflict = self.conflict_service.detect_conflicts_for_candidate(
                     candidate=cand,
@@ -158,14 +160,39 @@ class PipelineCoordinator:
                 )
                 if conflict:
                     conflicts_created.append(conflict)
+                    cand_conflicts.add(cand.id)
 
-            memory_results[target_project_id] = self.memory_service.apply_candidates(
-                project_id=target_project_id,
-                candidates=candidates,
-                db=db,
-                source="google_meet",
-                actor_id=actor_id,
-            )
+                if cand.category in ("proposal", "decision_candidate", "requirement_candidate"):
+                    change = self.state_service.propose_change_from_candidate(
+                        candidate=cand,
+                        db=db,
+                        actor_id=actor_id,
+                    )
+                    proposals_created.append(change)
+
+            routine_candidates = [
+                cand for cand in candidates
+                if cand.category not in ("proposal", "decision_candidate", "requirement_candidate")
+                and cand.id not in cand_conflicts
+            ]
+            if routine_candidates:
+                memory_results[target_project_id] = self.memory_service.apply_candidates(
+                    project_id=target_project_id,
+                    candidates=routine_candidates,
+                    db=db,
+                    source="google_meet",
+                    actor_id=actor_id,
+                )
+            else:
+                target_st = self.state_service.get_or_create_state(target_project_id, db)
+                memory_results[target_project_id] = {
+                    "project_id": target_project_id,
+                    "state_version_before": target_st.current_version,
+                    "state_version_after": target_st.current_version,
+                    "applied": 0,
+                    "skipped": len(candidates),
+                    "candidate_ids": [],
+                }
 
         all_candidates = [c for items in candidates_by_project.values() for c in items]
 
@@ -229,7 +256,7 @@ class PipelineCoordinator:
             events_ingested=len(evidence_records),
             evidence_created=len(evidence_records),
             candidates_extracted=len(all_candidates),
-            proposals_created=0,
+            proposals_created=len(proposals_created),
             conflicts_detected=len(conflicts_created),
             authoritative_version_before=v_before,
             authoritative_version_after=v_after,
@@ -243,7 +270,16 @@ class PipelineCoordinator:
                 }
                 for c in all_candidates
             ],
-            proposals=[],
+            proposals=[
+                {
+                    "id": p.id,
+                    "target_section": p.target_section,
+                    "operation": p.operation,
+                    "status": p.approval_status,
+                    "reason": p.reason,
+                }
+                for p in proposals_created
+            ],
             conflicts=[
                 {
                     "id": conf.id,
