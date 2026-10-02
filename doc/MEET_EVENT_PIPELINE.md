@@ -197,12 +197,16 @@ Project State → Excalidraw
   assumptions, and supported knowledge into the resolved project's memory.
   Project boundaries are enforced deterministically; unknown/ambiguous
   routing goes to Unknown Context instead of guessing.
-- `MeetingSessionIntelligenceService` adds only Meet-specific session
-  structure over those shared records: 45-second / bounded transcript
-  windows, ordered speakers, timestamps, topic labels derived from extracted
-  knowledge, action-item owner/due hints, key decision/requirement/question
-  lists, and per-project memory version deltas. It is persisted inside the
-  existing `Meeting.metadata_json` projection, not a second memory database.
+- `MeetingSessionIntelligenceService` adds only Meet-specific session structure
+  over those shared records: ordered speakers, timestamps, topic labels derived
+  from extracted knowledge, action-item owner/due hints, key
+  decision/requirement/question lists, routing/timeline windows, and per-project
+  memory version deltas. It is persisted inside the existing
+  `Meeting.metadata_json` projection, not a second memory database.
+- Meet uses **one completed-meeting synchronization phase** to retrieve and persist
+  the transcript, conference metadata, participants, and transcript entries. After
+  persistence, session intelligence and project-memory processing read Synora's DB
+  only; they perform **zero additional Google API calls**.
 - Excalidraw updates use structured visual operations (architecture
   diagrams, flows, dependency graphs, decision/requirement cards, small
   evidence labels). No transcript dumps, no raw LLM output injection.
@@ -212,24 +216,38 @@ Project State → Excalidraw
 
 ## 10. Meeting Session Intelligence
 
-After a completed transcript is persisted, Meet receives a small source-specific
-processing stage on top of the common Synora pipeline:
+After a completed transcript is persisted, Meet receives a source-specific session
+projection on top of the common Synora pipeline:
 
 ```text
-Completed transcript
-      ↓
-Bounded 45s / 12-entry session windows
-      ↓
-Speakers + timestamps + evidence linkage
-      ↓
-Shared knowledge candidates
-      ↓
-Action / decision / requirement / question projection
-      ↓
-Project Memory version delta
-      ↓
+Meeting ends
+   ↓
+One synchronization phase
+   ├─ transcript metadata
+   ├─ conference metadata
+   ├─ participants
+   └─ complete transcript entries (paged by Google as required)
+   ↓
+Persist complete transcript + Evidence
+   ↓
+Project routing
+   └─ bounded 45s / 12-entry windows only when multi-project routing is needed
+   ↓
+Shared intelligence per resolved project
+   └─ full persisted transcript/evidence for that project
+   ↓
+Shared Project Memory
+   ↓
 Meeting.metadata_json.session_intelligence
 ```
+
+The 45-second/bounded windows are **not separate intelligence passes**. They are a
+routing/timeline aid. A long meeting remains a single intelligence context per
+resolved project, preserving relationships across window boundaries.
+
+After the transcript and evidence are persisted, no Meet REST call is required for
+intelligence. This is recorded in the meeting session projection as
+`google_api_calls_after_persistence: 0`.
 
 Available through `GET /meetings/{meeting_id}/intelligence` and included in
 `MeetingDetailRead`. The projection is read-only from the user's perspective;
