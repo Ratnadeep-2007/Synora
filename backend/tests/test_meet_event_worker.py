@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -101,6 +102,14 @@ def test_worker_retrieves_persists_entries_and_participants(
     entries = db_session.query(TranscriptEntry).filter(TranscriptEntry.transcript_id == transcript.id).all()
     assert len(entries) == 2
     assert any(e.participant_id for e in entries)
+
+    sync_meta = json.loads(meeting.metadata_json or "{}")["synora_meet_sync"]
+    assert sync_meta["retrieval_mode"] == "completed_meeting_once"
+    assert sync_meta["transcript_entry_count"] == 2
+    assert sync_meta["intelligence_input"] == "full_persisted_transcript"
+    assert sync_meta["google_api_calls_after_persistence"] == 0
+    assert result["sync_mode"] == "completed_meeting_once"
+    assert result["google_api_calls_after_persistence"] == 0
 
 
 # 10. PostgreSQL persistence + 13. duplicate processing -------------------------
