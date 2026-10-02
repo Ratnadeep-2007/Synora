@@ -210,7 +210,33 @@ Project State → Excalidraw
   shared memory processing and Meet session intelligence; visualization
   failures defer with a warning, never fail the core evidence pipeline.
 
-## 10. Reconciliation
+## 10. Meeting Session Intelligence
+
+After a completed transcript is persisted, Meet receives a small source-specific
+processing stage on top of the common Synora pipeline:
+
+```text
+Completed transcript
+      ↓
+Bounded 45s / 12-entry session windows
+      ↓
+Speakers + timestamps + evidence linkage
+      ↓
+Shared knowledge candidates
+      ↓
+Action / decision / requirement / question projection
+      ↓
+Project Memory version delta
+      ↓
+Meeting.metadata_json.session_intelligence
+```
+
+Available through `GET /meetings/{meeting_id}/intelligence` and included in
+`MeetingDetailRead`. The projection is read-only from the user's perspective;
+editing project truth still occurs through the shared project-memory/governance
+mechanisms.
+
+### 11. Reconciliation
 
 `POST /meet/reconcile` (and the legacy `POST /meetings/sync`, now labeled
 reconciliation):
