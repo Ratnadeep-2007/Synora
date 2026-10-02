@@ -116,6 +116,8 @@ export function sanitizeExcalidrawElements(elements: any[]): any[] {
     sanitized.isDeleted = Boolean(sanitized.isDeleted);
     sanitized.groupIds = Array.isArray(sanitized.groupIds) ? sanitized.groupIds : [];
 
+    // Critical Excalidraw rendering and hit-testing properties:
+    // Excalidraw's isTransparent() calls element.backgroundColor.length. If undefined, it crashes fatally.
     sanitized.backgroundColor =
       typeof sanitized.backgroundColor === "string" && sanitized.backgroundColor.trim()
         ? sanitized.backgroundColor
@@ -199,7 +201,10 @@ interface ExcalidrawCanvasProps {
   version?: number;
   initialElements?: any[];
   initialAppState?: any;
+  isSyncing?: boolean;
+  onSyncAgentOutput?: () => Promise<void>;
   onSaveCanvas?: (scene: { name: string; elements: any[]; app_state?: any }) => Promise<void>;
+  onExportJson?: () => void;
   compareMode?: boolean;
   compareElements?: any[];
   compareAddedIds?: string[];
@@ -207,7 +212,6 @@ interface ExcalidrawCanvasProps {
   compareFromRevision?: number | null;
   compareToRevision?: number | null;
   readOnly?: boolean;
-  onExportJson?: () => void;
 }
 
 const EXCALIDRAW_UI_OPTIONS = {
@@ -259,23 +263,12 @@ export function ExcalidrawCanvas({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // This component treats Excalidraw as an uncontrolled editor.
-  // React must not re-inject the scene on viewport-only changes such as zoom/pan.
-  // Only an externally changed project/revision/compare target may replace it.
-  const externalSceneKey = useMemo(
-    () =>
-      [
-        projectId || "project",
-        compareMode ? "compare" : "live",
-        compareMode ? String(compareToRevision ?? "na") : String(version),
-      ].join(":"),
-    [projectId, compareMode, compareToRevision, version]
-  );
-
   const visibleElements = useMemo(
     () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
     [compareMode, compareElements, initialElements]
   );
+
+  const syncingSceneRef = useRef(false);
   const latestVisibleElementsRef = useRef<any[]>([]);
   useEffect(() => {
     latestVisibleElementsRef.current = visibleElements;
@@ -304,9 +297,9 @@ export function ExcalidrawCanvas({
   useEffect(() => {
     if (!excalidrawAPI) return;
     try {
-      excalidrawAPI.setActiveTool({ type: isHandTool || readOnly || !isEditable ? "hand" : "selection" });
+      excalidrawAPI.setActiveTool({ type: (isHandTool || readOnly) ? "hand" : "selection" });
     } catch {}
-  }, [excalidrawAPI, isHandTool, readOnly, isEditable]);
+  }, [excalidrawAPI, isHandTool, readOnly]);
 
   const toggleHandTool = useCallback(() => {
     if (!excalidrawAPI) return;
@@ -320,6 +313,7 @@ export function ExcalidrawCanvas({
   }, [excalidrawAPI]);
 
   const handleCanvasChange = useCallback((elements: readonly any[]) => {
+    if (syncingSceneRef.current) return;
     if (isEditable && !readOnly) {
       isDirtyRef.current = true;
     }
@@ -328,44 +322,68 @@ export function ExcalidrawCanvas({
   useEffect(() => {
     if (!excalidrawAPI) return;
 
+    const externalSceneKey = [
+      projectId || "project",
+      compareMode ? "compare" : "live",
+      compareMode ? String(compareToRevision ?? "na") : String(version),
+    ].join(":");
+
     if (appliedSceneKeyRef.current === externalSceneKey) return;
 
-    // In active manual edit mode with unsaved changes, protect user drawings from external polling
-    if (isDirtyRef.current && isEditable && !readOnly) {
-      return;
-    }
+    // Protect unsaved local edits from backend polling/reconciliation.
+    if (isDirtyRef.current && isEditable && !readOnly) return;
 
-    // If user is currently dragging/typing, defer update
+    // Defer a remote scene replacement until an active interaction finishes.
+    // This never changes Excalidraw's camera/viewport.
     try {
       const appState = excalidrawAPI.getAppState?.();
       if (appState?.draggingElement || appState?.resizingElement || appState?.editingElement) {
-        const timer = setTimeout(() => {
-          if (appliedSceneKeyRef.current !== externalSceneKey) {
-            appliedSceneKeyRef.current = externalSceneKey;
+        const timer = window.setTimeout(() => {
+          if (appliedSceneKeyRef.current === externalSceneKey) return;
+          if (isDirtyRef.current && isEditable && !readOnly) return;
+
+          try {
+            syncingSceneRef.current = true;
             excalidrawAPI.updateScene({
               elements: latestVisibleElementsRef.current,
               commitToHistory: false,
             });
+            appliedSceneKeyRef.current = externalSceneKey;
+            window.queueMicrotask(() => {
+              syncingSceneRef.current = false;
+            });
+          } catch (error) {
+            syncingSceneRef.current = false;
+            console.warn("Failed to update Excalidraw scene", error);
           }
         }, 600);
-        return () => clearTimeout(timer);
+        return () => window.clearTimeout(timer);
       }
     } catch {}
 
-    // The backend controls scene content; Excalidraw controls its own viewport.
-    // Only replace the scene when the external document identity changes.
-    // Never call scrollToContent here: polling/refetches must not move the user's
-    // current zoom or pan position.
-    appliedSceneKeyRef.current = externalSceneKey;
     try {
+      syncingSceneRef.current = true;
       excalidrawAPI.updateScene({
         elements: latestVisibleElementsRef.current,
         commitToHistory: false,
       });
+      appliedSceneKeyRef.current = externalSceneKey;
+      window.queueMicrotask(() => {
+        syncingSceneRef.current = false;
+      });
     } catch (error) {
-      console.warn("Failed to load Excalidraw scene", error);
+      syncingSceneRef.current = false;
+      console.warn("Failed to update Excalidraw scene", error);
     }
-  }, [excalidrawAPI, externalSceneKey, isEditable, readOnly]);
+  }, [
+    excalidrawAPI,
+    projectId,
+    compareMode,
+    compareToRevision,
+    version,
+    isEditable,
+    readOnly,
+  ]);
 
   const center = useCallback(() => {
     try {
@@ -393,14 +411,9 @@ export function ExcalidrawCanvas({
         },
       });
       isDirtyRef.current = false;
-      appliedSceneKeyRef.current = [
-        projectId || "project",
-        "live",
-        String((version || 1) + 1),
-        String(elements?.length || 0),
-      ].join(":");
+      appliedSceneKeyRef.current = null;
       setSaveSuccess(true);
-      window.setTimeout(() => setSaveSuccess(false), 2500);
+      setTimeout(() => setSaveSuccess(false), 2500);
     } catch (error) {
       console.error("Failed to save Excalidraw diagram:", error);
       alert("Failed to save diagram changes. Please try again.");
