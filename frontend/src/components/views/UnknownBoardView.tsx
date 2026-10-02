@@ -44,7 +44,7 @@ export function UnknownBoardView({ board }: UnknownBoardViewProps) {
 
       <div className="p-2">
         <ExcalidrawCanvas
-          key={`unknown-${board?.version || 0}`}
+          key="unknown-context-board"
           projectId="proj_unknown_context"
           projectName="Unknown Context Board"
           version={board?.version || 1}

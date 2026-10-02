@@ -80,9 +80,25 @@ export default function Home() {
           api.getWorkspaceAtlas(),
           api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
         ]);
-        if (atlasResult.status === "fulfilled") setAtlasData(atlasResult.value);
+        if (atlasResult.status === "fulfilled") {
+          setAtlasData((prev) => {
+            if (!prev) return atlasResult.value;
+            if (
+              prev.artifact?.version === atlasResult.value?.artifact?.version &&
+              prev.artifact?.elements?.length === atlasResult.value?.artifact?.elements?.length &&
+              prev.artifact?.updated_at === atlasResult.value?.artifact?.updated_at &&
+              prev.unknown_context?.pending === atlasResult.value?.unknown_context?.pending
+            ) {
+              return prev;
+            }
+            return atlasResult.value;
+          });
+        }
         if (unknownResult.status === "fulfilled") {
-          setUnknownPendingCount(unknownResult.value?.pending || 0);
+          setUnknownPendingCount((prev) => {
+            const next = unknownResult.value?.pending || 0;
+            return prev === next ? prev : next;
+          });
         }
         return;
       }
@@ -138,7 +154,9 @@ export default function Home() {
         api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
       ]);
 
-      if (stateData.status === "fulfilled") setState(stateData.value);
+      if (stateData.status === "fulfilled") {
+        setState((prev) => (prev?.current_version === stateData.value?.current_version ? prev : stateData.value));
+      }
       if (histData.status === "fulfilled") setHistory(histData.value);
       if (confData.status === "fulfilled") setConflicts(confData.value);
       if (meetsData.status === "fulfilled") setMeetings(meetsData.value);
@@ -146,12 +164,27 @@ export default function Home() {
       if (evData.status === "fulfilled") setAllEvidence(evData.value);
       if (agData.status === "fulfilled") setAgents(agData.value);
       if (connsData.status === "fulfilled") setConnections(connsData.value);
-      if (excalData.status === "fulfilled") setExcalArtifact(excalData.value);
+      if (excalData.status === "fulfilled") {
+        setExcalArtifact((prev) => {
+          if (!prev) return excalData.value;
+          if (
+            prev.version === excalData.value?.version &&
+            prev.elements?.length === excalData.value?.elements?.length &&
+            prev.updated_at === excalData.value?.updated_at
+          ) {
+            return prev;
+          }
+          return excalData.value;
+        });
+      }
       if (propsData.status === "fulfilled") setExcalProposals(propsData.value);
       if (subsData.status === "fulfilled") setMeetSubscriptions(subsData.value);
       if (eventsData.status === "fulfilled") setMeetEvents(eventsData.value);
       if (unknownSummaryData.status === "fulfilled") {
-        setUnknownPendingCount(unknownSummaryData.value?.pending || 0);
+        setUnknownPendingCount((prev) => {
+          const next = unknownSummaryData.value?.pending || 0;
+          return prev === next ? prev : next;
+        });
       }
     } catch (err) {
       console.error("Failed to load project context:", err);

@@ -80,7 +80,7 @@ export function WorkspaceAtlasView({
         <div className="p-2">
           {atlas ? (
             <ExcalidrawCanvas
-              key={atlas.artifact.id + ":" + atlas.artifact.version}
+              key={atlas.artifact.id || atlas.artifact.project_id || "workspace_atlas"}
               projectId={atlas.artifact.project_id}
               projectName="Synora Project Atlas"
               version={atlas.artifact.version}

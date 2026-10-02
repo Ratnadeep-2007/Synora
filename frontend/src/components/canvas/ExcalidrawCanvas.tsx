@@ -214,6 +214,19 @@ interface ExcalidrawCanvasProps {
   readOnly?: boolean;
 }
 
+const EXCALIDRAW_UI_OPTIONS = {
+  canvasActions: {
+    changeViewBackgroundColor: true,
+    clearCanvas: false,
+    export: {
+      saveFileToDisk: true,
+    },
+    loadScene: false,
+    saveToActiveFile: false,
+    toggleTheme: true,
+  },
+};
+
 export function ExcalidrawCanvas({
   projectId,
   projectName = "Project",
@@ -237,19 +250,43 @@ export function ExcalidrawCanvas({
   }, [readOnly]);
   const [isSaving, setIsSaving] = useState(false);
   const appliedSceneKeyRef = useRef<string | null>(null);
+  const hasCenteredInitialRef = useRef(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+
   const visibleElements = useMemo(
     () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
     [compareMode, compareElements, initialElements]
   );
-  const initialScene = useMemo(() => sanitizeExcalidrawElements(initialElements), [initialElements]);
+
+  const initialData = useMemo(() => {
+    const elements = sanitizeExcalidrawElements(compareMode ? compareElements : initialElements);
+    if (elements.length > 0) {
+      hasCenteredInitialRef.current = true;
+    }
+    return {
+      elements,
+      appState: {
+        viewBackgroundColor: "#ffffff",
+        gridSize: 20,
+        theme: "light",
+        ...(initialAppState || {}),
+      },
+      scrollToContent: true,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleExcalidrawAPI = useCallback((api: any) => {
+    setExcalidrawAPI(api);
+  }, []);
 
   useEffect(() => {
     if (!excalidrawAPI) return;
+
     // Do not continuously push React props into Excalidraw. That makes the
-    // canvas behave like a controlled component and can interrupt pointer
+    // canvas behave like a controlled component and interrupts pointer
     // gestures/dragging. Only replace the scene when an external revision,
     // project, or compare target actually changes.
     const sceneKey = [
@@ -257,22 +294,52 @@ export function ExcalidrawCanvas({
       compareMode ? "compare" : "live",
       compareMode ? String(compareToRevision ?? "na") : String(version),
     ].join(":");
+
     if (appliedSceneKeyRef.current === sceneKey) return;
+
+    // In active manual edit mode, protect the user's modifications from background polling updates
+    if (isEditable && !readOnly) {
+      return;
+    }
+
+    // If the user is actively interacting (dragging, resizing, typing), postpone update briefly
+    try {
+      const appState = excalidrawAPI.getAppState?.();
+      if (appState?.draggingElement || appState?.resizingElement || appState?.editingElement) {
+        const timer = setTimeout(() => {
+          if (appliedSceneKeyRef.current !== sceneKey) {
+            appliedSceneKeyRef.current = sceneKey;
+            excalidrawAPI.updateScene({
+              elements: visibleElements,
+              commitToHistory: false,
+            });
+          }
+        }, 600);
+        return () => clearTimeout(timer);
+      }
+    } catch {}
+
     appliedSceneKeyRef.current = sceneKey;
+
     try {
       excalidrawAPI.updateScene({
         elements: visibleElements,
         commitToHistory: false,
       });
-      setTimeout(() => {
-        try {
-          excalidrawAPI.scrollToContent();
-        } catch {}
-      }, 100);
+
+      // Only scroll to content on the first load if initialData was mounted empty
+      if (!hasCenteredInitialRef.current && visibleElements.length > 0) {
+        hasCenteredInitialRef.current = true;
+        setTimeout(() => {
+          try {
+            excalidrawAPI.scrollToContent();
+          } catch {}
+        }, 100);
+      }
     } catch (error) {
       console.warn("Failed to update Excalidraw scene", error);
     }
-  }, [excalidrawAPI, projectId, compareMode, compareToRevision, version, visibleElements]);
+  }, [excalidrawAPI, projectId, compareMode, compareToRevision, version, visibleElements, isEditable, readOnly]);
 
   const center = useCallback(() => {
     try {
@@ -295,6 +362,12 @@ export function ExcalidrawCanvas({
           theme: appState?.theme || "light",
         },
       });
+      // Anticipate version bump so immediate poll won't re-render canvas
+      appliedSceneKeyRef.current = [
+        projectId || "project",
+        "live",
+        String((version || 1) + 1),
+      ].join(":");
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (error) {
@@ -303,7 +376,7 @@ export function ExcalidrawCanvas({
     } finally {
       setIsSaving(false);
     }
-  }, [excalidrawAPI, onSaveCanvas, projectName]);
+  }, [excalidrawAPI, onSaveCanvas, projectName, projectId, version]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -413,35 +486,13 @@ export function ExcalidrawCanvas({
         </div>
       </div>
 
-      <div className="relative w-full" style={{ height: isFullscreen ? "calc(100vh - 57px)" : "620px" }}>
+      <div className="excalidraw-wrapper relative w-full" style={{ height: isFullscreen ? "calc(100vh - 57px)" : "620px" }}>
         <CanvasErrorBoundary onReset={center}>
           <Excalidraw
-            excalidrawAPI={(api) => {
-              setExcalidrawAPI(api);
-              appliedSceneKeyRef.current = null;
-            }}
+            excalidrawAPI={handleExcalidrawAPI}
             viewModeEnabled={readOnly || !isEditable}
-            initialData={{
-              elements: initialScene,
-              appState: initialAppState || {
-                viewBackgroundColor: "#ffffff",
-                gridSize: 20,
-                theme: "light",
-              },
-              scrollToContent: true,
-            }}
-            UIOptions={{
-              canvasActions: {
-                changeViewBackgroundColor: true,
-                clearCanvas: false,
-                export: {
-                  saveFileToDisk: true,
-                },
-                loadScene: false,
-                saveToActiveFile: false,
-                toggleTheme: true,
-              },
-            }}
+            initialData={initialData}
+            UIOptions={EXCALIDRAW_UI_OPTIONS}
           />
         </CanvasErrorBoundary>
       </div>
