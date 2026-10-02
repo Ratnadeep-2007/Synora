@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.evidence import Evidence
 from app.models.intelligence import CandidateKnowledge
 from app.models.meeting import Meeting, Transcript, TranscriptEntry
+from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 
 
 DUE_HINT_PATTERN = re.compile(
@@ -272,6 +273,11 @@ class MeetingSessionIntelligenceService:
             [candidate.project_id for candidate in meeting_candidates]
             + [e.project_id for e in evidence_records]
         )
+        project_ids = [
+            project_id
+            for project_id in project_ids
+            if project_id != SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+        ]
         memory_delta: List[Dict[str, Any]] = []
         for project_id in project_ids:
             result = (memory_results or {}).get(project_id, {})
