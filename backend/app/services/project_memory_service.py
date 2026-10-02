@@ -207,20 +207,55 @@ class ProjectMemoryService:
             evidence_ids = self._json_list(candidate.evidence_ids_json)
             fingerprint = self._candidate_fingerprint(candidate)
 
-            if any(
-                self._item_fingerprint(item) == fingerprint
-                or (
-                    isinstance(item, dict)
-                    and candidate.title
-                    and str(item.get("title") or item.get("text") or "").strip().lower()
-                    == candidate.title.strip().lower()
-                    and evidence_ids
-                    and set(evidence_ids).intersection(
-                        set(item.get("evidence_ids") or [])
-                    )
-                )
-                for item in values
-            ):
+            # A concept title is the visible identity of a memory note. If the
+            # same concept arrives later from Meet or WhatsApp, update that
+            # note instead of appending a duplicate.
+            matching_index = None
+            incoming_title = (candidate.title or "").strip().lower()
+            if incoming_title:
+                for index, item in enumerate(values):
+                    if not isinstance(item, dict):
+                        continue
+                    existing_title = str(
+                        item.get("title") or item.get("text") or item.get("component") or ""
+                    ).strip().lower()
+                    if existing_title == incoming_title:
+                        matching_index = index
+                        break
+
+            if matching_index is not None:
+                existing = dict(values[matching_index])
+                existing_content = str(
+                    existing.get("content")
+                    or existing.get("details")
+                    or existing.get("text")
+                    or existing.get("role")
+                    or ""
+                ).strip()
+                incoming_content = (candidate.content or "").strip()
+                if existing_content != incoming_content:
+                    if "content" in existing:
+                        existing["content"] = candidate.content
+                    elif "details" in existing:
+                        existing["details"] = candidate.content
+                    elif "text" in existing:
+                        existing["text"] = candidate.content
+                    else:
+                        existing["content"] = candidate.content
+                    existing["source"] = source
+                    existing["updated_at"] = (candidate.created_at or datetime.now(timezone.utc)).isoformat()
+                    existing["updated_by"] = actor_id
+                    existing["evidence_ids"] = list(dict.fromkeys(
+                        [*(existing.get("evidence_ids") or []), *evidence_ids]
+                    ))
+                    values[matching_index] = existing
+                    applied_ids.append(candidate.id)
+                else:
+                    skipped_ids.append(candidate.id)
+                candidate.status = "approved"
+                continue
+
+            if any(self._item_fingerprint(item) == fingerprint for item in values):
                 candidate.status = "approved"
                 skipped_ids.append(candidate.id)
                 continue
