@@ -151,6 +151,9 @@ export const api = {
   getMeetingDetail: (meetingId: string): Promise<any> =>
     request<any>(`/meetings/${meetingId}`),
 
+  getMeetingIntelligence: (meetingId: string): Promise<any> =>
+    request<any>(`/meetings/${meetingId}/intelligence`),
+
   processMeetingPipeline: (projectId: string, meetingId: string): Promise<any> =>
     request<any>(`/projects/${projectId}/meetings/${meetingId}/process`, {
       method: "POST",
