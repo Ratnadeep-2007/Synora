@@ -14,7 +14,8 @@ Synora bridges unstructured discussions across communication channels (Google Me
 
 2. **Shared Intelligence & Project Memory**
    - WhatsApp and Google Meet enter through source-specific adapters, then use the same normalized Evidence, Context Intelligence, Candidate Knowledge, and project-bounded Project Memory.
-   - Meet adds a source-specific session projection for speakers, timestamps, transcript windows, action items, decisions, requirements, and memory deltas without creating a second memory store.
+   - Meet adds a source-specific session projection for speakers, timestamps, routing/timeline windows, action items, decisions, requirements, and memory deltas without creating a second memory store.
+   - A completed meeting is synchronized once into Synora's database; intelligence then runs from the persisted full transcript/evidence with zero additional Google API calls.
    - Routine evidence-backed memory updates are automatic; unresolved project routing is isolated in Unknown Context.
 
 3. **AI Visual Canvas Engine (Excalidraw)**
