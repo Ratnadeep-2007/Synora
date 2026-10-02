@@ -236,6 +236,7 @@ export function ExcalidrawCanvas({
     if (readOnly) setIsEditable(false);
   }, [readOnly]);
   const [isSaving, setIsSaving] = useState(false);
+  const appliedSceneKeyRef = useRef<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -247,6 +248,17 @@ export function ExcalidrawCanvas({
 
   useEffect(() => {
     if (!excalidrawAPI) return;
+    // Do not continuously push React props into Excalidraw. That makes the
+    // canvas behave like a controlled component and can interrupt pointer
+    // gestures/dragging. Only replace the scene when an external revision,
+    // project, or compare target actually changes.
+    const sceneKey = [
+      projectId || "project",
+      compareMode ? "compare" : "live",
+      compareMode ? String(compareToRevision ?? "na") : String(version),
+    ].join(":");
+    if (appliedSceneKeyRef.current === sceneKey) return;
+    appliedSceneKeyRef.current = sceneKey;
     try {
       excalidrawAPI.updateScene({
         elements: visibleElements,
@@ -260,7 +272,7 @@ export function ExcalidrawCanvas({
     } catch (error) {
       console.warn("Failed to update Excalidraw scene", error);
     }
-  }, [excalidrawAPI, visibleElements, version]);
+  }, [excalidrawAPI, projectId, compareMode, compareToRevision, version, visibleElements]);
 
   const center = useCallback(() => {
     try {
@@ -404,7 +416,10 @@ export function ExcalidrawCanvas({
       <div className="relative w-full" style={{ height: isFullscreen ? "calc(100vh - 57px)" : "620px" }}>
         <CanvasErrorBoundary onReset={center}>
           <Excalidraw
-            excalidrawAPI={(api) => setExcalidrawAPI(api)}
+            excalidrawAPI={(api) => {
+              setExcalidrawAPI(api);
+              appliedSceneKeyRef.current = null;
+            }}
             viewModeEnabled={readOnly || !isEditable}
             initialData={{
               elements: initialScene,
