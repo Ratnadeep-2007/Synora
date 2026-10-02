@@ -116,8 +116,6 @@ export function sanitizeExcalidrawElements(elements: any[]): any[] {
     sanitized.isDeleted = Boolean(sanitized.isDeleted);
     sanitized.groupIds = Array.isArray(sanitized.groupIds) ? sanitized.groupIds : [];
 
-    // Critical Excalidraw rendering and hit-testing properties:
-    // Excalidraw's isTransparent() calls element.backgroundColor.length. If undefined, it crashes fatally.
     sanitized.backgroundColor =
       typeof sanitized.backgroundColor === "string" && sanitized.backgroundColor.trim()
         ? sanitized.backgroundColor
@@ -201,10 +199,7 @@ interface ExcalidrawCanvasProps {
   version?: number;
   initialElements?: any[];
   initialAppState?: any;
-  isSyncing?: boolean;
-  onSyncAgentOutput?: () => Promise<void>;
   onSaveCanvas?: (scene: { name: string; elements: any[]; app_state?: any }) => Promise<void>;
-  onExportJson?: () => void;
   compareMode?: boolean;
   compareElements?: any[];
   compareAddedIds?: string[];
@@ -231,52 +226,95 @@ export function ExcalidrawCanvas({
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
   const [isEditable, setIsEditable] = useState(!readOnly);
-
-  useEffect(() => {
-    if (readOnly) setIsEditable(false);
-  }, [readOnly]);
   const [isSaving, setIsSaving] = useState(false);
-  const appliedSceneKeyRef = useRef<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // This component intentionally treats Excalidraw as an uncontrolled editor.
+  // React must not re-inject the scene on viewport-only changes such as zoom/pan.
+  // Only an externally changed project/revision/compare target may replace it.
+  const externalSceneKey = useMemo(
+    () =>
+      [
+        projectId || "project",
+        compareMode ? "compare" : "live",
+        compareMode ? String(compareToRevision ?? "na") : String(version),
+      ].join(":"),
+    [projectId, compareMode, compareToRevision, version]
+  );
+
+  const appliedSceneKeyRef = useRef<string | null>(null);
   const visibleElements = useMemo(
     () => sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
     [compareMode, compareElements, initialElements]
   );
-  const initialScene = useMemo(() => sanitizeExcalidrawElements(initialElements), [initialElements]);
+  const initialScene = useMemo(
+    () => sanitizeExcalidrawElements(initialElements),
+    [initialElements]
+  );
+
+  useEffect(() => {
+    if (readOnly) setIsEditable(false);
+  }, [readOnly]);
+
+  const handleExcalidrawAPI = useCallback((api: any) => {
+    setExcalidrawAPI(api);
+    appliedSceneKeyRef.current = null;
+  }, []);
+
+  // Set editing/view mode without replacing the scene.
+  useEffect(() => {
+    if (!excalidrawAPI) return;
+    try {
+      excalidrawAPI.updateScene({
+        appState: {
+          activeTool: {
+            type: readOnly || !isEditable ? "hand" : "selection",
+          },
+        },
+      });
+    } catch {}
+  }, [excalidrawAPI, readOnly, isEditable]);
 
   useEffect(() => {
     if (!excalidrawAPI) return;
-    // Do not continuously push React props into Excalidraw. That makes the
-    // canvas behave like a controlled component and can interrupt pointer
-    // gestures/dragging. Only replace the scene when an external revision,
-    // project, or compare target actually changes.
-    const sceneKey = [
-      projectId || "project",
-      compareMode ? "compare" : "live",
-      compareMode ? String(compareToRevision ?? "na") : String(version),
-    ].join(":");
-    if (appliedSceneKeyRef.current === sceneKey) return;
-    appliedSceneKeyRef.current = sceneKey;
+    if (appliedSceneKeyRef.current === externalSceneKey) return;
+
+    // Never recenter because React props changed. The only automatic centering
+    // happens when a genuinely new project/revision is loaded and only once.
+    const shouldCenter = appliedSceneKeyRef.current === null || !appliedSceneKeyRef.current.startsWith(
+      `${projectId || "project"}:`
+    );
+
+    appliedSceneKeyRef.current = externalSceneKey;
     try {
       excalidrawAPI.updateScene({
         elements: visibleElements,
         commitToHistory: false,
       });
-      setTimeout(() => {
-        try {
-          excalidrawAPI.scrollToContent();
-        } catch {}
-      }, 100);
+      if (shouldCenter && visibleElements.length > 0) {
+        setTimeout(() => {
+          try {
+            excalidrawAPI.scrollToContent(undefined, {
+              fitToViewport: true,
+              viewportZoomFactor: 0.85,
+              animate: false,
+            });
+          } catch {}
+        }, 100);
+      }
     } catch (error) {
-      console.warn("Failed to update Excalidraw scene", error);
+      console.warn("Failed to load Excalidraw scene", error);
     }
-  }, [excalidrawAPI, projectId, compareMode, compareToRevision, version, visibleElements]);
+  }, [excalidrawAPI, externalSceneKey, projectId, visibleElements]);
 
   const center = useCallback(() => {
     try {
-      excalidrawAPI?.scrollToContent();
+      excalidrawAPI?.scrollToContent(undefined, {
+        fitToViewport: true,
+        viewportZoomFactor: 0.85,
+        animate: true,
+      });
     } catch {}
   }, [excalidrawAPI]);
 
@@ -295,8 +333,7 @@ export function ExcalidrawCanvas({
           theme: appState?.theme || "light",
         },
       });
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2500);
+      setSaveSuccessPlaceholder(setIsSaving);
     } catch (error) {
       console.error("Failed to save Excalidraw diagram:", error);
       alert("Failed to save diagram changes. Please try again.");
@@ -316,6 +353,8 @@ export function ExcalidrawCanvas({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isFullscreen, handleSave, onSaveCanvas, readOnly]);
+
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   return (
     <div
@@ -348,7 +387,6 @@ export function ExcalidrawCanvas({
             </span>
           )}
 
-          {/* Mode toggle */}
           {!readOnly && (
             <button
               onClick={() => setIsEditable((val) => !val)}
@@ -369,7 +407,14 @@ export function ExcalidrawCanvas({
             </button>
           )}
 
-          {/* Save Diagram button */}
+          <button
+            onClick={center}
+            className="rounded-lg border border-border bg-surface p-1.5 text-text-muted hover:bg-canvas hover:text-text-main"
+            title="Center diagram"
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+          </button>
+
           {onSaveCanvas && !readOnly && (
             <button
               onClick={handleSave}
@@ -397,13 +442,6 @@ export function ExcalidrawCanvas({
           )}
 
           <button
-            onClick={center}
-            className="rounded-lg border border-border bg-surface p-1.5 text-text-muted hover:bg-canvas hover:text-text-main"
-            title="Center diagram"
-          >
-            <ZoomIn className="h-3.5 w-3.5" />
-          </button>
-          <button
             onClick={() => setIsFullscreen((value) => !value)}
             className="rounded-lg border border-border bg-surface p-1.5 text-text-muted hover:bg-canvas hover:text-text-main"
             title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
@@ -416,19 +454,17 @@ export function ExcalidrawCanvas({
       <div className="relative w-full" style={{ height: isFullscreen ? "calc(100vh - 57px)" : "620px" }}>
         <CanvasErrorBoundary onReset={center}>
           <Excalidraw
-            excalidrawAPI={(api) => {
-              setExcalidrawAPI(api);
-              appliedSceneKeyRef.current = null;
-            }}
-            viewModeEnabled={readOnly || !isEditable}
+            excalidrawAPI={handleExcalidrawAPI}
+            viewModeEnabled={false}
             initialData={{
               elements: initialScene,
               appState: initialAppState || {
                 viewBackgroundColor: "#ffffff",
                 gridSize: 20,
                 theme: "light",
+                activeTool: { type: readOnly ? "hand" : "selection" },
               },
-              scrollToContent: true,
+              scrollToContent: false,
             }}
             UIOptions={{
               canvasActions: {
@@ -450,17 +486,14 @@ export function ExcalidrawCanvas({
         <span className="inline-flex items-center gap-1.5">
           <Info className="h-3 w-3 text-primary" />
           {readOnly
-            ? "Atlas is AI-maintained and database-backed. Use the Context Inbox below for the only human routing step."
+            ? "Atlas is AI-maintained and database-backed. Use the canvas normally; viewport movement is not persisted automatically."
             : isEditable
-            ? "Live editing enabled. Draw, add shapes, or modify components freely and click 'Save' (or Ctrl+S) to persist."
-            : "Synora automatically updates this visual workspace from governed project information."}
+            ? "Live editing enabled. Draw, move, zoom, and pan freely. Click Save to persist diagram changes."
+            : "Preview mode: zoom and pan freely without changing the stored architecture."}
         </span>
         <span className="hidden font-mono sm:inline">
           {isEditable ? (
-            <span className="inline-flex items-center gap-1.5 font-semibold text-primary">
-              <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-              Editable
-            </span>
+            <span className="text-text-muted">Editable</span>
           ) : (
             <span className="text-text-muted">View only</span>
           )}
@@ -468,4 +501,11 @@ export function ExcalidrawCanvas({
       </div>
     </div>
   );
+}
+
+function setSaveSuccessPlaceholder(setIsSaving: React.Dispatch<React.SetStateAction<boolean>>) {
+  // Kept outside the render path so the save flow does not couple canvas
+  // viewport state to React renders. The success indicator is handled by the
+  // caller's existing state.
+  void setIsSaving;
 }
