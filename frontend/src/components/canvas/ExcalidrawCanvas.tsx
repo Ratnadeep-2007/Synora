@@ -227,7 +227,40 @@ const EXCALIDRAW_UI_OPTIONS = {
   },
 };
 
-export function ExcalidrawCanvas({
+interface ViewportState {
+  scrollX: number;
+  scrollY: number;
+  zoom: { value: number };
+}
+
+const viewportCache = new Map<string, ViewportState>();
+
+function getSessionViewport(key: string): ViewportState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(`synora_viewport_${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      Number.isFinite(parsed.scrollX) &&
+      Number.isFinite(parsed.scrollY) &&
+      parsed.zoom?.value &&
+      Number.isFinite(parsed.zoom.value)
+    ) {
+      return parsed;
+    }
+  } catch {}
+  return null;
+}
+
+function saveSessionViewport(key: string, vp: ViewportState) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(`synora_viewport_${key}`, JSON.stringify(vp));
+  } catch {}
+}
+
+export const ExcalidrawCanvas = React.memo(function ExcalidrawCanvas({
   projectId,
   projectName = "Project",
   version = 1,
@@ -245,6 +278,24 @@ export function ExcalidrawCanvas({
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
   const [isEditable, setIsEditable] = useState(!readOnly);
   const [isHandTool, setIsHandTool] = useState(readOnly);
+
+  const viewportKey = projectId || "workspace_atlas";
+  const lastViewportRef = useRef<ViewportState | null>(null);
+
+  if (!lastViewportRef.current) {
+    lastViewportRef.current = viewportCache.get(viewportKey) || getSessionViewport(viewportKey);
+  }
+
+  const handleScrollChange = useCallback(
+    (scrollX: number, scrollY: number, zoom: { value: number }) => {
+      if (!Number.isFinite(scrollX) || !Number.isFinite(scrollY)) return;
+      const vp = { scrollX, scrollY, zoom };
+      lastViewportRef.current = vp;
+      viewportCache.set(viewportKey, vp);
+      saveSessionViewport(viewportKey, vp);
+    },
+    [viewportKey]
+  );
 
   useEffect(() => {
     if (readOnly) {
@@ -275,6 +326,7 @@ export function ExcalidrawCanvas({
   }, [visibleElements]);
 
   const initialData = useMemo(() => {
+    const savedVp = viewportCache.get(viewportKey) || getSessionViewport(viewportKey);
     return {
       elements: sanitizeExcalidrawElements(compareMode ? compareElements : initialElements),
       appState: {
@@ -283,6 +335,13 @@ export function ExcalidrawCanvas({
         theme: "light",
         activeTool: { type: readOnly ? "hand" : "selection" },
         ...(initialAppState || {}),
+        ...(savedVp
+          ? {
+              scrollX: savedVp.scrollX,
+              scrollY: savedVp.scrollY,
+              zoom: savedVp.zoom,
+            }
+          : {}),
       },
       scrollToContent: false,
     };
@@ -292,6 +351,21 @@ export function ExcalidrawCanvas({
   const handleExcalidrawAPI = useCallback((api: any) => {
     setExcalidrawAPI(api);
   }, []);
+
+  // Listen to viewport changes from API as well
+  useEffect(() => {
+    if (!excalidrawAPI) return;
+    try {
+      const unsubscribe = excalidrawAPI.onScrollChange?.(
+        (scrollX: number, scrollY: number, zoom: { value: number }) => {
+          handleScrollChange(scrollX, scrollY, zoom);
+        }
+      );
+      return () => {
+        if (typeof unsubscribe === "function") unsubscribe();
+      };
+    } catch {}
+  }, [excalidrawAPI, handleScrollChange]);
 
   // Sync activeTool (Hand for dragging canvas, Selection for dragging elements)
   useEffect(() => {
@@ -333,19 +407,42 @@ export function ExcalidrawCanvas({
     // Protect unsaved local edits from backend polling/reconciliation.
     if (isDirtyRef.current && isEditable && !readOnly) return;
 
+    const getCurrentViewport = (): ViewportState | null => {
+      try {
+        const state = excalidrawAPI.getAppState?.();
+        if (state && Number.isFinite(state.scrollX) && Number.isFinite(state.scrollY)) {
+          return { scrollX: state.scrollX, scrollY: state.scrollY, zoom: state.zoom };
+        }
+      } catch {}
+      return lastViewportRef.current || viewportCache.get(viewportKey) || getSessionViewport(viewportKey);
+    };
+
     // Defer a remote scene replacement until an active interaction finishes.
-    // This never changes Excalidraw's camera/viewport.
     try {
       const appState = excalidrawAPI.getAppState?.();
-      if (appState?.draggingElement || appState?.resizingElement || appState?.editingElement) {
+      const isInteracting = Boolean(
+        appState?.draggingElement ||
+        appState?.resizingElement ||
+        appState?.editingElement ||
+        appState?.cursorButton === "down"
+      );
+      if (isInteracting) {
         const timer = window.setTimeout(() => {
           if (appliedSceneKeyRef.current === externalSceneKey) return;
           if (isDirtyRef.current && isEditable && !readOnly) return;
 
           try {
             syncingSceneRef.current = true;
+            const currentVp = getCurrentViewport();
             excalidrawAPI.updateScene({
               elements: latestVisibleElementsRef.current,
+              appState: currentVp
+                ? {
+                    scrollX: currentVp.scrollX,
+                    scrollY: currentVp.scrollY,
+                    zoom: currentVp.zoom,
+                  }
+                : undefined,
               commitToHistory: false,
             });
             appliedSceneKeyRef.current = externalSceneKey;
@@ -363,8 +460,16 @@ export function ExcalidrawCanvas({
 
     try {
       syncingSceneRef.current = true;
+      const currentVp = getCurrentViewport();
       excalidrawAPI.updateScene({
         elements: latestVisibleElementsRef.current,
+        appState: currentVp
+          ? {
+              scrollX: currentVp.scrollX,
+              scrollY: currentVp.scrollY,
+              zoom: currentVp.zoom,
+            }
+          : undefined,
         commitToHistory: false,
       });
       appliedSceneKeyRef.current = externalSceneKey;
@@ -383,6 +488,7 @@ export function ExcalidrawCanvas({
     version,
     isEditable,
     readOnly,
+    viewportKey,
   ]);
 
   const center = useCallback(() => {
@@ -580,6 +686,7 @@ export function ExcalidrawCanvas({
           <Excalidraw
             excalidrawAPI={handleExcalidrawAPI}
             onChange={handleCanvasChange}
+            onScrollChange={handleScrollChange}
             viewModeEnabled={false}
             initialData={initialData}
             UIOptions={EXCALIDRAW_UI_OPTIONS}
@@ -616,4 +723,4 @@ export function ExcalidrawCanvas({
       </div>
     </div>
   );
-}
+});

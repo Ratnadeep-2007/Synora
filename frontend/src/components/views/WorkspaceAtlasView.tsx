@@ -13,7 +13,7 @@ interface WorkspaceAtlasViewProps {
   onChanged?: () => Promise<void> | void;
 }
 
-export function WorkspaceAtlasView({
+export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
   atlas,
   projects,
   activeProjectId,
@@ -21,6 +21,15 @@ export function WorkspaceAtlasView({
 }: WorkspaceAtlasViewProps) {
   const projectCount = atlas?.projects?.length || 0;
   const pending = atlas?.unknown_context?.pending || 0;
+
+  const initialAppState = useMemo(
+    () => ({
+      ...(atlas?.artifact?.app_state || {}),
+      viewBackgroundColor: "#f7f8f5",
+      theme: "light",
+    }),
+    [atlas?.artifact?.id]
+  );
 
   const activeName = useMemo(
     () => projects.find((p) => p.id === activeProjectId)?.name || null,
@@ -80,16 +89,12 @@ export function WorkspaceAtlasView({
         <div className="p-2">
           {atlas ? (
             <ExcalidrawCanvas
-              key={atlas.artifact.id || atlas.artifact.project_id || "workspace_atlas"}
+              key={atlas.artifact.project_id || "workspace_atlas"}
               projectId={atlas.artifact.project_id}
               projectName="Synora Project Atlas"
               version={atlas.artifact.version}
               initialElements={atlas.artifact.elements || []}
-              initialAppState={{
-                ...(atlas.artifact.app_state || {}),
-                viewBackgroundColor: "#f7f8f5",
-                theme: "light",
-              }}
+              initialAppState={initialAppState}
               compareMode={false}
               onSaveCanvas={undefined}
               onExportJson={undefined}
@@ -132,4 +137,4 @@ export function WorkspaceAtlasView({
       />
     </div>
   );
-}
+});

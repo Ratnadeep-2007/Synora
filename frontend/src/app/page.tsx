@@ -71,7 +71,20 @@ export default function Home() {
   const refreshAll = useCallback(async (preferredProjectId?: string | null) => {
     try {
       const projListData = await api.getProjects().catch(() => [] as Project[]);
-      setProjects(projListData);
+      setProjects((prev) => {
+        if (
+          prev.length === projListData.length &&
+          prev.every(
+            (p, idx) =>
+              p.id === projListData[idx]?.id &&
+              p.updated_at === projListData[idx]?.updated_at &&
+              p.name === projListData[idx]?.name
+          )
+        ) {
+          return prev;
+        }
+        return projListData;
+      });
 
       // The Atlas is the workspace-wide view. Do not refresh unrelated
       // project/meeting/agent endpoints while the user is watching the canvas.
@@ -229,6 +242,11 @@ export default function Home() {
     });
     setDrawerOpen(true);
   };
+
+  const handleAtlasChanged = useCallback(async () => {
+    await api.syncWorkspaceAtlas().catch(() => null);
+    await refreshAll();
+  }, [refreshAll]);
 
   const handleCreateProject = async (name: string, description?: string, sources?: string[]) => {
     try {
@@ -676,10 +694,7 @@ export default function Home() {
           atlas={atlasData}
           projects={projects}
           activeProjectId={currentProjectId}
-          onChanged={async () => {
-            await api.syncWorkspaceAtlas().catch(() => null);
-            await refreshAll();
-          }}
+          onChanged={handleAtlasChanged}
         />
       )}
 
