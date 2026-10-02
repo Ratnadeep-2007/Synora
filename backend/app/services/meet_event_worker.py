@@ -369,9 +369,14 @@ class MeetEventWorker:
             .all()
         )
         # The transcript is already complete and persisted before routing begins.
-        # These windows are a routing/timeline aid only; no per-window intelligence
-        # pass is performed here.
-        windows = self._segment_entries(entries)
+        # These windows are a routing aid only; no per-window intelligence pass is
+        # performed here. A trusted project mapping does not need segmentation at
+        # all, so the complete transcript routes as one context.
+        windows = (
+            [entries]
+            if trusted_project_id and entries
+            else self._segment_entries(entries)
+        )
         routed: Dict[str, int] = {}
         unknown_segments = 0
         events_created = 0
