@@ -17,10 +17,11 @@ Google Meet
 → PostgreSQL persistence (Meeting, Transcript, TranscriptEntry)
 → SourceEvent (transcript_ready + transcript entries)
 → Evidence
-→ Synesis Agent (project-scoped context)
-→ Candidate Knowledge → Validation → Proposal / State Change
-→ Project State (human approval for high-impact changes)
-→ Excalidraw living workspace (structured visual operations)
+→ Shared Context Intelligence
+→ Candidate Knowledge
+→ Project Memory (automatic, project-bounded)
+→ Meet Session Intelligence (speakers, timestamps, windows, actions)
+→ Excalidraw Project Atlas (visual projection)
 ```
 
 Rules:
