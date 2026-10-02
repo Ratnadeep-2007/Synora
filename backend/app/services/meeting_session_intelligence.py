@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import re
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from sqlalchemy.orm import Session, joinedload
 
