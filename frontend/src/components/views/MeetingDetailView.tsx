@@ -64,26 +64,46 @@ export function MeetingDetailView({
       {/* Meet-only session intelligence: a projection over the same shared evidence/memory. */}
       {meetingData?.session_intelligence && (
         <section className="p-5 rounded-xl bg-surface border border-border shadow-xs space-y-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-wider text-text-main">
                 Meeting Session Intelligence
               </h3>
               <p className="text-xs text-text-muted mt-1">
-                Conversation structure from Meet; project knowledge still lives in shared Synora memory.
+                Built from the complete persisted transcript. Routing windows are only for project routing and timeline navigation; intelligence uses the full project-specific transcript context.
               </p>
             </div>
-            <span className="text-[10px] font-mono px-2 py-1 rounded bg-primary-soft text-primary border border-primary/20">
-              {meetingData.session_intelligence.segment_count || 0} segments
+            <span className="shrink-0 text-[10px] font-mono px-2 py-1 rounded bg-primary-soft text-primary border border-primary/20">
+              Completed sync
             </span>
           </div>
 
+          {(() => {
+            const sync = meetingData.session_intelligence.source_sync || {};
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="rounded-lg border border-border bg-canvas px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Transcript source</div>
+                  <div className="text-xs font-medium text-text-main mt-1">Complete persisted transcript</div>
+                </div>
+                <div className="rounded-lg border border-border bg-canvas px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Google API after sync</div>
+                  <div className="text-xs font-medium text-text-main mt-1">{sync.google_api_calls_after_persistence ?? 0} calls</div>
+                </div>
+                <div className="rounded-lg border border-border bg-canvas px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Sync mode</div>
+                  <div className="text-xs font-medium text-text-main mt-1">One completed-meeting sync</div>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
+              { label: "Transcript turns", value: meetingData.session_intelligence.transcript_entry_count || 0, icon: MessageSquareText },
+              { label: "Routing windows", value: meetingData.session_intelligence.routing_window_count ?? meetingData.session_intelligence.segment_count ?? 0, icon: Clock },
               { label: "Participants", value: meetingData.session_intelligence.participant_count || 0, icon: Users },
-              { label: "Decisions", value: (meetingData.session_intelligence.decisions || []).length, icon: MessageSquareText },
               { label: "Action items", value: (meetingData.session_intelligence.action_items || []).length, icon: ListChecks },
-              { label: "Open questions", value: (meetingData.session_intelligence.open_questions || []).length, icon: MessageSquareText },
             ].map(({ label, value, icon: Icon }) => (
               <div key={label} className="rounded-lg border border-border bg-canvas p-3">
                 <div className="flex items-center gap-2 text-text-muted">
@@ -96,9 +116,12 @@ export function MeetingDetailView({
           </div>
 
           <div className="rounded-lg border border-border bg-canvas p-4 space-y-3">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Conversation timeline</div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Conversation timeline</div>
+              <div className="text-[10px] text-text-muted mt-1">Routing/timeline windows only — no separate AI pass per window.</div>
+            </div>
             {(meetingData.session_intelligence.segments || []).length === 0 ? (
-              <p className="text-xs text-text-muted">No bounded transcript segments available.</p>
+              <p className="text-xs text-text-muted">No routing windows available for this completed transcript.</p>
             ) : (
               <div className="flex gap-3 overflow-x-auto pb-1">
                 {meetingData.session_intelligence.segments.slice(0, 10).map((segment: any) => (
@@ -138,6 +161,9 @@ export function MeetingDetailView({
                   <div key={item.id} className="rounded-md border border-border bg-surface p-3 space-y-1">
                     <div className="text-xs font-semibold text-text-main">{item.title}</div>
                     <div className="text-[11px] text-text-muted">{item.content}</div>
+                    <div className="text-[10px] font-mono text-text-muted">
+                      Evidence: {(item.evidence_ids || []).length} persisted reference{(item.evidence_ids || []).length === 1 ? "" : "s"}
+                    </div>
                     <div className="flex flex-wrap gap-2 text-[10px] font-mono text-text-muted">
                       {item.owner_hints?.[0] && <span>Owner: {item.owner_hints[0]}</span>}
                       {item.due_hint && <span>Due: {item.due_hint}</span>}
