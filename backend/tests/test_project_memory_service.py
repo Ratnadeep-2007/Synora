@@ -65,3 +65,60 @@ def test_project_memory_is_project_bounded_and_automatic(db_session):
     assert decisions[0]["evidence_ids"] == ["ev_mem_a"]
     assert candidate.status == "approved"
     assert wrong_project.status == "candidate"
+
+
+def test_existing_concept_is_updated_in_place(db_session):
+    state = ProjectState(
+        project_id="proj_memory_update",
+        current_version=1,
+        title="Memory Update",
+        vision="",
+        requirements_json="[]",
+        architecture_json="[]",
+        decisions_json=json.dumps([
+            {
+                "id": "dec_stable_1",
+                "title": "Authentication",
+                "text": "Use JWT",
+                "source": "whatsapp",
+                "evidence_ids": ["ev_old"],
+            }
+        ]),
+        constraints_json="[]",
+        assumptions_json="[]",
+        open_questions_json="[]",
+    )
+    db_session.add(state)
+    db_session.flush()
+
+    candidate = CandidateKnowledge(
+        id="cand_update_1",
+        project_id="proj_memory_update",
+        category="decision_candidate",
+        classification="Decision",
+        title="Authentication",
+        content="Switch to Firebase Auth.",
+        confidence=0.95,
+        evidence_ids_json=json.dumps(["ev_new"]),
+        status="candidate",
+    )
+    db_session.add(candidate)
+    db_session.commit()
+
+    result = ProjectMemoryService().apply_candidates(
+        project_id="proj_memory_update",
+        candidates=[candidate],
+        db=db_session,
+        source="google_meet",
+        actor_id="synora_agent",
+    )
+
+    db_session.refresh(state)
+    decisions = json.loads(state.decisions_json)
+
+    assert result["applied"] == 1
+    assert len(decisions) == 1
+    assert decisions[0]["id"] == "dec_stable_1"
+    assert decisions[0]["title"] == "Authentication"
+    assert decisions[0]["text"] == "Switch to Firebase Auth."
+    assert decisions[0]["evidence_ids"] == ["ev_old", "ev_new"]
