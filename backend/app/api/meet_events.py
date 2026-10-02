@@ -316,7 +316,9 @@ async def process_meet_event(
     description=(
         "Recovery fallback for outages, Pub/Sub interruptions, and failed event "
         "processing. Reconciles transcript availability through the Meet REST "
-        "API. Scoped to recorded-but-unprocessed events plus bounded discovery."
+        "API. Scoped to recorded-but-unprocessed events plus bounded discovery. "
+        "After transcript persistence, the normal shared pipeline reads Synora DB "
+        "records only; it does not call the Meet API again."
     ),
 )
 async def reconcile_meet_transcripts(
@@ -339,7 +341,19 @@ async def reconcile_meet_transcripts(
     processed = 0
     for record in pending:
         try:
-            meet_event_worker.process_event_record(event_record_id=record.id, db=db)
+            result = meet_event_worker.process_event_record(event_record_id=record.id, db=db)
+            if result.get("status") == "processed":
+                from app.services.pipeline_coordinator import PipelineCoordinator
+
+                PipelineCoordinator().process_meeting_with_context(
+                    meeting_id=result["meeting_id"],
+                    project_id=result["project_id"],
+                    db=db,
+                    actor_id=f"meet_reconcile:{record.id}",
+                    workspace_id="ws_default",
+                    tenant_id="default_tenant",
+                    correlation_id=record.id,
+                )
             processed += 1
         except Exception as exc:
             logger.warning("meet_reconcile_event_failed: event=%s error=%s", record.id, exc)
