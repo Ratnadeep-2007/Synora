@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -64,6 +64,8 @@ class MeetingRead(BaseModel):
 class MeetingDetailRead(MeetingRead):
     participants: List[ParticipantRead] = []
     transcripts: List[TranscriptRead] = []
+    # Meet-only session projection over shared Evidence/Candidate/Project Memory.
+    session_intelligence: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
