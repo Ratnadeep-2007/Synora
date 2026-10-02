@@ -130,6 +130,35 @@ Meetings are not treated as monolithic single-project events. A multi-turn Googl
 
 Meeting evidence is linked by `segment_id` and provenance timestamps back to the provider conference.
 
+### Meet Session Intelligence (source-specific projection)
+
+Meet is intentionally specialized only after it enters the common evidence pipeline. The
+session layer adds conversational structure that is useful for a completed meeting:
+
+```text
+Complete transcript
+      ↓
+45s / 12-entry bounded windows
+      ↓
+Speaker order + timestamps + entry/evidence linkage
+      ↓
+Shared Candidate Knowledge
+      ↓
+Session projection
+  ├─ topics (from extracted knowledge)
+  ├─ decisions / requirements / questions
+  ├─ action items + owner/due hints
+  └─ per-project memory version delta
+      ↓
+Meeting.metadata_json.session_intelligence
+```
+
+This projection is not a separate memory system. It reads the same Evidence and
+CandidateKnowledge records and the same Project Memory result used by other sources.
+It is exposed through `GET /meetings/{meeting_id}/intelligence` and included in meeting
+detail responses for the UI. The Visual Project Atlas continues to project only shared
+project memory, not a standalone meeting knowledge base.
+
 ## Visual-First Excalidraw & VisualPlan Architecture
 
 Excalidraw is the living visual workspace and a primary source of visual evidence.
