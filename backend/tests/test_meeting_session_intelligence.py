@@ -162,7 +162,12 @@ def test_meeting_session_intelligence_persists_session_projection(db_session, te
     db_session.refresh(meeting)
     metadata = json.loads(meeting.metadata_json or "{}")
     assert metadata["session_intelligence"]["meeting_id"] == meeting.id
-    assert metadata["session_intelligence"]["version"] == "v1"
+    assert metadata["session_intelligence"]["version"] == "v2"
+    assert metadata["session_intelligence"]["transcript_entry_count"] == 3
+    assert metadata["session_intelligence"]["routing_window_count"] == 2
+    assert metadata["session_intelligence"]["source_sync"]["retrieval_mode"] == "completed_meeting_once"
+    assert metadata["session_intelligence"]["source_sync"]["intelligence_input"] == "full_persisted_transcript"
+    assert metadata["session_intelligence"]["source_sync"]["google_api_calls_after_persistence"] == 0
 
 
 def test_meet_worker_uses_45_second_session_windows():
@@ -189,3 +194,144 @@ def test_meet_worker_uses_45_second_session_windows():
     assert len(windows) == 2
     assert len(windows[0]) == 2
     assert len(windows[1]) == 1
+
+
+
+def test_meeting_intelligence_keeps_full_context_across_routing_window_boundary(
+    db_session, test_user
+):
+    """A >45s gap creates a timeline window, not a separate intelligence pass."""
+    meeting = Meeting(
+        id="mtg_session_full_context",
+        user_id=test_user.id,
+        project_id="proj_full_context",
+        provider="google",
+        provider_conference_id="conferenceRecords/full_context",
+        title="Full Context Sync",
+        start_time=datetime(2026, 10, 2, 11, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 10, 2, 11, 8, tzinfo=timezone.utc),
+        status="ENDED",
+    )
+    participant = Participant(
+        id="part_full_context",
+        meeting_id=meeting.id,
+        provider_participant_id="speaker",
+        display_name="Speaker",
+    )
+    transcript = Transcript(
+        id="trsc_full_context",
+        meeting_id=meeting.id,
+        provider="google",
+        provider_transcript_id="google_full_context",
+        state="ENDED",
+        start_time=meeting.start_time,
+        end_time=meeting.end_time,
+    )
+    db_session.add_all([meeting, participant, transcript])
+    db_session.flush()
+
+    base = meeting.start_time
+    entries = [
+        TranscriptEntry(
+            id="tent_fc_1",
+            transcript_id=transcript.id,
+            provider="google",
+            provider_entry_id="entry_fc_1",
+            participant_id=participant.id,
+            text="We are discussing cache invalidation for the API.",
+            start_time=base,
+            end_time=base + timedelta(seconds=5),
+        ),
+        TranscriptEntry(
+            id="tent_fc_2",
+            transcript_id=transcript.id,
+            provider="google",
+            provider_entry_id="entry_fc_2",
+            participant_id=participant.id,
+            text="We decided Redis should hold the session cache.",
+            start_time=base + timedelta(seconds=60),
+            end_time=base + timedelta(seconds=65),
+        ),
+        TranscriptEntry(
+            id="tent_fc_3",
+            transcript_id=transcript.id,
+            provider="google",
+            provider_entry_id="entry_fc_3",
+            participant_id=participant.id,
+            text="Alice will document the invalidation flow by Friday.",
+            start_time=base + timedelta(seconds=70),
+            end_time=base + timedelta(seconds=75),
+        ),
+    ]
+    db_session.add_all(entries)
+    db_session.flush()
+
+    evidence = []
+    for idx, entry in enumerate(entries, start=1):
+        event = SourceEvent(
+            event_id=f"evt_fc_{idx}",
+            tenant_id="tenant_default",
+            project_id=meeting.project_id,
+            source="google_meet",
+            source_event_id=entry.provider_entry_id,
+            event_type="transcript_entry",
+            actor_id="Alice",
+            occurred_at=entry.start_time,
+            payload_json=json.dumps({"text": entry.text}),
+            status="received",
+        )
+        db_session.add(event)
+        db_session.flush()
+        evidence.append(
+            Evidence(
+                id=f"ev_fc_{idx}",
+                project_id=meeting.project_id,
+                source="google_meet",
+                source_event_id=event.event_id,
+                meeting_id=meeting.id,
+                transcript_id=transcript.id,
+                transcript_entry_id=entry.id,
+                actor_id="Alice",
+                occurred_at=entry.start_time,
+                content=entry.text,
+            )
+        )
+    db_session.add_all(evidence)
+    db_session.flush()
+
+    decision = CandidateKnowledge(
+        id="cand_fc_decision",
+        project_id=meeting.project_id,
+        meeting_id=meeting.id,
+        category="decision_candidate",
+        classification="Decision",
+        title="Use Redis for session cache",
+        content=(
+            "The team discussed invalidation first, then decided to use Redis "
+            "for the session cache after the 60-second conversation gap."
+        ),
+        confidence=0.96,
+        evidence_ids_json=json.dumps(["ev_fc_2", "ev_fc_3"]),
+        status="approved",
+    )
+    db_session.add(decision)
+    db_session.commit()
+
+    payload = MeetingSessionIntelligenceService().build_session_intelligence(
+        meeting_id=meeting.id,
+        db=db_session,
+        candidates=[decision],
+        memory_results={
+            meeting.project_id: {
+                "state_version_before": 4,
+                "state_version_after": 5,
+                "applied": 1,
+                "skipped": 0,
+            }
+        },
+    )
+
+    assert payload["routing_window_count"] == 2
+    assert payload["decisions"][0]["title"] == "Use Redis for session cache"
+    assert payload["decisions"][0]["evidence_ids"] == ["ev_fc_2", "ev_fc_3"]
+    assert payload["source_sync"]["google_api_calls_after_persistence"] == 0
