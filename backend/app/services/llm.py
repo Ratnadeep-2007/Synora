@@ -69,14 +69,25 @@ def normalize_extraction_payload(parsed: Any) -> List[CandidateItemDTO]:
         if not isinstance(entry, dict):
             return None
 
-        title = _first_present(entry, ("title", "text", "name", "summary"))
-        content = _first_present(entry, ("content", "description", "detail", "text"))
+        title = _first_present(entry, ("title", "statement", "text", "name", "summary", "claim", "knowledge", "insight"))
+        content = _first_present(entry, ("content", "statement", "description", "detail", "text", "knowledge", "insight"))
         if title is None and content is None:
             return None
 
-        category = forced_category or _first_present(entry, ("category", "type", "kind")) or "proposal"
+        category = (
+            forced_category
+            or _first_present(entry, ("category", "type", "kind"))
+            # Some responses classify without naming a category at all.
+            or (lambda c: c if c in _CLASSIFICATION_BY_CATEGORY else None)(
+                _first_present(entry, ("classification",))
+            )
+            or "proposal"
+        )
 
-        raw_ids = _first_present(entry, ("evidence_ids", "evidence_id", "sources", "source", "id", "refs"))
+        raw_ids = _first_present(
+            entry,
+            ("evidence_ids", "evidence_id", "evidence", "sources", "source", "source_id", "id", "refs"),
+        )
         if isinstance(raw_ids, str):
             evidence_ids = [raw_ids]
         elif isinstance(raw_ids, list):
@@ -84,12 +95,18 @@ def normalize_extraction_payload(parsed: Any) -> List[CandidateItemDTO]:
         else:
             evidence_ids = []
 
-        classification = _first_present(entry, ("classification",)) or _CLASSIFICATION_BY_CATEGORY.get(
-            category, ClassificationEnum.PROPOSAL
-        )
-        try:
-            classification = ClassificationEnum(classification)
-        except ValueError:
+        # Prefer an explicit classification, but accept the category-key
+        # spelling too ("requirement_candidate" is a category, not an enum).
+        raw_classification = _first_present(entry, ("classification", "class", "label"))
+        classification = None
+        if raw_classification:
+            try:
+                classification = ClassificationEnum(raw_classification)
+            except ValueError:
+                classification = _CLASSIFICATION_BY_CATEGORY.get(
+                    str(raw_classification), None
+                ) or _CLASSIFICATION_BY_CATEGORY.get(category)
+        if classification is None:
             classification = _CLASSIFICATION_BY_CATEGORY.get(category, ClassificationEnum.PROPOSAL)
 
         try:
@@ -106,12 +123,20 @@ def normalize_extraction_payload(parsed: Any) -> List[CandidateItemDTO]:
             evidence_ids=evidence_ids,
         )
 
-    # 1. Canonical envelope, or a bare list.
-    if isinstance(parsed, dict) and "items" in parsed:
-        raw_items = parsed.get("items") or []
-        if not isinstance(raw_items, list):
-            return []
-        return [dto for dto in (build(it) for it in raw_items) if dto]
+    # 1. Find the list of candidate entries.
+    #
+    #    The envelope key is not dependable. Given identical instructions,
+    #    openai/gpt-oss-120b has been observed returning "items",
+    #    "knowledge_items", "candidates", "extractions", and a category-keyed
+    #    object, plus a bare single object. Hard-coding a list of known keys
+    #    just moves the failure, so instead accept ANY top-level value that is
+    #    a list of dicts carrying recognisable candidate fields.
+    if isinstance(parsed, dict):
+        for value in parsed.values():
+            if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+                items = [dto for dto in (build(it) for it in value) if dto]
+                if items:
+                    return items
 
     if isinstance(parsed, list):
         return [dto for dto in (build(it) for it in parsed) if dto]
