@@ -6,5 +6,9 @@ sqlalchemy>=2.0.0
 cryptography>=42.0.0
 httpx>=0.27.0
 python-dotenv>=1.0.0
+# Required by FastAPI for multipart form endpoints (e.g. the WhatsApp .zip
+# export upload at POST /connectors/whatsapp/import-export). Without it the
+# whole app fails to import, not just that one route.
+python-multipart>=0.0.9
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
