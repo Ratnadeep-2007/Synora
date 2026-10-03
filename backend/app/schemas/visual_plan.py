@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -73,7 +73,11 @@ class VisualPlan(BaseModel):
     add: List[str] = []
     change: List[str] = []
     remove: List[str] = []
-    notes: List[str] = []
+    # A note is either a plain string or a structured directive carrying
+    # {"text", "kind", "order", "evidence_ids"}. Structured notes let the
+    # compiler order them deterministically and refuse to render a note that
+    # declares evidence but supplies none.
+    notes: List[Union[str, Dict[str, Any]]] = []
     model: str = ""
     prompt_version: str = ""
 

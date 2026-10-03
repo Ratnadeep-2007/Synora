@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -192,10 +193,71 @@ class ExcalidrawCompiler:
                 elements.append(self._edge_label(rel, arrow, index))
 
         # First-class architectural sticky notes from plan.notes
-        if plan.notes:
+        #
+        # Notes are grounded and ordered. An entry may be a plain string or a
+        # dict carrying {"text", "kind", "order", "evidence_ids"}. Entries with
+        # a declared-but-empty evidence_ids list are dropped, because a note
+        # that cannot cite a source is an invention rather than a directive.
+        # Remaining notes are sorted by kind rank then explicit order, so the
+        # reader gets a stable sequence instead of whatever order the model
+        # happened to return.
+        NOTE_KIND_RANK = {
+            "decision": 0,
+            "requirement": 1,
+            "directive": 2,
+            "action": 3,
+            "risk": 4,
+            "assumption": 5,
+            "note": 6,
+        }
+        NOTE_KIND_ICON = {
+            "decision": "✅",
+            "requirement": "📋",
+            "directive": "⚡",
+            "action": "⚡",
+            "risk": "⚠️",
+            "assumption": "💡",
+            "note": "📌",
+        }
+
+        def _normalise_note(raw: Any) -> Optional[Dict[str, Any]]:
+            if isinstance(raw, dict):
+                text = str(raw.get("text") or raw.get("content") or "").strip()
+                kind = str(raw.get("kind") or "note").strip().lower()
+                evidence = raw.get("evidence_ids")
+                # Declared evidence but empty => ungrounded, refuse to render.
+                if evidence is not None and not evidence:
+                    logger.info("visual_plan_note_dropped_ungrounded: %s", text[:60])
+                    return None
+                try:
+                    order = int(raw.get("order", 0))
+                except (TypeError, ValueError):
+                    order = 0
+                if not text:
+                    return None
+                return {"text": text, "kind": kind, "order": order}
+            text = str(raw or "").strip()
+            if not text:
+                return None
+            return {"text": text, "kind": "note", "order": 0}
+
+        grounded_notes: List[Dict[str, Any]] = []
+        for raw in plan.notes or []:
+            normalised = _normalise_note(raw)
+            if normalised:
+                grounded_notes.append(normalised)
+        grounded_notes.sort(
+            key=lambda n: (NOTE_KIND_RANK.get(n["kind"], 9), n["order"], n["text"])
+        )
+
+        if grounded_notes:
             max_y = max(pos[1] for pos in positions.values())
             notes_hdr_y = max_y + NODE_HEIGHT + 45
-            header_id = f"lbl_notes_hdr_{abs(hash(plan.title)) % 100000}"
+            # Stable across process restarts. The builtin hash() is salted per
+            # interpreter (PYTHONHASHSEED), which made this id change on every
+            # restart and showed up as a spurious remove+add in compare mode.
+            title_digest = hashlib.sha1((plan.title or "plan").encode("utf-8")).hexdigest()[:12]
+            header_id = f"lbl_notes_hdr_{title_digest}"
             elements.append(
                 {
                     "id": header_id,
@@ -234,15 +296,16 @@ class ExcalidrawCompiler:
             NOTE_GAP_Y = 25
             NOTES_PER_ROW = 3
 
-            for n_idx, note_text in enumerate(plan.notes[:6]):
+            for n_idx, note in enumerate(grounded_notes[:6]):
                 col = n_idx % NOTES_PER_ROW
                 row = n_idx // NOTES_PER_ROW
                 nx = BASE_X + col * (NOTE_W + NOTE_GAP_X)
                 ny = cards_start_y + row * (NOTE_H + NOTE_GAP_Y)
 
-                clean_text = str(note_text).strip()
+                icon = NOTE_KIND_ICON.get(note["kind"], "📌")
+                clean_text = note["text"]
                 if not any(clean_text.startswith(p) for p in ("📌", "💡", "⚡", "📋", "⚠️", "✅")):
-                    clean_text = f"📌 {clean_text}"
+                    clean_text = f"{icon} {clean_text}"
 
                 card_id = f"sticky_note_{n_idx}"
                 text_id = f"sticky_text_{n_idx}"

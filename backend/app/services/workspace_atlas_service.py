@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1239,64 +1240,112 @@ class WorkspaceAtlasService:
         clean = " ".join((content or "").replace("\n", " ").split())
         return clean[:180] or "No additional explanation recorded."
 
+    @staticmethod
+    def _distinct_clauses(title: str, content: str) -> List[str]:
+        """
+        Split a knowledge record into clauses that are genuinely distinct from
+        one another and from the title.
+
+        A single-sentence candidate (e.g. "Add an agentic layer for NLP
+        embedding.") carries no situation / behaviour / validation detail. The
+        previous renderer filled every stage from the same string, so BEHAVIOUR
+        simply repeated REQUIREMENT. Returning only clauses that differ from the
+        title lets the caller mark unsupported stages explicitly instead of
+        echoing the requirement back at the reader.
+        """
+        def norm(value: Any) -> str:
+            return " ".join(str(value or "").replace("\n", " ").split()).strip().lower()
+
+        title_norm = norm(title)
+        raw = " ".join(str(content or "").replace("\n", " ").split())
+        if not raw:
+            return []
+
+        parts = [p.strip() for p in re.split(r"(?<=[.;!?])\s+|,\s+(?=[a-z])", raw) if p.strip()]
+        if len(parts) < 2:
+            parts = [raw]
+
+        seen = {title_norm}
+        clauses: List[str] = []
+        for part in parts:
+            key = norm(part)
+            # Skip anything that only restates the title or an earlier clause.
+            if not key or key in seen:
+                continue
+            if key.startswith(title_norm) or title_norm.startswith(key):
+                continue
+            seen.add(key)
+            clauses.append(part[:34])
+        return clauses
+
     def _mini_visual_stages(
         self,
         category: str,
         title: str,
         content: str,
     ) -> List[Dict[str, str]]:
-        """Turn one knowledge record into a compact visual narrative."""
+        """
+        Turn one knowledge record into a compact visual narrative.
+
+        Each stage is filled only from evidence that actually supports it.
+        Stages with no supporting clause render as "Not specified" rather than
+        repeating the requirement or inventing acceptance criteria.
+        """
         key = category.upper()
         anchor = (title or key.title()).strip()[:18] or key.title()
-        source_hint = " ".join((content or "").replace("\n", " ").split())[:34] or "Recorded context"
+        clauses = self._distinct_clauses(title, content)
+        missing = "Not specified"
+
+        def take(index: int) -> str:
+            return clauses[index] if index < len(clauses) else missing
 
         if key == "DECISION":
             return [
-                {"label": "SITUATION", "detail": "Trigger / context", "shape": "ellipse"},
+                {"label": "SITUATION", "detail": take(0), "shape": "ellipse"},
                 {"label": "CHOICE", "detail": anchor, "shape": "diamond"},
-                {"label": "REASON", "detail": source_hint, "shape": "rectangle"},
-                {"label": "CONSEQUENCE", "detail": "System impact", "shape": "ellipse"},
+                {"label": "REASON", "detail": take(1), "shape": "rectangle"},
+                {"label": "CONSEQUENCE", "detail": take(2), "shape": "ellipse"},
             ]
         if key == "REQUIREMENT":
             return [
-                {"label": "NEED", "detail": "User / business", "shape": "ellipse"},
+                {"label": "NEED", "detail": take(0), "shape": "ellipse"},
                 {"label": "REQUIREMENT", "detail": anchor, "shape": "rectangle"},
-                {"label": "BEHAVIOUR", "detail": source_hint, "shape": "rectangle"},
-                {"label": "VALIDATE", "detail": "Acceptance", "shape": "ellipse"},
+                {"label": "BEHAVIOUR", "detail": take(1), "shape": "rectangle"},
+                {"label": "VALIDATE", "detail": take(2), "shape": "ellipse"},
             ]
         if key == "ACTION":
             return [
-                {"label": "TRIGGER", "detail": "Starting signal", "shape": "ellipse"},
+                {"label": "TRIGGER", "detail": take(0), "shape": "ellipse"},
                 {"label": "ACTION", "detail": anchor, "shape": "rectangle"},
-                {"label": "EVIDENCE", "detail": source_hint, "shape": "diamond"},
-                {"label": "OUTCOME", "detail": "Result", "shape": "ellipse"},
+                {"label": "EVIDENCE", "detail": take(1), "shape": "diamond"},
+                {"label": "OUTCOME", "detail": take(2), "shape": "ellipse"},
             ]
         if key == "OPEN QUESTION":
             return [
-                {"label": "KNOWN", "detail": "Current evidence", "shape": "ellipse"},
+                {"label": "KNOWN", "detail": take(0), "shape": "ellipse"},
                 {"label": "GAP", "detail": anchor, "shape": "diamond"},
-                {"label": "NEED", "detail": source_hint, "shape": "rectangle"},
-                {"label": "RESOLVE", "detail": "Answer / decision", "shape": "ellipse"},
+                {"label": "NEED", "detail": take(1), "shape": "rectangle"},
+                {"label": "RESOLVE", "detail": take(2), "shape": "ellipse"},
             ]
         if key == "CONSTRAINT":
             return [
-                {"label": "BOUNDARY", "detail": "What cannot move", "shape": "ellipse"},
+                {"label": "BOUNDARY", "detail": take(0), "shape": "ellipse"},
                 {"label": "LIMIT", "detail": anchor, "shape": "diamond"},
-                {"label": "DESIGN", "detail": source_hint, "shape": "rectangle"},
-                {"label": "IMPACT", "detail": "Affected behaviour", "shape": "ellipse"},
+                {"label": "DESIGN", "detail": take(1), "shape": "rectangle"},
+                {"label": "IMPACT", "detail": take(2), "shape": "ellipse"},
             ]
         if key == "ASSUMPTION":
             return [
-                {"label": "PREMISE", "detail": "What we believe", "shape": "ellipse"},
+                {"label": "PREMISE", "detail": take(0), "shape": "ellipse"},
                 {"label": "ASSUME", "detail": anchor, "shape": "diamond"},
-                {"label": "DEPEND", "detail": source_hint, "shape": "rectangle"},
-                {"label": "VERIFY", "detail": "Evidence to confirm", "shape": "ellipse"},
+                {"label": "DEPEND", "detail": take(1), "shape": "rectangle"},
+                {"label": "VERIFY", "detail": take(2), "shape": "ellipse"},
             ]
         return [
-            {"label": "CONTEXT", "detail": "Recorded evidence", "shape": "ellipse"},
+            {"label": "CONTEXT", "detail": take(0), "shape": "ellipse"},
             {"label": "KNOWLEDGE", "detail": anchor, "shape": "rectangle"},
-            {"label": "INTERPRET", "detail": source_hint, "shape": "rectangle"},
-            {"label": "OUTCOME", "detail": "Next understanding", "shape": "ellipse"},
+            {"label": "INTERPRET", "detail": take(1), "shape": "rectangle"},
+            {"label": "OUTCOME", "detail": take(2), "shape": "ellipse"},
         ]
 
     def _place_mini_visual(
