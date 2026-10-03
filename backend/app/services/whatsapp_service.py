@@ -390,8 +390,15 @@ class WhatsAppIntelligenceService:
                 visual_updates += 1
                 proj = db.query(Project).filter(Project.id == project_id).first()
                 proj_name = proj.name if proj else project_id
-                logger.info("🎯 [WhatsApp Batch %s] Living visual architecture updated for Project: %s (%s)", batch_id, proj_name, project_id)
-                print(f"🎯 [WhatsApp Batch] Living visual architecture updated for Project: {proj_name} ({project_id})")
+                # Log only. print() raises UnicodeEncodeError on Windows consoles
+                # using cp1252, which was being caught as a visual-update failure
+                # even though the revision had already been committed.
+                logger.info(
+                    "[WhatsApp Batch %s] Living visual architecture updated for Project: %s (%s)",
+                    batch_id,
+                    proj_name,
+                    project_id,
+                )
             except Exception as exc:
                 logger.exception(
                     "whatsapp_batch_visual_failed batch=%s project=%s",

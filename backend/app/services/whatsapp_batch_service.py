@@ -212,18 +212,18 @@ class WhatsAppBatchService:
                 processed += 1
                 summaries.append(result)
 
-                # Explicitly log and report which projects were mapped and updated
+                # Explicitly log and report which projects were mapped and updated.
+                # Logging only: print() raises UnicodeEncodeError on Windows consoles
+                # using cp1252 for the emoji below, which would abort the batch and
+                # mark successfully-processed work as failed.
                 for r in result.get("results", []):
                     matched = r.get("matched_project")
                     if matched:
                         logger.info(
-                            "🎯 [WhatsApp Batch %s] Message mapped to Project: %s (%s)",
+                            "[WhatsApp Batch %s] Message mapped to Project: %s (%s)",
                             batch.id,
                             matched.get("name"),
                             matched.get("id"),
-                        )
-                        print(
-                            f"🎯 [WhatsApp Batch] Project Mapped: {matched.get('name')} ({matched.get('id')})"
                         )
 
                 if result.get("visual_updates", 0) > 0:
@@ -231,13 +231,10 @@ class WhatsAppBatchService:
                         matched = r.get("matched_project")
                         if matched:
                             logger.info(
-                                "🎨 [WhatsApp Batch %s] Excalidraw updated for Project: %s (%s)",
+                                "[WhatsApp Batch %s] Excalidraw updated for Project: %s (%s)",
                                 batch.id,
                                 matched.get("name"),
                                 matched.get("id"),
-                            )
-                            print(
-                                f"🎨 [WhatsApp Batch] Excalidraw updated for Project: {matched.get('name')} ({matched.get('id')})"
                             )
             except Exception as exc:
                 failed += 1

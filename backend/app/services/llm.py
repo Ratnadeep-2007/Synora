@@ -12,6 +12,131 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
+# Category labels an LLM may use as a top-level key instead of a single
+# "items" array. Ordered by specificity so "requirement_candidate" wins over
+# a bare "requirement" match.
+_CATEGORY_ALIASES = (
+    ("requirement_candidate", "requirement_candidate"),
+    ("decision_candidate", "decision_candidate"),
+    ("action_item", "action_item"),
+    ("requirements", "requirement_candidate"),
+    ("decisions", "decision_candidate"),
+    ("proposals", "proposal"),
+    ("questions", "question"),
+    ("assumptions", "assumption"),
+    ("actions", "action_item"),
+    ("risks", "risk"),
+    ("constraints", "constraint"),
+)
+
+_CLASSIFICATION_BY_CATEGORY = {
+    "requirement_candidate": ClassificationEnum.REQUIREMENT,
+    "decision_candidate": ClassificationEnum.DECISION,
+    "proposal": ClassificationEnum.PROPOSAL,
+    "question": ClassificationEnum.QUESTION,
+    "assumption": ClassificationEnum.ASSUMPTION,
+    "action_item": ClassificationEnum.ACTION_ITEM,
+}
+
+
+def _first_present(mapping: Dict[str, Any], keys: tuple) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def normalize_extraction_payload(parsed: Any) -> List[CandidateItemDTO]:
+    """
+    Coerce whatever an LLM returned into a flat list of CandidateItemDTO.
+
+    Providers disagree on shape even when the extraction itself is correct:
+    some honour the documented ``{"items": [...]}`` envelope, while others
+    (notably ``openai/gpt-oss-120b`` on Groq) return a top-level object keyed
+    by category, e.g. ``{"requirements": [{"text": ..., "source": ...}]}``.
+    Reading only ``parsed["items"]`` silently discarded every item in the
+    second case, which surfaced as "0 candidates extracted" despite the model
+    having identified real requirements and decisions.
+
+    Handles, in order: the canonical ``items`` array; a bare list; a
+    category-keyed object; and a single object. Within each entry, the common
+    field spellings (``text``/``title``, ``source``/``evidence_ids``) are
+    normalised, and evidence IDs are preserved because the persistence layer
+    rejects any candidate that cannot cite its provenance.
+    """
+    def build(entry: Dict[str, Any], forced_category: Optional[str] = None) -> Optional[CandidateItemDTO]:
+        if not isinstance(entry, dict):
+            return None
+
+        title = _first_present(entry, ("title", "text", "name", "summary"))
+        content = _first_present(entry, ("content", "description", "detail", "text"))
+        if title is None and content is None:
+            return None
+
+        category = forced_category or _first_present(entry, ("category", "type", "kind")) or "proposal"
+
+        raw_ids = _first_present(entry, ("evidence_ids", "evidence_id", "sources", "source", "id", "refs"))
+        if isinstance(raw_ids, str):
+            evidence_ids = [raw_ids]
+        elif isinstance(raw_ids, list):
+            evidence_ids = [str(x) for x in raw_ids if x not in (None, "")]
+        else:
+            evidence_ids = []
+
+        classification = _first_present(entry, ("classification",)) or _CLASSIFICATION_BY_CATEGORY.get(
+            category, ClassificationEnum.PROPOSAL
+        )
+        try:
+            classification = ClassificationEnum(classification)
+        except ValueError:
+            classification = _CLASSIFICATION_BY_CATEGORY.get(category, ClassificationEnum.PROPOSAL)
+
+        try:
+            confidence = float(entry.get("confidence", 0.9))
+        except (TypeError, ValueError):
+            confidence = 0.9
+
+        return CandidateItemDTO(
+            category=category,
+            classification=classification,
+            title=str(title if title is not None else content)[:255],
+            content=str(content if content is not None else title),
+            confidence=confidence,
+            evidence_ids=evidence_ids,
+        )
+
+    # 1. Canonical envelope, or a bare list.
+    if isinstance(parsed, dict) and "items" in parsed:
+        raw_items = parsed.get("items") or []
+        if not isinstance(raw_items, list):
+            return []
+        return [dto for dto in (build(it) for it in raw_items) if dto]
+
+    if isinstance(parsed, list):
+        return [dto for dto in (build(it) for it in parsed) if dto]
+
+    if not isinstance(parsed, dict):
+        return []
+
+    # 2. A single object that already looks like one candidate.
+    if any(k in parsed for k in ("title", "text", "content", "description")):
+        dto = build(parsed)
+        return [dto] if dto else []
+
+    # 3. Category-keyed object.
+    items: List[CandidateItemDTO] = []
+    lowered = {str(k).lower(): v for k, v in parsed.items()}
+    for alias, category in _CATEGORY_ALIASES:
+        entries = lowered.get(alias)
+        if isinstance(entries, list):
+            for entry in entries:
+                dto = build(entry, forced_category=category)
+                if dto:
+                    items.append(dto)
+    return items
+
+
 class LLMClient(ABC):
     """
     Provider-independent abstraction for Large Language Models.
@@ -325,19 +450,8 @@ class NvidiaNimLLMClient(LLMClient):
                 parsed = json.loads(content)
 
                 if schema == ExtractionBatchResult:
-                    items = []
-                    raw_items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
-                    for it in raw_items:
-                        items.append(CandidateItemDTO(
-                            category=it.get("category", "proposal"),
-                            classification=it.get("classification", ClassificationEnum.PROPOSAL),
-                            title=it.get("title", "Candidate"),
-                            content=it.get("content", ""),
-                            confidence=float(it.get("confidence", 0.9)),
-                            evidence_ids=it.get("evidence_ids", []),
-                        ))
                     return ExtractionBatchResult(
-                        items=items,
+                        items=normalize_extraction_payload(parsed),
                         model=f"nvidia-nim/{self.model_name}",
                         prompt_version="v2.0-deepseek",
                     )  # type: ignore
@@ -422,19 +536,8 @@ class GroqLLMClient(LLMClient):
                 parsed = json.loads(content)
 
                 if schema == ExtractionBatchResult:
-                    items = []
-                    raw_items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
-                    for it in raw_items:
-                        items.append(CandidateItemDTO(
-                            category=it.get("category", "proposal"),
-                            classification=it.get("classification", ClassificationEnum.PROPOSAL),
-                            title=it.get("title", "Candidate"),
-                            content=it.get("content", ""),
-                            confidence=float(it.get("confidence", 0.9)),
-                            evidence_ids=it.get("evidence_ids", []),
-                        ))
                     return ExtractionBatchResult(
-                        items=items,
+                        items=normalize_extraction_payload(parsed),
                         model=f"groq/{self.model_name}",
                         prompt_version="v2.0-groq",
                     )  # type: ignore
@@ -524,19 +627,8 @@ class GeminiLLMClient(LLMClient):
                 parsed = json.loads(content)
 
                 if schema == ExtractionBatchResult:
-                    items = []
-                    raw_items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
-                    for it in raw_items:
-                        items.append(CandidateItemDTO(
-                            category=it.get("category", "proposal"),
-                            classification=it.get("classification", ClassificationEnum.PROPOSAL),
-                            title=it.get("title", "Candidate"),
-                            content=it.get("content", ""),
-                            confidence=float(it.get("confidence", 0.9)),
-                            evidence_ids=it.get("evidence_ids", []),
-                        ))
                     return ExtractionBatchResult(
-                        items=items,
+                        items=normalize_extraction_payload(parsed),
                         model=f"gemini/{self.model_name}",
                         prompt_version="v2.0-gemini",
                     )  # type: ignore
