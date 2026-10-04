@@ -11,6 +11,64 @@ import {
 } from "lucide-react";
 import { CandidateKnowledgeItem } from "@/lib/types";
 
+/**
+ * Canonical intelligence categories.
+ *
+ * The extraction model was previously free to invent spellings, which is why the
+ * filter used to compare `c.category` literally against a hardcoded list. Rows
+ * persisted before the vocabulary was standardised still carry the old
+ * `decision_candidate` / `requirement_candidate` values, so every category is
+ * normalised before comparing. This mirrors the alias map in
+ * `meeting_session_intelligence.py`; keep the two in step.
+ */
+const CATEGORY_ALIASES: Record<string, string> = {
+  proposal: "proposal",
+  decision: "decision",
+  decisions: "decision",
+  decision_candidate: "decision",
+  decisioncandidate: "decision",
+  requirement: "requirement",
+  requirements: "requirement",
+  requirement_candidate: "requirement",
+  requirementcandidate: "requirement",
+  question: "question",
+  questions: "question",
+  open_question: "question",
+  openquestion: "question",
+  action_item: "action_item",
+  action_items: "action_item",
+  actionitem: "action_item",
+  actionitems: "action_item",
+  task: "action_item",
+  todo: "action_item",
+  constraint: "constraint",
+  constraints: "constraint",
+  assumption: "assumption",
+  assumptions: "assumption",
+};
+
+function normalizeCategory(raw?: string | null): string {
+  const token = (raw || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!token) return "knowledge";
+  if (CATEGORY_ALIASES[token]) return CATEGORY_ALIASES[token];
+  for (const [alias, canonical] of Object.entries(CATEGORY_ALIASES)) {
+    if (token.endsWith(`_${alias}`)) return canonical;
+  }
+  return "knowledge";
+}
+
+const INTELLIGENCE_FILTERS: { key: string; label: string }[] = [
+  { key: "all", label: "all" },
+  { key: "decision", label: "decision" },
+  { key: "requirement", label: "requirement" },
+  { key: "action_item", label: "action item" },
+  { key: "constraint", label: "constraint" },
+  { key: "proposal", label: "proposal" },
+  { key: "question", label: "question" },
+  { key: "assumption", label: "assumption" },
+  { key: "knowledge", label: "other" },
+];
+
 interface MeetingDetailViewProps {
   meetingId: string;
   meetingData: any;
@@ -33,7 +91,7 @@ export function MeetingDetailView({
 
   const filteredCandidates = candidates.filter((c) => {
     if (intelligenceFilter === "all") return true;
-    return c.category === intelligenceFilter;
+    return normalizeCategory(c.category) === intelligenceFilter;
   });
 
   return (
@@ -238,20 +296,30 @@ export function MeetingDetailView({
             </h3>
           </div>
           {/* Category Filter Pills */}
-          <div className="flex items-center gap-2 text-xs">
-            {["all", "proposal", "requirement_candidate", "decision_candidate", "question"].map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setIntelligenceFilter(cat)}
-                className={`px-2.5 py-1 rounded-md capitalize transition-colors ${
-                  intelligenceFilter === cat
-                    ? "bg-primary-soft text-primary font-semibold border border-primary/20"
-                    : "text-text-muted hover:bg-canvas border border-transparent"
-                }`}
-              >
-                {cat.replace("_", " ")}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {INTELLIGENCE_FILTERS.map(({ key, label }) => {
+              const count =
+                key === "all"
+                  ? candidates.length
+                  : candidates.filter((c) => normalizeCategory(c.category) === key).length;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setIntelligenceFilter(key)}
+                  disabled={count === 0}
+                  className={`px-2.5 py-1 rounded-md capitalize transition-colors ${
+                    intelligenceFilter === key
+                      ? "bg-primary-soft text-primary font-semibold border border-primary/20"
+                      : count === 0
+                        ? "text-text-muted/40 border border-transparent cursor-not-allowed"
+                        : "text-text-muted hover:bg-canvas border border-transparent"
+                  }`}
+                >
+                  {label}
+                  <span className="ml-1.5 text-[10px] opacity-70">{count}</span>
+                </button>
+              );
+            })}
           </div>
 
           <div className="grid grid-cols-1 gap-3">
@@ -267,7 +335,7 @@ export function MeetingDetailView({
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-semibold font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-canvas text-primary border border-border">
-                      {cand.category}
+                      {normalizeCategory(cand.category)}
                     </span>
                     <span className="text-[11px] font-medium capitalize px-1.5 py-0.5 rounded bg-canvas border border-border text-text-muted">
                       {cand.status || "Needs review"}
@@ -283,7 +351,11 @@ export function MeetingDetailView({
 
                   <button
                     onClick={() =>
-                      onOpenEvidence(cand.title, cand.category, cand.evidence_ids || [])
+                      onOpenEvidence(
+                        cand.title,
+                        normalizeCategory(cand.category),
+                        cand.evidence_ids || []
+                      )
                     }
                     className="px-3 py-1.5 rounded-md text-xs font-semibold text-primary bg-primary-soft hover:bg-primary/20 border border-primary/20 transition-colors"
                   >

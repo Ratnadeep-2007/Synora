@@ -230,7 +230,9 @@ decision | requirement | constraint | action_item | question | assumption | prop
 
         prompt = self._build_evidence_prompt(
             evidence_records,
-            f"Extract all candidate proposals, decisions, requirements, questions, and action items with evidence IDs from {source_name} source.",
+            f"Extract all candidate proposals, decisions, requirements, questions, "
+            f"and action items with evidence IDs from {source_name} source.\n"
+            + self.CATEGORY_GUIDE,
         )
         batch_result = self.llm_client.generate_structured(prompt, ExtractionBatchResult)
         latency_ms = (time.time() - t0) * 1000.0
