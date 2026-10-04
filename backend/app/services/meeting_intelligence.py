@@ -42,6 +42,35 @@ class MeetingIntelligenceService:
             lines.append(f"[EVIDENCE: {ev.id}] {speaker}: {ev.content}")
         return "\n".join(lines)
 
+    # The model previously labelled everything "proposal", so meetings that
+    # plainly contained decisions and requirements projected as zero decisions
+    # and zero requirements. The categories are spelled out because the model
+    # was not inferring the boundary between them reliably.
+    CATEGORY_GUIDE = """
+CLASSIFY EACH ITEM INTO EXACTLY ONE CATEGORY. These boundaries matter:
+
+- decision: the team has ALREADY settled it. Look for agreement, commitment or
+  present-tense statements of fact ("we decided", "we will use", "we are going
+  with", "keep it separate"). A decision is NOT a suggestion.
+- requirement: the product or system must do something. Look for "must", "needs
+  to", "has to", "should be able to", or an explicit capability demand.
+- constraint: a rule or limit that restricts the design ("never charge before
+  stock confirmation", "read only, no writes", "must not exceed").
+- action_item: a named person commits to doing something, usually with a
+  deadline ("I will write the contract by Friday").
+- question: something unresolved or asked ("do we need", "should we").
+- assumption: something taken as true without confirmation.
+- proposal: ONLY an idea put forward that is not yet agreed ("what if we",
+  "maybe we could", "it might be worth").
+
+A sentence like "Let's keep the Catalogue Service separate from the Order
+Service" is a DECISION, not a proposal. If nobody disagreed and it is stated as
+the way things will be, it is a decision.
+
+Return "category" as exactly one of these lowercase words:
+decision | requirement | constraint | action_item | question | assumption | proposal
+"""
+
     def extract_proposals(self, evidence_list: List[Evidence]) -> List[CandidateItemDTO]:
         """Narrow intelligence capability: Extract proposals and ideas."""
         prompt = self._build_evidence_prompt(
@@ -105,7 +134,8 @@ class MeetingIntelligenceService:
         # Run extraction across narrow intelligence capabilities
         prompt = self._build_evidence_prompt(
             evidence_records,
-            "Extract all candidate proposals, decisions, requirements, questions, and action items with evidence IDs.",
+            "Extract all candidate proposals, decisions, requirements, questions, "
+            "and action items with evidence IDs.\n" + self.CATEGORY_GUIDE,
         )
         batch_result = self.llm_client.generate_structured(prompt, ExtractionBatchResult)
         latency_ms = (time.time() - t0) * 1000.0

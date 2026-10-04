@@ -18,7 +18,14 @@ class ClassificationEnum(str, Enum):
 
 
 class CandidateItemDTO(BaseModel):
-    category: str = Field(..., description="proposal, decision_candidate, requirement_candidate, etc.")
+    category: str = Field(
+        ...,
+        description=(
+            "Exactly one of: decision, requirement, question, action_item, "
+            "constraint, assumption, proposal. Free-form values here are "
+            "silently dropped downstream, so do not invent variants."
+        ),
+    )
     classification: ClassificationEnum
     title: str
     content: str

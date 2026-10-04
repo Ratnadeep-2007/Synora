@@ -108,22 +108,50 @@ class MeetingSessionIntelligenceService:
             return None
         return match.group(1).strip(" .,:;")
 
+    # Category strings arrive from the extraction model, which is free to pick
+    # its own wording ("Decision", "decisions", "decision_candidate",
+    # "requirement_candidate", ...). Matching an exact set meant anything the
+    # model spelled differently fell through to "knowledge", and the session
+    # summary then reported zero decisions and zero requirements for meetings
+    # that plainly contained them. Normalising first keeps the view honest.
+    _CATEGORY_ALIASES = {
+        "decision": "decision",
+        "decisions": "decision",
+        "decision_candidate": "decision",
+        "decisioncandidate": "decision",
+        "requirement": "requirement",
+        "requirements": "requirement",
+        "requirement_candidate": "requirement",
+        "requirementcandidate": "requirement",
+        "question": "question",
+        "questions": "question",
+        "open_question": "question",
+        "openquestion": "question",
+        "action_item": "action_item",
+        "action_items": "action_item",
+        "actionitem": "action_item",
+        "actionitems": "action_item",
+        "task": "action_item",
+        "todo": "action_item",
+        "constraint": "constraint",
+        "constraints": "constraint",
+        "assumption": "assumption",
+        "assumptions": "assumption",
+    }
+
     @staticmethod
     def _candidate_type(candidate: CandidateKnowledge) -> str:
-        category = (candidate.category or "").strip().lower()
-        classification = (candidate.classification or "").strip().lower()
-        if category in {"decision_candidate", "decision"} or classification == "decision":
-            return "decision"
-        if category in {"requirement_candidate", "requirement"} or classification == "requirement":
-            return "requirement"
-        if category in {"question", "open_question"} or classification == "question":
-            return "question"
-        if category in {"action_item", "actionitem"} or classification in {"actionitem", "action_item"}:
-            return "action_item"
-        if category in {"constraint"} or classification == "constraint":
-            return "constraint"
-        if category in {"assumption"} or classification == "assumption":
-            return "assumption"
+        for raw in (candidate.category, candidate.classification):
+            token = (raw or "").strip().lower().replace(" ", "_").replace("-", "_")
+            if not token:
+                continue
+            mapped = MeetingSessionIntelligenceService._CATEGORY_ALIASES.get(token)
+            if mapped:
+                return mapped
+            # Tolerate a prefixed form such as "extracted_decision".
+            for alias, mapped_type in MeetingSessionIntelligenceService._CATEGORY_ALIASES.items():
+                if token.endswith("_" + alias):
+                    return mapped_type
         return "knowledge"
 
     @staticmethod
