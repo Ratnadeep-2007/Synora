@@ -31,9 +31,9 @@ def test_compiler_produces_valid_scene():
     plan = VisualPlan(
         title="Test",
         nodes=[
-            VisualNode(id="a", label="Client", node_type="client"),
-            VisualNode(id="b", label="Service", node_type="service"),
-            VisualNode(id="c", label="DB", node_type="datastore"),
+            VisualNode(id="a", label="Client", node_type="client", evidence_ids=["ev_1"]),
+            VisualNode(id="b", label="Service", node_type="service", evidence_ids=["ev_1"]),
+            VisualNode(id="c", label="DB", node_type="datastore", evidence_ids=["ev_1"]),
         ],
         relationships=[
             VisualRelationship(source="a", target="b"),
@@ -73,7 +73,7 @@ def test_compiler_rejects_empty_plan():
 
 def test_compiler_drops_relationship_with_unknown_node():
     plan = VisualPlan(
-        nodes=[VisualNode(id="a", label="A", node_type="service")],
+        nodes=[VisualNode(id="a", label="A", node_type="service", evidence_ids=["ev_1"])],
         relationships=[VisualRelationship(source="a", target="ghost")],
     )
     scene = ExcalidrawCompiler().compile(plan)
@@ -117,8 +117,8 @@ def test_visual_plan_uses_injected_client_and_labels_ai():
         {
             "title": "AI Plan",
             "nodes": [
-                {"id": "x", "label": "X", "node_type": "service"},
-                {"id": "y", "label": "Y", "node_type": "datastore"},
+                {"id": "x", "label": "X", "node_type": "service", "evidence_ids": ["ev_1"]},
+                {"id": "y", "label": "Y", "node_type": "datastore", "evidence_ids": ["ev_1"]},
             ],
             "relationships": [{"source": "x", "target": "y"}],
         }
@@ -152,8 +152,8 @@ def test_ai_visual_architecture_is_proposal_only(db_session: Session):
             client=FakeVisualClient(
                 {
                     "nodes": [
-                        {"id": "a", "label": "Client", "node_type": "client"},
-                        {"id": "b", "label": "API", "node_type": "service"},
+                        {"id": "a", "label": "Client", "node_type": "client", "evidence_ids": ["ev_1"]},
+                        {"id": "b", "label": "API", "node_type": "service", "evidence_ids": ["ev_1"]},
                     ],
                     "relationships": [{"source": "a", "target": "b"}],
                 }
@@ -181,9 +181,9 @@ def test_ai_visual_architecture_is_proposal_only(db_session: Session):
             client=FakeVisualClient(
                 {
                     "nodes": [
-                        {"id": "a", "label": "Client", "node_type": "client"},
-                        {"id": "b", "label": "API", "node_type": "service"},
-                        {"id": "c", "label": "DB", "node_type": "database"},
+                        {"id": "a", "label": "Client", "node_type": "client", "evidence_ids": ["ev_1"]},
+                        {"id": "b", "label": "API", "node_type": "service", "evidence_ids": ["ev_1"]},
+                        {"id": "c", "label": "DB", "node_type": "database", "evidence_ids": ["ev_1"]},
                     ],
                     "relationships": [{"source": "a", "target": "b"}, {"source": "b", "target": "c"}],
                 }

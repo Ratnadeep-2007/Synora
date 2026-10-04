@@ -49,6 +49,31 @@ class ExcalidrawCompiler:
         if not plan.nodes:
             raise ExcalidrawCompileError("VisualPlan contains no nodes to compile.")
 
+        # Ground the plan before it becomes geometry. A node that cites no
+        # evidence is the model reasoning rather than reporting, so it is
+        # refused here. Previously any node survived, which is how a single
+        # WhatsApp sentence produced a seven-node architecture whose contents
+        # came from the model's imagination.
+        grounded_nodes = [n for n in plan.nodes if n.evidence_ids]
+        if not grounded_nodes:
+            raise ExcalidrawCompileError(
+                "VisualPlan has no evidence-backed nodes; refusing to compile an ungrounded diagram."
+            )
+        if len(grounded_nodes) < len(plan.nodes):
+            logger.info(
+                "visual_plan_nodes_dropped_ungrounded: kept=%d dropped=%d",
+                len(grounded_nodes),
+                len(plan.nodes) - len(grounded_nodes),
+            )
+        plan = plan.model_copy(update={"nodes": grounded_nodes})
+        valid_node_ids = {n.id for n in grounded_nodes}
+        # An edge is only meaningful if both endpoints survived grounding.
+        plan.relationships = [
+            r
+            for r in plan.relationships
+            if r.source in valid_node_ids and r.target in valid_node_ids
+        ]
+
         positions = self._layout(plan)
         elements: List[Dict[str, Any]] = []
         node_element_ids: Dict[str, str] = {}
@@ -61,6 +86,9 @@ class ExcalidrawCompiler:
             rect_id = f"node_{node.id}"
             text_id = f"label_{node.id}"
             node_element_ids[node.id] = rect_id
+            # Fix 5: inferred nodes are drawn dashed so a reader can tell a
+            # stated component from a modelled one at a glance.
+            inferred = (node.support_type or "inferred") != "explicit"
 
             node_shape = {
                 "actor": "ellipse",
@@ -85,6 +113,7 @@ class ExcalidrawCompiler:
                     "width": NODE_WIDTH,
                     "height": NODE_HEIGHT,
                     "angle": 0,
+                    "strokeStyle": "dashed" if inferred else "solid",
                     "strokeColor": style["stroke"],
                     "backgroundColor": style["background"],
                     "fillStyle": "solid",
@@ -101,6 +130,8 @@ class ExcalidrawCompiler:
                             "node_type": node.node_type,
                             "group": node.group,
                             "emphasis": node.emphasis,
+                            "evidence_ids": list(node.evidence_ids or [])[:4],
+                            "support_type": "explicit" if not inferred else "inferred",
                         }
                     },
                 }
@@ -172,6 +203,18 @@ class ExcalidrawCompiler:
                         "angle": 0,
                         "groupIds": [],
                         "isDeleted": False,
+                        # An annotation is a factual claim about the node, so it
+                        # inherits the node's provenance. Without this the text
+                        # on the canvas was the one element with no traceable
+                        # source, which is exactly where invented detail landed.
+                        "customData": {
+                            "visual": {
+                                "type": "node_annotation",
+                                "semantic_id": node.id,
+                                "evidence_ids": list(node.evidence_ids or [])[:4],
+                                "support_type": "explicit" if not inferred else "inferred",
+                            }
+                        },
                     }
                 )
 
@@ -188,6 +231,15 @@ class ExcalidrawCompiler:
             src_pos = positions.get(rel.source)
             dst_pos = positions.get(rel.target)
             arrow = self._arrow(rel, src, dst, index, src_pos, dst_pos)
+            arrow.setdefault("customData", {})["visual"] = {
+                "semantic_source": rel.source,
+                "semantic_target": rel.target,
+                "evidence_ids": list(rel.evidence_ids or [])[:4],
+                "support_type": rel.support_type or "inferred",
+            }
+            # An edge the model only inferred is drawn dashed, matching nodes.
+            if (rel.support_type or "inferred") != "explicit":
+                arrow["strokeStyle"] = "dashed"
             elements.append(arrow)
             if rel.label:
                 elements.append(self._edge_label(rel, arrow, index))
@@ -235,11 +287,16 @@ class ExcalidrawCompiler:
                     order = 0
                 if not text:
                     return None
-                return {"text": text, "kind": kind, "order": order}
+                return {
+                    "text": text,
+                    "kind": kind,
+                    "order": order,
+                    "evidence_ids": [str(e) for e in (evidence or [])][:4],
+                }
             text = str(raw or "").strip()
             if not text:
                 return None
-            return {"text": text, "kind": "note", "order": 0}
+            return {"text": text, "kind": "note", "order": 0, "evidence_ids": []}
 
         grounded_notes: List[Dict[str, Any]] = []
         for raw in plan.notes or []:
@@ -329,6 +386,17 @@ class ExcalidrawCompiler:
                         "roundness": {"type": 3},
                         "boundElements": [{"type": "text", "id": text_id}],
                         "isDeleted": False,
+                        # Every rendered element carries its provenance, so a
+                        # sticky note can be traced back to the evidence that
+                        # prompted it like any node.
+                        "customData": {
+                            "visual": {
+                                "type": "architectural_note",
+                                "kind": note["kind"],
+                                "evidence_ids": note["evidence_ids"],
+                                "support_type": "explicit" if note["evidence_ids"] else "inferred",
+                            }
+                        },
                     }
                 )
                 elements.append(
@@ -399,6 +467,19 @@ class ExcalidrawCompiler:
             max_y = max(p[1] for p in coords) + NODE_HEIGHT + 42
             bg, stroke = palette[index % len(palette)]
             label = group.replace("_", " ").strip().upper()
+            # A lane inherits the provenance of its members: if every node in
+            # it is stated, the lane is solid; if any is inferred the lane is
+            # dashed so the reader can see the layer is partly modelled.
+            group_evidence: List[str] = []
+            for n in nodes:
+                for e in (n.evidence_ids or []):
+                    if e not in group_evidence:
+                        group_evidence.append(e)
+            group_support = (
+                "explicit"
+                if nodes and all((n.support_type or "inferred") == "explicit" for n in nodes)
+                else "inferred"
+            )
 
             output.append({
                 "id": f"group_backdrop_{index}_{group}",
@@ -408,6 +489,7 @@ class ExcalidrawCompiler:
                 "width": max_x - min_x,
                 "height": max_y - min_y,
                 "angle": 0,
+                "strokeStyle": "solid" if group_support == "explicit" else "dashed",
                 "strokeColor": stroke,
                 "backgroundColor": bg,
                 "fillStyle": "solid",
@@ -417,7 +499,15 @@ class ExcalidrawCompiler:
                 "roundness": {"type": 3},
                 "boundElements": [],
                 "isDeleted": False,
-                "customData": {"visual": {"type": "architecture_group", "group": group}},
+                "customData": {
+                    "visual": {
+                        "type": "architecture_group",
+                        "group": group,
+                        "evidence_ids": group_evidence[:6],
+                        "support_type": group_support,
+                        "node_count": len(nodes),
+                    }
+                },
             })
             output.append({
                 "id": f"group_label_{index}_{group}",

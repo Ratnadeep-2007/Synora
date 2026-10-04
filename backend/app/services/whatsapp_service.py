@@ -225,15 +225,34 @@ class WhatsAppIntelligenceService:
         matched_project = db.query(Project).filter(Project.id == project_id).first()
         confidence = 1.0
 
-        # Zero-human-loop: every routed message writes its note to the
-        # project's Excalidraw board automatically. No approvals, no gates.
-        auto_apply = True
+        # A diagram is only regenerated once the project has enough recorded
+        # evidence to describe one. Previously every routed message triggered a
+        # planner run, so a single sentence produced a full architecture whose
+        # shape came from the model's priors rather than the project's record.
+        # Below the threshold the message still becomes evidence and knowledge;
+        # only the canvas update is withheld.
+        MIN_EVIDENCE_FOR_VISUAL = 2
+        from app.models.evidence import Evidence as _Evidence
+
+        evidence_count = (
+            db.query(_Evidence)
+            .filter(_Evidence.project_id == project_id)
+            .count()
+        )
+        visual_ready = evidence_count >= MIN_EVIDENCE_FOR_VISUAL
+        if not visual_ready:
+            logger.info(
+                "whatsapp_visual_deferred: project=%s evidence=%d required=%d",
+                project_id,
+                evidence_count,
+                MIN_EVIDENCE_FOR_VISUAL,
+            )
 
         proposal = None
         diagram_res = None
         excalidraw_updated = False
 
-        if auto_apply and not skip_visual:
+        if visual_ready and not skip_visual:
             try:
                 diagram_res = self.excal_service.generate_diagram_from_text(
                     project_id=project_id,

@@ -296,10 +296,10 @@ def test_visual_compiler_uses_semantic_shapes_group_lanes_and_edge_labels():
         title="DineIn Flow",
         layout_direction="horizontal",
         nodes=[
-            VisualNode(id="actor", label="Customer", node_type="actor", group="experience"),
-            VisualNode(id="order", label="Ordering Service", node_type="service", group="core", emphasis="primary"),
-            VisualNode(id="decision", label="Fraud Check", node_type="decision", group="core"),
-            VisualNode(id="db", label="Orders DB", node_type="datastore", group="data"),
+            VisualNode(id="actor", label="Customer", node_type="actor", group="experience", evidence_ids=["ev_1"]),
+            VisualNode(id="order", label="Ordering Service", node_type="service", group="core", emphasis="primary", evidence_ids=["ev_1"]),
+            VisualNode(id="decision", label="Fraud Check", node_type="decision", group="core", evidence_ids=["ev_1"]),
+            VisualNode(id="db", label="Orders DB", node_type="datastore", group="data", evidence_ids=["ev_1"]),
         ],
         relationships=[
             VisualRelationship(source="actor", target="order", label="order request"),
@@ -337,10 +337,10 @@ def test_visual_compiler_uses_semantic_shapes_group_lanes_and_edge_labels():
 
 def test_visual_compiler_swimlanes_expand_for_multirow_groups():
     nodes = [
-        VisualNode(id=f"core_{i}", label=f"Core {i}", node_type="service", group="core")
+        VisualNode(id=f"core_{i}", label=f"Core {i}", node_type="service", group="core", evidence_ids=["ev_1"])
         for i in range(5)
     ] + [
-        VisualNode(id="data_1", label="Primary DB", node_type="datastore", group="data")
+        VisualNode(id="data_1", label="Primary DB", node_type="datastore", group="data", evidence_ids=["ev_1"])
     ]
     plan = VisualPlan(
         title="Multirow Architecture",

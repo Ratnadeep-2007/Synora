@@ -73,8 +73,8 @@ def _plan(notes):
         title="Test Plan",
         layout_direction="horizontal",
         nodes=[
-            VisualNode(id="a", label="Bot", node_type="client"),
-            VisualNode(id="b", label="Layer", node_type="service"),
+            VisualNode(id="a", label="Bot", node_type="client", evidence_ids=["ev_1"]),
+            VisualNode(id="b", label="Layer", node_type="service", evidence_ids=["ev_1"]),
         ],
         relationships=[VisualRelationship(source="a", target="b")],
         notes=notes,

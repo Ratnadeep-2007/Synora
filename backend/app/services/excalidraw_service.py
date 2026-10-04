@@ -296,7 +296,7 @@ class ExcalidrawService:
         # Visualisation is derived from project KNOWLEDGE (vision, requirements,
         # architecture, decisions) - not from the deprecated agent workflow - and
         # is compiled by the deterministic compiler rather than hand-built JSON.
-        from app.services.excalidraw_compiler import ExcalidrawCompiler
+        from app.services.excalidraw_compiler import ExcalidrawCompiler, ExcalidrawCompileError
         from app.services.visual_critique_service import VisualCritiqueService
         from app.services.visual_plan_service import VisualPlanService
         from app.services.visual_revision_service import VisualRevisionService
@@ -316,8 +316,35 @@ class ExcalidrawService:
             evidence_snippets=self._recent_evidence_snippets(project_id, db),
             focus_prompt=reason,
         )
-        proposed_elements = ExcalidrawCompiler().compile(plan)
+        try:
+            proposed_elements = ExcalidrawCompiler().compile(plan)
+        except ExcalidrawCompileError as exc:
+            # Grounding refused the plan (no evidence-backed nodes). Record why
+            # and leave the canvas untouched rather than raising through the
+            # API. A caller asking for a proposal simply gets none.
+            logger.info("visual_plan_refused_ungrounded: project=%s reason=%s", project_id, exc)
+            return {
+                "success": False,
+                "applied": False,
+                "auto_applied": False,
+                "proposal": None,
+                "artifact": self.get_or_create_artifact(project_id, db, tenant_id),
+                "ai_status": ai_status,
+                "critique_ok": False,
+                "critique_issues": [str(exc)],
+                "reason": str(exc),
+            }
         critique = VisualCritiqueService().critique(plan, proposed_elements)
+        # A critique finding blocks auto-apply. Previously critique.ok was only
+        # recorded in the diff preview and logged, so a plan that dropped
+        # preserved nodes or overlapped badly was committed anyway.
+        if critique.issues:
+            auto_apply = False
+            logger.warning(
+                "visual_auto_apply_blocked_by_critique: project=%s issues=%s",
+                project_id,
+                "; ".join(critique.issues[:3]),
+            )
 
         nodes_after = [n.label for n in plan.nodes]
         nodes_added = [n for n in nodes_after if n not in nodes_before]
@@ -374,7 +401,7 @@ class ExcalidrawService:
                 reason=summary_reason,
                 proposed_elements_json=json.dumps(proposed_elements),
                 diff_preview_json=json.dumps(diff_preview),
-                evidence_ids_json="[]",
+                evidence_ids_json=json.dumps(self._plan_evidence(plan)),
             )
             db.add(proposal)
             db.commit()
@@ -392,7 +419,7 @@ class ExcalidrawService:
                 reason=summary_reason,
                 proposed_elements_json=json.dumps(proposed_elements),
                 diff_preview_json=json.dumps(diff_preview),
-                evidence_ids_json="[]",
+                evidence_ids_json=json.dumps(self._plan_evidence(plan)),
             )
             db.add(proposal)
             db.commit()
@@ -420,7 +447,7 @@ class ExcalidrawService:
         The AI produces a structured VisualPlan; the deterministic compiler owns
         all geometry. Raw model JSON is never written to Excalidraw.
         """
-        from app.services.excalidraw_compiler import ExcalidrawCompiler
+        from app.services.excalidraw_compiler import ExcalidrawCompiler, ExcalidrawCompileError
         from app.services.visual_critique_service import VisualCritiqueService
         from app.services.visual_plan_service import VisualPlanService
         from app.services.visual_revision_service import VisualRevisionService
@@ -457,6 +484,15 @@ class ExcalidrawService:
         proposed_elements = compiler.compile(plan)
 
         critique = VisualCritiqueService().critique(plan, proposed_elements)
+        # Critique findings downgrade this to a reviewable proposal instead of
+        # writing straight to the canvas.
+        if critique.issues:
+            direct_apply = False
+            logger.warning(
+                "visual_auto_apply_blocked_by_critique: project=%s issues=%s",
+                project_id,
+                "; ".join(critique.issues[:3]),
+            )
 
         nodes_after = [n.label for n in plan.nodes]
         nodes_added = [n for n in nodes_after if n not in nodes_before]
@@ -513,7 +549,7 @@ class ExcalidrawService:
                 reason=reason,
                 proposed_elements_json=json.dumps(proposed_elements),
                 diff_preview_json=json.dumps(diff_preview),
-                evidence_ids_json="[]",
+                evidence_ids_json=json.dumps(self._plan_evidence(plan)),
             )
             db.add(proposal)
             db.commit()
@@ -539,7 +575,7 @@ class ExcalidrawService:
                 reason=reason,
                 proposed_elements_json=json.dumps(proposed_elements),
                 diff_preview_json=json.dumps(diff_preview),
-                evidence_ids_json="[]",
+                evidence_ids_json=json.dumps(self._plan_evidence(plan)),
             )
             db.add(proposal)
             db.commit()
@@ -574,7 +610,8 @@ class ExcalidrawService:
         and automatically applies it to the living workspace (updating the canvas
         and committing an immutable revision) without requiring human UI acceptance.
         """
-        from app.services.excalidraw_compiler import ExcalidrawCompiler
+        from app.services.excalidraw_compiler import ExcalidrawCompiler, ExcalidrawCompileError
+        from app.services.visual_critique_service import VisualCritiqueService
         from app.services.visual_plan_service import VisualPlanService
         from app.services.visual_revision_service import VisualRevisionService
         from app.models.excalidraw import ExcalidrawProposal, ExcalidrawProposalStatus
@@ -589,11 +626,47 @@ class ExcalidrawService:
 
         # 2. Compile to Excalidraw Elements
         compiler = ExcalidrawCompiler()
-        compiled_elements = compiler.compile(plan)
+        try:
+            compiled_elements = compiler.compile(plan)
+        except ExcalidrawCompileError as exc:
+            # Grounding refused the plan. Record why and leave the canvas
+            # untouched rather than raising through the API.
+            logger.info("visual_plan_refused_ungrounded: project=%s reason=%s", project_id, exc)
+            return {
+                "success": False,
+                "applied": False,
+                "auto_applied": False,
+                "proposal": None,
+                "artifact": artifact,
+                "ai_status": ai_status,
+                "critique_ok": False,
+                "critique_issues": [str(exc)],
+                "reason": str(exc),
+            }
         nodes_after = [n.label for n in plan.nodes]
+
+        # 2b. Critique. This path auto-applies straight to the canvas, so it
+        # previously had no critique at all: whatever the planner produced was
+        # committed without ever being checked.
+        critique = VisualCritiqueService().critique(plan, compiled_elements)
+        if critique.issues:
+            auto_apply = False
+            logger.warning(
+                "visual_auto_apply_blocked_by_critique: project=%s issues=%s",
+                project_id,
+                "; ".join(critique.issues[:3]),
+            )
 
         # 3. Completely automated apply (no manual acceptance required)
         proposal = None
+        # The evidence that justified this scene, recorded on the proposal.
+        # Previously this was hardcoded to "[]", so an audit of an approved
+        # diagram could never say what it was based on.
+        plan_evidence: List[str] = []
+        for n in plan.nodes:
+            for e in (n.evidence_ids or []):
+                if e not in plan_evidence:
+                    plan_evidence.append(e)
         if auto_apply:
             now = datetime.now(timezone.utc)
             artifact.elements_json = json.dumps(compiled_elements)
@@ -628,8 +701,10 @@ class ExcalidrawService:
                     "nodes_added": nodes_after,
                     "nodes_removed": [],
                     "ai_status": ai_status,
+                    "critique_ok": critique.ok,
+                    "critique_issues": critique.issues,
                 }),
-                evidence_ids_json="[]",
+                evidence_ids_json=json.dumps(plan_evidence),
             )
             db.add(proposal)
             db.commit()
@@ -649,8 +724,10 @@ class ExcalidrawService:
                     "nodes_added": nodes_after,
                     "nodes_removed": [],
                     "ai_status": ai_status,
+                    "critique_ok": critique.ok,
+                    "critique_issues": critique.issues,
                 }),
-                evidence_ids_json="[]",
+                evidence_ids_json=json.dumps(plan_evidence),
             )
             db.add(proposal)
             db.commit()
@@ -664,9 +741,33 @@ class ExcalidrawService:
             "plan": plan.model_dump(),
             "ai_status": ai_status,
             "auto_applied": auto_apply,
+            "critique_ok": critique.ok,
+            "critique_issues": critique.issues,
+            "evidence_ids": plan_evidence,
             "proposal_id": proposal.id if proposal else None,
-            "message": "Text successfully analyzed and compiled into Excalidraw diagram.",
+            "message": (
+                "Text successfully analyzed and compiled into Excalidraw diagram."
+                if auto_apply
+                else "Diagram compiled but held as a pending proposal: "
+                + ("; ".join(critique.issues[:3]) or "critique declined the plan.")
+            ),
         }
+
+    @staticmethod
+    def _plan_evidence(plan: Any) -> List[str]:
+        """Union of the evidence ids cited by a plan's nodes and relationships.
+
+        Recorded on every proposal so an approved diagram can always be traced
+        back to the evidence that produced it.
+        """
+        out: List[str] = []
+        for item in list(getattr(plan, "nodes", None) or []) + list(
+            getattr(plan, "relationships", None) or []
+        ):
+            for e in (getattr(item, "evidence_ids", None) or []):
+                if e and e not in out:
+                    out.append(e)
+        return out
 
     @staticmethod
     def _json_list(raw: Optional[str]) -> List[Any]:
@@ -686,7 +787,14 @@ class ExcalidrawService:
                 rels.append(f"{start} -> {end}")
         return rels
 
-    def _recent_evidence_snippets(self, project_id: str, db: Session) -> List[str]:
+    def _recent_evidence_snippets(self, project_id: str, db: Session) -> List[Dict[str, str]]:
+        """
+        Recent evidence for the visual planner.
+
+        Each entry keeps its Evidence id. The planner must cite that id on
+        every node it proposes and the compiler discards ungrounded nodes,
+        so dropping the id here would make grounding impossible.
+        """
         from app.models.evidence import Evidence
 
         rows = (
@@ -696,7 +804,7 @@ class ExcalidrawService:
             .limit(8)
             .all()
         )
-        return [r.content[:200] for r in rows if r.content]
+        return [{"id": r.id, "content": (r.content or "")[:200]} for r in rows if r.content]
 
     def review_proposal(
         self,

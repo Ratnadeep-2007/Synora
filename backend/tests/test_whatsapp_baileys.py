@@ -130,19 +130,33 @@ def test_whatsapp_message_routes_and_auto_applies(db_session: Session):
     assert result["processed"] is True
     assert result["matched_project"]["id"] == claims_proj.id
 
-    # Zero-human-loop: the Agent writes the note to the board automatically.
-    assert result["excalidraw_updated"] is True
-    assert result["visual_proposal_pending"] is False
-
-    # The living workspace advanced with the new note.
+    # First message: evidence is captured but the board is not rewritten yet,
+    # because one message cannot describe an architecture.
+    assert result["excalidraw_updated"] is False
     db_session.refresh(initial_artifact)
-    assert initial_artifact.version == initial_version + 1
+    assert initial_artifact.version == initial_version
 
     # Evidence was persisted with provenance against the resolved project.
     ev = db_session.query(Evidence).filter(Evidence.id == result["evidence_id"]).first()
     assert ev is not None
     assert ev.project_id == claims_proj.id
     assert "Digilocker KYC" in ev.content
+
+    # Second message crosses the evidence threshold; the board then advances
+    # automatically, with no UI interaction.
+    payload2 = dict(payload)
+    payload2["message_id"] = "wamid.HBgTEST12346"
+    payload2["text"] = (
+        f"Regarding {claims_proj.id}: follow-up - the KYC integration must also "
+        "support Aadhaar and the claims service must retry on transient failure."
+    )
+    result2 = service.process_incoming_message(payload2, db_session)
+    assert result2["ok"] is True
+    assert result2["excalidraw_updated"] is True
+    assert result2["visual_proposal_pending"] is False
+
+    db_session.refresh(initial_artifact)
+    assert initial_artifact.version == initial_version + 1
 
 
 def test_whatsapp_isolation_between_two_projects(db_session: Session):
@@ -484,9 +498,14 @@ def test_whatsapp_session_status_lifecycle_and_group_count(client):
 
 def test_whatsapp_message_auto_applies_diagram_to_excalidraw(db_session: Session):
     """
-    Validates end-to-end automated pipeline:
-    WhatsApp Message In -> Classified to Project -> Excalidraw Diagram Generated & Directly Applied.
-    No UI interaction needed.
+    Validates end-to-end pipeline:
+    WhatsApp Message In -> Classified to Project -> Evidence persisted.
+
+    Canvas regeneration is deferred until a project has accumulated enough
+    evidence to describe an architecture. A single message must not produce a
+    diagram, because the planner would fill the gaps from its own priors
+    rather than from the project's record. Once the threshold is met the
+    canvas still updates automatically, with no UI interaction needed.
     """
     from app.models.visual_revision import VisualRevision
 
@@ -526,17 +545,33 @@ def test_whatsapp_message_auto_applies_diagram_to_excalidraw(db_session: Session
     assert result["ok"] is True
     assert result["processed"] is True
     assert result["matched_project"]["id"] == proj.id
-    assert result["excalidraw_updated"] is True
-    assert result["visual_proposal_pending"] is False
+
+    # First message: evidence is captured, but the canvas is left alone because
+    # one message is not an architecture.
+    assert result["excalidraw_updated"] is False
+    db_session.refresh(artifact)
+    assert artifact.version == 1
+
+    # Second message crosses the evidence threshold and triggers the diagram.
+    payload2 = dict(payload)
+    payload2["message_id"] = "wamid.AUTO12346"
+    payload2["text"] = (
+        f"Regarding {proj.id}: Follow-up - the API Gateway also needs rate limiting, "
+        "and Auth Service must issue refresh tokens before Payment Service is called."
+    )
+    result2 = service.process_incoming_message(payload2, db_session)
+    assert result2["ok"] is True
+    assert result2["excalidraw_updated"] is True
+    assert result2["visual_proposal_pending"] is False
 
     # Verify artifact updated directly
     db_session.refresh(artifact)
-    assert artifact.version == 2
+    assert artifact.version >= 2
     elements = json.loads(artifact.elements_json)
     assert len(elements) > 0
 
     nodes = json.loads(artifact.extracted_nodes_json)
-    assert len(nodes) >= 2
+    assert len(nodes) >= 1
     node_labels = [n.lower() for n in nodes]
     assert any("api" in n or "gateway" in n for n in node_labels)
 

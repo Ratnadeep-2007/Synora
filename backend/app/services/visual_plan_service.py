@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import settings
@@ -9,6 +10,44 @@ logger = logging.getLogger(__name__)
 
 AI_STATUS_AI = "ai"
 AI_STATUS_DETERMINISTIC = "deterministic"
+
+
+def _evidence_id_of(snippet: Any) -> str:
+    """
+    Recover the Evidence id from a planner evidence snippet.
+
+    Snippets are dicts ({"id", "content"}) or bare strings, possibly already
+    prefixed with "[EVIDENCE: id]". The id is required for grounding, so it is
+    surfaced explicitly rather than assumed.
+    """
+    if isinstance(snippet, dict):
+        return str(snippet.get("id") or "")
+    match = re.search(r"\[EVIDENCE:\s*([^\]]+)\]", str(snippet or ""))
+    return match.group(1).strip() if match else ""
+
+
+def _snippet_text(snippet: Any) -> str:
+    if isinstance(snippet, dict):
+        return str(snippet.get("content") or "")
+    return str(snippet or "")
+
+
+def _snippet_ids(snippet: Any) -> List[str]:
+    eid = _evidence_id_of(snippet)
+    return [eid] if eid else []
+
+
+def _text_evidence_id(text: str) -> str:
+    """
+    Stable pseudo-evidence id for text that has no persisted Evidence row.
+
+    Text-to-diagram callers (manual paste, WhatsApp body) supply content that
+    is not yet an Evidence record. Deriving an id from the content keeps the
+    node citable and deterministic without inventing a database reference.
+    """
+    import hashlib
+
+    return "ev_text_" + hashlib.sha1((text or "").strip().encode("utf-8")).hexdigest()[:12]
 
 
 class VisualPlanService:
@@ -120,7 +159,7 @@ class VisualPlanService:
 
         provider = (settings.LLM_PROVIDER or "").lower()
         if provider in ("deterministic", "mock", "test"):
-            return self._plan_from_text_deterministic(text, clean_title), AI_STATUS_DETERMINISTIC
+            return self._plan_from_text_deterministic(text, clean_title, _text_evidence_id(text)), AI_STATUS_DETERMINISTIC
 
         if provider == "gemini" and settings.is_gemini_configured:
             plan = self._call_gemini(state_summary, [], [text], text, None)
@@ -150,7 +189,7 @@ class VisualPlanService:
             if plan is not None:
                 return plan, AI_STATUS_AI
 
-        return self._plan_from_text_deterministic(text, clean_title), AI_STATUS_DETERMINISTIC
+        return self._plan_from_text_deterministic(text, clean_title, _text_evidence_id(text)), AI_STATUS_DETERMINISTIC
 
     # ------------------------------------------------------------------
     # Semantic providers
@@ -181,9 +220,13 @@ class VisualPlanService:
             '"grouping_intent": [str], '
             '"nodes": [{"id": str, "label": str, "node_type": '
             '"client|service|datastore|actor|decision|requirement|group|note", '
-            '"group": str|null, "emphasis": "normal|primary|muted", "annotations": [str]}], '
-            '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed"}], '
-            '"preserve": [str], "add": [str], "change": [str], "remove": [str], "notes": [str]}'
+            '"group": str|null, "emphasis": "normal|primary|muted", "annotations": [str], '
+            '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
+            '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed", '
+            '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
+            '"preserve": [str], "add": [str], "change": [str], "remove": [str], '
+            '"notes": [{"text": str, "kind": "decision|requirement|directive|action|risk|assumption|note", '
+            '"order": int, "evidence_ids": [str]}]}'
         )
         lines = [
             f"You are the Synora visual architecture planner for the project: '{project_title}'.",
@@ -192,11 +235,19 @@ class VisualPlanService:
             "CRITICAL ARCHITECTURAL DIRECTIVES:",
             f"1. DOMAIN FOCUS: Model the concrete domain architecture of '{project_title}' (e.g. client apps, core services, autonomous agents, datastores, message queues, external APIs).",
             "2. ZERO PLATFORM BOILERPLATE: NEVER emit internal Synora platform meta-nodes ('Synora Agent', 'Project State', 'Living Workspace', 'Evidence', or generic 'BA'/'Tech'/'Frappe' nodes). Every node must be a functional component of the target project.",
-            "3. VISUAL-FIRST ARCHITECTURE: The architecture must explain the system primarily through components, grouping, and labeled directional flow. Prefer 6 to 14 meaningful components and organize them into logical layers such as Experience, Core Logic, Data, Integrations, and Infrastructure when the evidence supports them.",
-            "4. NODE LABELS: Keep node labels short, crisp, and professional (2-4 words). Put one critical precision fact in annotations only when the node label alone cannot express it.",
-            "5. RELATIONSHIPS: Connect components logically with directional data flow. Prefer a short edge label describing what actually moves or happens (request, order, event, auth token, result). Avoid decorative or redundant arrows.",
-            "6. SUPPORTING NOTES: Notes are not the primary visualization. Use them only for decisions, constraints, assumptions, risks, open questions, or integration details that cannot be represented safely in the graph. Keep them concise and evidence-backed.",
-            "7. HUMAN READABILITY: A reviewer should be able to answer: what enters the system, what transforms it, where state is stored, what external systems participate, and where important constraints or uncertainty live.",
+            "3. GROUNDING IS MANDATORY: every node, relationship and note MUST carry "
+            '"evidence_ids" listing the EVIDENCE ids that justify it, taken verbatim from the '
+            "--- RELEVANT EVIDENCE --- block below. A node you cannot cite will be discarded "
+            "before rendering. Do NOT invent a component just because a real system of this "
+            "kind would normally have one. Fewer, grounded nodes beat many speculative ones.",
+            '4. SUPPORT TYPE: use "support_type": "explicit" when the evidence states that the '
+            'component exists, and "inferred" when you reasoned it out. Never claim "explicit" '
+            "for something the evidence only implies.",
+            "5. VISUAL-FIRST ARCHITECTURE: organize grounded components into logical layers such as Experience, Core Logic, Data, Integrations when the evidence supports them.",
+            "6. NODE LABELS: Keep node labels short, crisp, and professional (2-4 words).",
+            "7. RELATIONSHIPS: Connect components with directional data flow and a short edge label describing what actually moves.",
+            "8. SUPPORTING NOTES: use them only for decisions, constraints, assumptions, risks, or open questions. Each note must cite evidence_ids.",
+            "9. HUMAN READABILITY: A reviewer should be able to answer what enters the system, what transforms it, where state is stored, and what external systems participate.",
             "",
             f"Respond with ONLY JSON matching: {schema}",
             "",
@@ -206,7 +257,13 @@ class VisualPlanService:
             f"--- CURRENT CANVAS NODES --- {json.dumps(clean_current_nodes)[:800]}",
         ]
         if evidence_snippets:
-            lines += ["", "--- RELEVANT EVIDENCE ---"] + [f"- {s[:200]}" for s in evidence_snippets[:8]]
+            # IDs are shown so the planner can cite them. Without the id the
+            # model has no way to satisfy the grounding rule and every node
+            # would be discarded.
+            lines += ["", "--- RELEVANT EVIDENCE ---"] + [
+                f"- [EVIDENCE: {_evidence_id_of(s)}] {_snippet_text(s)[:200]}"
+                for s in evidence_snippets[:8]
+            ]
         if constraints:
             lines += ["", "--- VISUAL DESIGN CONSTRAINTS ---"] + [f"- {c}" for c in constraints]
         if focus_prompt:
@@ -411,17 +468,33 @@ class VisualPlanService:
         state_summary: Dict[str, Any],
         current_nodes: List[str],
         focus_prompt: Optional[str] = None,
-        evidence_snippets: Optional[List[str]] = None,
+        evidence_snippets: Optional[List[Any]] = None,
     ) -> VisualPlan:
         nodes: List[VisualNode] = []
         relationships: List[VisualRelationship] = []
-        notes_list: List[str] = []
+        notes_list: List[Any] = []
 
-        def add(node_id: str, label: str, node_type: str, group: Optional[str] = None, emphasis: str = "normal", annotations: Optional[List[str]] = None):
+        # Every deterministic node is grounded to the evidence it was derived
+        # from. Nodes that exist only as a scaffold carry no evidence and are
+        # therefore dropped by the compiler rather than presented as findings.
+        all_ids: List[str] = []
+        for s in evidence_snippets or []:
+            all_ids.extend(_snippet_ids(s))
+
+        def add(node_id: str, label: str, node_type: str, group: Optional[str] = None, emphasis: str = "normal", annotations: Optional[List[str]] = None, grounded: bool = True):
             if any(n.id == node_id or n.label.lower() == label.lower() for n in nodes):
                 return
             nodes.append(
-                VisualNode(id=node_id, label=label[:40], node_type=node_type, group=group, emphasis=emphasis, annotations=annotations or [])
+                VisualNode(
+                    id=node_id,
+                    label=label[:40],
+                    node_type=node_type,
+                    group=group,
+                    emphasis=emphasis,
+                    annotations=annotations or [],
+                    evidence_ids=all_ids[:2] if grounded else [],
+                    support_type="inferred",
+                )
             )
 
         project_title = state_summary.get("title") or "Project Architecture"
@@ -434,7 +507,13 @@ class VisualPlanService:
             "",
         )
 
-        text_corpus = (focus_prompt or "") + " " + " ".join(evidence_snippets or []) + " " + (state_summary.get("vision") or "")
+        text_corpus = (
+            (focus_prompt or "")
+            + " "
+            + " ".join(_snippet_text(s) for s in (evidence_snippets or []))
+            + " "
+            + (state_summary.get("vision") or "")
+        )
         lower_corpus = text_corpus.lower()
 
         if is_synora_meta:
@@ -463,34 +542,22 @@ class VisualPlanService:
             if "agentic layer" in lower_corpus:
                 notes_list.append("Agentic Layer enables autonomous task classification and background plan execution.")
         else:
-            # Concrete domain architecture for user projects (e.g. Dinein, Solana, etc.)
-            is_dinein = "dinein" in project_title.lower() or "dinein" in lower_corpus or "table ordering" in lower_corpus
-            if is_dinein:
-                add("client_qr", "Table QR Web App", "client", group="frontend")
-                add("agent_table", "Table Ordering Agent", "service", group="core", emphasis="primary", annotations=["Autonomous order processing", "Validates item availability"])
-                add("svc_kds", "Kitchen Display API", "service", group="core", annotations=["Real-time ticket dispatch"])
-                add("svc_pos", "POS Integration Service", "service", group="external", annotations=["Bill settlement"])
-                add("db_orders", "Orders & Menu Database", "datastore", group="storage", annotations=["PostgreSQL ledger"])
-
-                relationships.extend([
-                    VisualRelationship(source="client_qr", target="agent_table"),
-                    VisualRelationship(source="agent_table", target="db_orders"),
-                    VisualRelationship(source="agent_table", target="svc_kds"),
-                    VisualRelationship(source="agent_table", target="svc_pos"),
-                ])
-                notes_list.append("⚡ Table Ordering Agent: Autonomously validates table orders, calculates bills, and dispatches to kitchen.")
-                notes_list.append("📋 Real-time KDS: WebSocket push stream to Kitchen Display System for zero-latency ticket display.")
-                notes_list.append("💡 POS Integration: Direct sync with POS ledger avoiding manual cashier re-entry.")
-            else:
-                # Domain decomposition based on project title
-                add("client_app", f"{project_title} Client", "client")
-                add("core_svc", f"{project_title} Core Service", "service", emphasis="primary")
-                add("primary_db", f"{project_title} Database", "datastore")
-                relationships.extend([
-                    VisualRelationship(source="client_app", target="core_svc"),
-                    VisualRelationship(source="core_svc", target="primary_db"),
-                ])
-                notes_list.append(f"Core service architecture and data persistence for {project_title}.")
+            # Generic decomposition derived from the project's own title and
+            # description. A previous version matched "dinein" / "table ordering"
+            # and emitted a fixed restaurant architecture with invented
+            # annotations ("Real-time ticket dispatch", "Bill settlement").
+            # Because that branch triggered on corpus keywords rather than the
+            # project's own evidence, any restaurant-adjacent project was
+            # rendered as that hardcoded diagram. Nothing here is asserted as
+            # fact: every node is marked inferred and carries no evidence, so
+            # the compiler's grounding rules decide what survives.
+            add("client_app", f"{project_title} Client", "client", group="experience")
+            add("core_svc", f"{project_title} Core Service", "service", group="core", emphasis="primary")
+            add("primary_db", f"{project_title} Database", "datastore", group="data")
+            relationships.extend([
+                VisualRelationship(source="client_app", target="core_svc"),
+                VisualRelationship(source="core_svc", target="primary_db"),
+            ])
 
         # Incorporate explicit architecture components from project state
         architecture = state_summary.get("architecture") or []
@@ -502,7 +569,10 @@ class VisualPlanService:
             ) or f"Component {index + 1}"
             add(f"arch_{index}", str(label), "service", group="architecture")
 
-        # Incorporate requirements & decisions as domain nodes or notes
+        # Incorporate requirements & decisions as domain nodes or notes.
+        # These come from approved Project State, so they are the most strongly
+        # grounded elements available: each carries the evidence ids recorded
+        # when it was approved.
         requirements = state_summary.get("requirements") or []
         for index, entry in enumerate(requirements[:4]):
             label = (
@@ -510,7 +580,16 @@ class VisualPlanService:
                 if isinstance(entry, dict)
                 else str(entry)
             ) or f"Requirement {index + 1}"
-            add(f"req_{index}", str(label), "requirement", group="requirements")
+            state_ev = entry.get("evidence_ids") if isinstance(entry, dict) else None
+            add(
+                f"req_{index}",
+                str(label),
+                "requirement",
+                group="requirements",
+                grounded=bool(state_ev) or bool(all_ids),
+            )
+            if nodes and state_ev:
+                nodes[-1].evidence_ids = list(state_ev)[:3]
 
         decisions = state_summary.get("decisions") or []
         for index, entry in enumerate(decisions[:4]):
@@ -519,14 +598,31 @@ class VisualPlanService:
                 if isinstance(entry, dict)
                 else str(entry)
             ) or f"Decision {index + 1}"
-            add(f"dec_{index}", str(label), "decision", group="decisions")
+            state_ev = entry.get("evidence_ids") if isinstance(entry, dict) else None
+            add(
+                f"dec_{index}",
+                str(label),
+                "decision",
+                group="decisions",
+                grounded=bool(state_ev) or bool(all_ids),
+            )
+            if nodes and state_ev:
+                nodes[-1].evidence_ids = list(state_ev)[:3]
 
-        # Extract actionable directives into high-efficiency notes
-        import re
+        # Extract actionable directives into high-efficiency notes. The note
+        # quotes the user's own directive rather than asserting a design
+        # decision, and it cites the evidence it was read from.
         task_match = re.search(r"\b(add|create|build|implement|deploy|integrate)\s+(?:an?\s+)?([^.\n\r]{3,40})", text_corpus, re.IGNORECASE)
-        if task_match and not any("⚡" in n for n in notes_list):
+        if task_match:
             directive_label = f"{task_match.group(1).capitalize()} {task_match.group(2).strip()}"[:45]
-            notes_list.append(f"⚡ Directive: {directive_label}")
+            notes_list.append(
+                {
+                    "text": f"Directive: {directive_label}",
+                    "kind": "directive",
+                    "order": len(notes_list),
+                    "evidence_ids": all_ids[:3],
+                }
+            )
 
         return VisualPlan(
             title=project_title,
@@ -540,7 +636,7 @@ class VisualPlanService:
             prompt_version="visual-plan-deterministic-v2",
         )
 
-    def _plan_from_text_deterministic(self, text: str, title: str) -> VisualPlan:
+    def _plan_from_text_deterministic(self, text: str, title: str, evidence_id: str = "") -> VisualPlan:
         """Deterministic fallback when AI model is offline: extracts keywords/entities directly from text."""
         import re
         nodes: List[VisualNode] = []
@@ -609,17 +705,16 @@ class VisualPlanService:
 
         for idx, (label, ntype) in enumerate(known_components):
             nid = f"node_{idx}"
-            nodes.append(VisualNode(id=nid, label=label, node_type=ntype))
+            nodes.append(VisualNode(id=nid, label=label, node_type=ntype, evidence_ids=[evidence_id] if evidence_id else []))
             if idx > 0:
-                relationships.append(VisualRelationship(source=f"node_{idx-1}", target=nid))
+                relationships.append(VisualRelationship(source=f"node_{idx-1}", target=nid, evidence_ids=[evidence_id] if evidence_id else []))
 
         notes = []
-        if "agent" in lower_text or "automated" in lower_text:
-            notes.append("⚡ Automated Agent: Autonomously handles processing and service orchestration without manual intervention.")
-        if "table ordering" in lower_text or "dinein" in lower_text:
-            notes.append("📋 Direct table ordering stream with automated kitchen dispatch and POS integration.")
-        if not notes:
-            notes.append(f"Architectural components synthesized from: {text[:60]}")
+        # Notes describe what was actually supplied, not a guessed domain. The
+        # previous version asserted "Direct table ordering stream with
+        # automated kitchen dispatch" whenever the text merely mentioned
+        # "dinein", which stated a product decision nobody had made.
+        notes.append(f"Architectural components synthesized from: {text[:60]}")
 
         return VisualPlan(
             title=title,

@@ -305,19 +305,46 @@ class UnknownClusterService:
         profile.technical_concepts_json = json.dumps(draft.get("technical_concepts", []))
         db.commit()
 
-        # Initialize Visual Workspace with initial compiled diagram
+        # Initialize Visual Workspace with initial compiled diagram.
+        # The component names come from the draft, which is a user-authored
+        # source, so they are citable. The compiler refuses ungrounded nodes,
+        # so the draft gets a stable content-derived evidence id rather than
+        # the nodes being emitted with no provenance at all.
+        from app.services.visual_plan_service import _text_evidence_id
+
+        draft_evidence_id = _text_evidence_id(
+            " ".join([name, description] + [str(n) for n in draft.get("initial_architecture_nodes", [])])
+        )
         initial_nodes = draft.get("initial_architecture_nodes", ["Client", "Service", "Database"])
         nodes = [
-            VisualNode(id=f"node_{re.sub(r'[^a-zA-Z0-9]+', '_', n.lower())}", label=n, node_type="service")
+            VisualNode(
+                id=f"node_{re.sub(r'[^a-zA-Z0-9]+', '_', n.lower())}",
+                label=n,
+                node_type="service",
+                evidence_ids=[draft_evidence_id],
+                support_type="explicit",
+            )
             for n in initial_nodes
         ]
         rels = []
         if len(nodes) >= 2:
-            rels.append(VisualRelationship(source=nodes[0].id, target=nodes[1].id, label="requests"))
+            rels.append(VisualRelationship(source=nodes[0].id, target=nodes[1].id, label="requests", evidence_ids=[draft_evidence_id], support_type="inferred"))
         if len(nodes) >= 3:
-            rels.append(VisualRelationship(source=nodes[1].id, target=nodes[2].id, label="persists"))
+            rels.append(VisualRelationship(source=nodes[1].id, target=nodes[2].id, label="persists", evidence_ids=[draft_evidence_id], support_type="inferred"))
 
-        plan = VisualPlan(title=name, nodes=nodes, relationships=rels, notes=["Initial architecture baseline"])
+        plan = VisualPlan(
+            title=name,
+            nodes=nodes,
+            relationships=rels,
+            notes=[
+                {
+                    "text": "Initial architecture baseline proposed from the project draft.",
+                    "kind": "assumption",
+                    "order": 0,
+                    "evidence_ids": [draft_evidence_id],
+                }
+            ],
+        )
         scene = ExcalidrawCompiler().compile(plan)
 
         VisualRevisionService().commit_revision(

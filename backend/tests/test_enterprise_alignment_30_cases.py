@@ -450,8 +450,8 @@ def test_case_26_visual_plan_validates():
     plan = VisualPlan(
         title="Valid Architecture",
         nodes=[
-            VisualNode(id="auth", label="Auth Service", type="service"),
-            VisualNode(id="redis", label="Redis Cache", type="infrastructure"),
+            VisualNode(id="auth", label="Auth Service", type="service", evidence_ids=["ev_1"]),
+            VisualNode(id="redis", label="Redis Cache", type="infrastructure", evidence_ids=["ev_1"]),
         ],
         edges=[
             VisualRelationship(from_node="auth", to_node="redis", label="session"),
@@ -469,9 +469,9 @@ def test_case_27_28_compiler_layout_and_no_overlap():
     plan = VisualPlan(
         title="Microservice Topology",
         nodes=[
-            VisualNode(id="gw", label="API Gateway", node_type="client"),
+            VisualNode(id="gw", label="API Gateway", node_type="client", evidence_ids=["ev_1"]),
             VisualNode(id="auth", label="Auth Service", node_type="service"),
-            VisualNode(id="db", label="Primary PostgreSQL", node_type="datastore"),
+            VisualNode(id="db", label="Primary PostgreSQL", node_type="datastore", evidence_ids=["ev_1"]),
         ],
         relationships=[
             VisualRelationship(source="gw", target="auth"),

@@ -681,8 +681,8 @@ def test_29_excalidraw_compilation_is_deterministic():
     plan = VisualPlan(
         title="Deterministic Baseline",
         nodes=[
-            VisualNode(id="node_auth", label="Auth Service", node_type="service"),
-            VisualNode(id="node_db", label="User DB", node_type="database"),
+            VisualNode(id="node_auth", label="Auth Service", node_type="service", evidence_ids=["ev_1"]),
+            VisualNode(id="node_db", label="User DB", node_type="database", evidence_ids=["ev_1"]),
         ],
         relationships=[
             VisualRelationship(source="node_auth", target="node_db", label="queries"),

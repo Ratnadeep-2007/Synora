@@ -14,6 +14,28 @@ class VisualNode(BaseModel):
     group: Optional[str] = None
     emphasis: Optional[str] = Field(default=None, description="normal | primary | muted")
     annotations: List[str] = []
+    # Provenance. A node must cite the evidence that justifies it.
+    # support_type separates what the source actually stated from what the
+    # model inferred on top of it.
+    evidence_ids: List[str] = Field(default=[], description="Evidence ids justifying this node")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_evidence(cls, data: Any) -> Any:
+        """Accept a bare string where a list of ids was requested."""
+        if isinstance(data, dict):
+            raw = data.get("evidence_ids")
+            if isinstance(raw, str):
+                data = dict(data)
+                data["evidence_ids"] = [raw]
+            elif isinstance(raw, tuple):
+                data = dict(data)
+                data["evidence_ids"] = list(raw)
+        return data
+    support_type: str = Field(
+        default="inferred",
+        description="explicit = stated in evidence; inferred = reasoned by the model",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -22,6 +44,13 @@ class VisualNode(BaseModel):
             if "type" in data and "node_type" not in data:
                 data = dict(data)
                 data["node_type"] = data.pop("type")
+            # Tolerate singular / alternate evidence spellings from the model.
+            if "evidence_ids" not in data:
+                for alt in ("evidence_id", "evidence", "sources", "source"):
+                    if alt in data:
+                        data = dict(data)
+                        data["evidence_ids"] = data.pop(alt)
+                        break
         return data
 
     @property
@@ -36,6 +65,21 @@ class VisualRelationship(BaseModel):
     target: str
     label: Optional[str] = None
     style: Optional[str] = Field(default="solid", description="solid | dashed")
+    evidence_ids: List[str] = Field(default=[], description="Evidence ids justifying this edge")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_edge_evidence(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            raw = data.get("evidence_ids")
+            if isinstance(raw, str):
+                data = dict(data)
+                data["evidence_ids"] = [raw]
+            elif isinstance(raw, tuple):
+                data = dict(data)
+                data["evidence_ids"] = list(raw)
+        return data
+    support_type: str = Field(default="inferred", description="explicit | inferred")
 
     @model_validator(mode="before")
     @classmethod
@@ -50,6 +94,11 @@ class VisualRelationship(BaseModel):
                 data["target"] = data.pop("to")
             elif "to_node" in data and "target" not in data:
                 data["target"] = data.pop("to_node")
+            if "evidence_ids" not in data:
+                for alt in ("evidence_id", "evidence", "sources", "source_ids"):
+                    if alt in data:
+                        data["evidence_ids"] = data.pop(alt)
+                        break
         return data
 
 

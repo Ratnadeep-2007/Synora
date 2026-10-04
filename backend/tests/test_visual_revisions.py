@@ -20,6 +20,34 @@ def _project(db: Session, project_id: str = "proj_visual_test") -> Project:
     return p
 
 
+def _add_evidence(db: Session, project_id: str = "proj_visual_test", content: str = "The platform uses Redis for session storage."):
+    """Grounding requires citable evidence before any plan may be compiled."""
+    from app.models.evidence import Evidence
+    from app.models.source_event import SourceEvent
+
+    event = SourceEvent(
+        event_id="sev_visual_test",
+        project_id=project_id,
+        source="test",
+        source_event_id="visual-test-1",
+        event_type="test",
+        payload_json="{}",
+    )
+    db.add(event)
+    db.commit()
+
+    row = Evidence(
+        project_id=project_id,
+        source="test",
+        source_event_id="sev_visual_test",
+        content=content,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def _scene(labels):
     """Scene where the element id is derived from the label, so a label swap is
     reported as added+removed rather than a change to the same element."""
@@ -102,6 +130,7 @@ def test_get_missing_revision_errors(db_session: Session):
 # 23/25. Proposal does not mutate workspace before approval; links state+evidence
 def test_proposal_pending_does_not_mutate_current_revision(db_session: Session):
     _project(db_session)
+    _add_evidence(db_session)
     _ensure_state(db_session, "proj_visual_test")
     excal = ExcalidrawService()
     artifact = excal.get_or_create_artifact("proj_visual_test", db_session)
@@ -126,6 +155,7 @@ def test_proposal_pending_does_not_mutate_current_revision(db_session: Session):
 
 def test_approval_creates_traceable_revision(db_session: Session):
     _project(db_session)
+    _add_evidence(db_session)
     _ensure_state(db_session, "proj_visual_test")
     excal = ExcalidrawService()
     excal.get_or_create_artifact("proj_visual_test", db_session)
