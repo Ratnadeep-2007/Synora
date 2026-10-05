@@ -29,6 +29,19 @@ class TranscriptEntryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AutoCaptureArmRequest(BaseModel):
+    """Arm voice-activated capture for a meeting."""
+
+    project_id: str = Field(..., description="Project the meeting is filed under")
+    candidate_project_ids: List[str] = Field(
+        default=[],
+        description="Projects this meeting may discuss; evidence is routed per row",
+    )
+    max_minutes: int = Field(default=20, ge=1, le=180)
+    speakers: int = Field(default=0, ge=0, le=12, description="0 = auto-detect")
+    keep_audio: bool = True
+
+
 class MeetingEvidenceRouteRequest(BaseModel):
     """Route a multi-project meeting's evidence across candidate projects."""
 

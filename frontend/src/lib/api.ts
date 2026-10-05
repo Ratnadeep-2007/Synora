@@ -143,6 +143,38 @@ export const api = {
   getMeetings: (): Promise<MeetingItem[]> =>
     request<MeetingItem[]>("/meetings"),
 
+  // Voice-activated capture. arm starts the recorder (which waits for a voice),
+  // status is polled to drive the UI, stop terminates it early.
+  armAutoCapture: (payload: {
+    project_id: string;
+    candidate_project_ids?: string[];
+    max_minutes?: number;
+    speakers?: number;
+    keep_audio?: boolean;
+  }): Promise<any> =>
+    request<any>("/meetings/auto-capture/arm", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  autoCaptureStatus: (): Promise<any> => request<any>("/meetings/auto-capture/status"),
+
+  stopAutoCapture: (): Promise<any> =>
+    request<any>("/meetings/auto-capture/stop", { method: "POST" }),
+
+  routeMeetingEvidence: (
+    meetingId: string,
+    candidateProjectIds: string[],
+    dryRun = false
+  ): Promise<any> =>
+    request<any>(`/meetings/${meetingId}/route-evidence`, {
+      method: "POST",
+      body: JSON.stringify({
+        candidate_project_ids: candidateProjectIds,
+        dry_run: dryRun,
+      }),
+    }),
+
   syncGoogleMeetings: (maxConferences?: number): Promise<any> =>
     request<any>(`/meetings/sync${maxConferences ? `?max_conferences=${maxConferences}` : ""}`, {
       method: "POST",

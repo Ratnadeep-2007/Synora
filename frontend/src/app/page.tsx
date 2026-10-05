@@ -447,6 +447,43 @@ export default function Home() {
     }
   };
 
+  // Voice-activated meeting capture. The API process spawns the recorder, so
+  // polling status is enough to drive the whole UI.
+  const [captureStatus, setCaptureStatus] = useState<any>(null);
+
+  const pollCapture = useCallback(async () => {
+    try {
+      setCaptureStatus(await api.autoCaptureStatus());
+    } catch {
+      /* status polling must never break the page */
+    }
+  }, []);
+
+  useEffect(() => {
+    pollCapture();
+    const id = setInterval(pollCapture, 3000);
+    return () => clearInterval(id);
+  }, [pollCapture]);
+
+  const handleArmCapture = async (opts: {
+    project_id: string;
+    candidate_project_ids: string[];
+    max_minutes: number;
+    speakers: number;
+  }) => {
+    const res = await api.armAutoCapture(opts);
+    if (!(res as any)?.ok) {
+      const problems = (res as any)?.problems?.join(" ") || "capture unavailable";
+      throw new Error(problems);
+    }
+    await pollCapture();
+  };
+
+  const handleStopCapture = async () => {
+    await api.stopAutoCapture();
+    await pollCapture();
+  };
+
   const handleIngestTranscript = async (payload: {
     title: string;
     raw_transcript: string;
@@ -708,6 +745,11 @@ export default function Home() {
             onProcessPipeline={handleProcessPipeline}
             onSyncGoogleMeet={handleSyncGoogleMeet}
             onIngestTranscript={handleIngestTranscript}
+            captureStatus={captureStatus}
+            onArmCapture={handleArmCapture}
+            onStopCapture={handleStopCapture}
+            projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+            activeProjectId={currentProjectId}
           />
         ) : (
           <MeetingDetailView
