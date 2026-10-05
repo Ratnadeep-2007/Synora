@@ -29,6 +29,20 @@ class TranscriptEntryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MeetingEvidenceRouteRequest(BaseModel):
+    """Route a multi-project meeting's evidence across candidate projects."""
+
+    candidate_project_ids: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Projects the meeting may legitimately touch",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Report the routing decisions without writing them",
+    )
+
+
 class TranscriptRead(BaseModel):
     id: str
     meeting_id: str

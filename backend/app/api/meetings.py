@@ -26,6 +26,7 @@ from app.core.exceptions import (
 from app.models.meeting import Meeting, Participant, Transcript, TranscriptEntry
 from app.models.user import User
 from app.schemas.meeting import (
+    MeetingEvidenceRouteRequest,
     MeetingDetailRead,
     MeetingRead,
     MeetingSyncResponse,
@@ -490,5 +491,49 @@ async def ingest_transcript_endpoint(
         entries_count=len(parsed_entries),
         pipeline_result=pipeline_res_dict,
     )
+
+
+@router.post(
+    "/{meeting_id}/route-evidence",
+    summary="Route a multi-project meeting's evidence across candidate projects",
+    description=(
+        "Files each evidence row under its best-matching project from the supplied "
+        "candidate set, using the same resolver WhatsApp routing uses. A meeting "
+        "may legitimately discuss several projects, but Evidence.project_id holds "
+        "exactly one, so the split happens per row. Rows the resolver cannot "
+        "separate confidently are left untouched and reported as unresolved rather "
+        "than guessed at."
+    ),
+)
+async def route_meeting_evidence(
+    meeting_id: str,
+    payload: MeetingEvidenceRouteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(Meeting.id == meeting_id, Meeting.user_id == current_user.id)
+        .first()
+    )
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting '{meeting_id}' not found for user '{current_user.id}'.",
+        )
+
+    from app.services.meeting_evidence_router import MeetingEvidenceRouter
+
+    try:
+        return MeetingEvidenceRouter().route_meeting_evidence(
+            meeting_id=meeting_id,
+            candidate_project_ids=payload.candidate_project_ids,
+            db=db,
+            tenant_id="default_tenant",
+            actor_id=current_user.id,
+            dry_run=payload.dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
