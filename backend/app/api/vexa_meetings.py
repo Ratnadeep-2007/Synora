@@ -56,8 +56,14 @@ async def start_vexa_capture(
             Meeting.provider == "google",
             Meeting.provider_conference_id == meeting_code,
         )
+        .order_by(Meeting.created_at.desc())
         .first()
     )
+
+    # A Meet link can be reused for a later session. Start a fresh Synora
+    # meeting record once the previous capture has been fully processed.
+    if meeting and get_capture_metadata(meeting).get("processed"):
+        meeting = None
 
     if not meeting:
         meeting = Meeting(
@@ -159,7 +165,6 @@ async def get_vexa_capture_status(
 @router.post("/meetings/{meeting_id}/stop")
 async def stop_vexa_capture(
     meeting_id: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -202,7 +207,9 @@ async def stop_vexa_capture(
     )
     meeting.status = "ACTIVE"
     db.commit()
-    background_tasks.add_task(process_vexa_meeting_background, meeting.id)
+    # The capture worker was queued when capture started. Vexa stop is
+    # asynchronous, so let that worker continue polling for the finalized
+    # recording rather than starting a second concurrent pipeline.
     return {
         "ok": True,
         "meeting_id": meeting.id,
@@ -226,6 +233,31 @@ async def process_vexa_capture(
     )
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found.")
+
+    capture = get_capture_metadata(meeting)
+    status_value = str(capture.get("status") or "").lower()
+    if capture.get("processed"):
+        return {
+            "ok": True,
+            "meeting_id": meeting.id,
+            "status": "completed",
+            "message": "This meeting has already been processed.",
+        }
+
+    if status_value in {
+        "starting",
+        "waiting_for_recording",
+        "recording_ready",
+        "transcribing",
+        "ingesting",
+        "stopping",
+    }:
+        return {
+            "ok": True,
+            "meeting_id": meeting.id,
+            "status": status_value,
+            "message": "Meeting processing is already active.",
+        }
 
     background_tasks.add_task(process_vexa_meeting_background, meeting.id)
     return {
