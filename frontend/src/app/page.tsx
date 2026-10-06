@@ -706,8 +706,6 @@ export default function Home() {
             vexaCaptureStatus={vexaCaptureStatus}
             onStartVexaCapture={handleStartVexaCapture}
             onStopVexaCapture={handleStopVexaCapture}
-            projects={projects.map((p) => ({ id: p.id, name: p.name }))}
-            activeProjectId={currentProjectId}
           />
         ) : (
           <MeetingDetailView
