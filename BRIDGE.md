@@ -241,6 +241,21 @@ That failure is **correct**: the code is not a real meeting, so Meet served an
 error page instead of a join screen. It confirms the whole chain executes —
 Synora → Vexa gateway → runtime → bot container → browser automation.
 
+## Speaker identity for 5+ person meetings
+
+Sarvam remains the diarization backbone. Synora keeps raw Sarvam speaker IDs separate from human names and never maps speakers by participant order.
+
+For better human-readable attribution, the bridge now:
+
+1. Reads Vexa participant names best-effort when the deployed Vexa version exposes the participants endpoint.
+2. Looks for explicit self-identification near the start of the meeting, such as: Hi, I'm Siddhi; My name is Neha; mera naam Ratnadeep hai; main Omesh hoon.
+3. Maps the matching Sarvam speaker cluster to that name.
+4. Marks roster-backed matches as confirmed, self-introduction-only matches as provisional, and conflicting claims as unresolved.
+5. Retains raw speaker IDs, identity status, confidence, and identity source for auditability.
+
+For a known five-person meeting, SARVAM_NUM_SPEAKERS=5 can be configured. Do not hard-code speaker order.
+
+Whisper fallback remains conservative and does not claim diarization or human identity from the mixed recording; fallback segments stay Unknown Speaker.
 ## 8. What is not proven
 
 ```text
@@ -302,6 +317,8 @@ transcribe.)*
 - Rejection of a recording with no audio locator
 - Sarvam diarized-entry extraction
 - Fallback selection: Whisper not invoked when Sarvam succeeds
+- Five-person identity resolution with explicit self-introduction
+- Unknown-speaker and identity-collision safety
 
 ## 11. Security
 
