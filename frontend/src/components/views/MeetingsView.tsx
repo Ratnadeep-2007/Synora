@@ -190,7 +190,8 @@ export function MeetingsView({
               {vexaCaptureStatus.speaker_identity
                 ? " " +
                   (vexaCaptureStatus.speaker_identity.confirmed_speakers || 0) +
-                  " speakers identified"
+                  (vexaCaptureStatus.speaker_identity.provisional_speakers || 0) +
+                  " speakers resolved"
                 : ""}. Project routing, shared memory, and Project Atlas updates are complete.
             </p>
           )}
