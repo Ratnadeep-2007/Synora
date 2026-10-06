@@ -38,6 +38,18 @@ services:
       - SARVAM_MAX_WAIT_SECONDS=${SARVAM_MAX_WAIT_SECONDS:-3600}
       - SARVAM_HTTP_TIMEOUT_SECONDS=${SARVAM_HTTP_TIMEOUT_SECONDS:-60}
       - SARVAM_UPLOAD_TIMEOUT_SECONDS=${SARVAM_UPLOAD_TIMEOUT_SECONDS:-900}
+      - WHISPER_ENABLED=${WHISPER_ENABLED:-true}
+      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3-turbo}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
+      - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-int8}
+      - WHISPER_LANGUAGE_CODE=${WHISPER_LANGUAGE_CODE:-}
+      - WHISPER_INITIAL_PROMPT=${WHISPER_INITIAL_PROMPT:-}
+      - WHISPER_BEAM_SIZE=${WHISPER_BEAM_SIZE:-5}
+      - WHISPER_VAD_FILTER=${WHISPER_VAD_FILTER:-true}
+      - WHISPER_CPU_THREADS=${WHISPER_CPU_THREADS:-4}
+      - WHISPER_MODEL_CACHE_DIR=${WHISPER_MODEL_CACHE_DIR:-/app/.cache/whisper}
+    volumes:
+      - whisper_model_cache:/app/.cache/whisper
     depends_on:
       db:
         condition: service_healthy
@@ -140,3 +152,4 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  whisper_model_cache:
