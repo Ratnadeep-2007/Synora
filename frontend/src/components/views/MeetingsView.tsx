@@ -38,6 +38,7 @@ const STATUS_LABELS: Record<string, string> = {
   transcribing: "Transcribing",
   ingesting: "Updating Synora",
   completed: "Completed",
+  stopping: "Finalizing recording",
   stopped: "Stopped",
   failed: "Failed",
 };
@@ -62,6 +63,7 @@ export function MeetingsView({
     "recording_ready",
     "transcribing",
     "ingesting",
+    "stopping",
   ].includes(status);
 
   const startCapture = async () => {
