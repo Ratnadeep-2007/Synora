@@ -26,6 +26,14 @@ class VexaSarvamError(RuntimeError):
 
 
 def parse_google_meet_code(meeting_url: str) -> str:
+    """Extract the native meeting code from a Google Meet join URL.
+
+    The code shape is validated rather than merely split on, because a wrong
+    code sends the bot to a meeting that does not exist and the failure then
+    looks like a Vexa join problem rather than a bad link. Google issues codes
+    as hyphen-separated groups (xxx-xxxx-xxx), so require that grouping and a
+    minimum length, while keeping the character set permissive.
+    """
     value = str(meeting_url or "").strip()
     match = re.fullmatch(
         r"https?://(?:www\.)?meet\.google\.com/([a-zA-Z0-9_-]+)(?:[/?#].*)?",
@@ -35,7 +43,14 @@ def parse_google_meet_code(meeting_url: str) -> str:
         raise VexaSarvamError(
             "Enter a standard Google Meet URL such as https://meet.google.com/abc-defg-hij."
         )
-    return match.group(1)
+
+    code = match.group(1)
+    if code.count("-") < 2 or len(code) < 10:
+        raise VexaSarvamError(
+            f"'{code}' is not a valid Google Meet code. "
+            "Enter a standard Google Meet URL such as https://meet.google.com/abc-defg-hij."
+        )
+    return code
 
 
 def _json_loads(value: Optional[str]) -> Dict[str, Any]:

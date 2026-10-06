@@ -102,10 +102,47 @@ async def test_resolve_audio_url_uses_vexa_raw_url_without_media_id():
 
 
 @pytest.mark.asyncio
-async def test_resolve_audio_url_rejects_recording_without_audio_locator():
+async def test_resolve_audio_url_rejects_recording_without_audio_locator(monkeypatch):
+    """A recording whose master metadata exposes no audio locator must fail clearly.
+
+    The locator is normally discovered from the master endpoint, so that call is
+    stubbed here. Without the stub this test reached the real Vexa gateway on
+    localhost:18056 and failed on its 401 rather than on the behaviour it asserts.
+    """
     service = VexaSarvamService(vexa_api_key="test")
+
+    class _Response:
+        def json(self):
+            return {"id": 42, "status": "completed"}
+
+    async def fake_request(*_args, **_kwargs):
+        return _Response()
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
     with pytest.raises(VexaSarvamError, match="media file ID or raw URL"):
         await service._resolve_audio_url({"id": 42, "status": "completed"})
+
+
+@pytest.mark.asyncio
+async def test_resolve_audio_url_discovers_raw_url_from_master(monkeypatch):
+    """The master endpoint is the source of truth when no raw_url is supplied."""
+    service = VexaSarvamService(
+        vexa_base_url="http://localhost:18056", vexa_api_key="test"
+    )
+
+    class _Response:
+        def json(self):
+            return {"media_file_id": 7, "raw_url": "/recordings/42/media/7/raw?type=audio"}
+
+    async def fake_request(*_args, **_kwargs):
+        return _Response()
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
+    recording_id, raw_url = await service._resolve_audio_url({"id": 42, "status": "completed"})
+    assert recording_id == "42"
+    assert raw_url == "http://localhost:18056/recordings/42/media/7/raw?type=audio"
 
 @pytest.mark.asyncio
 async def test_transcribe_with_fallback_does_not_call_whisper_when_sarvam_succeeds(monkeypatch):
