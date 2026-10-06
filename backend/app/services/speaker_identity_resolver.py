@@ -13,25 +13,25 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 _GENERIC_SPEAKER_PATTERNS = (
-    re.compile(r"^speaker(?:[_ -]?\\d+)?$", re.IGNORECASE),
+    re.compile(r"^speaker(?:[_ -]?\d+)?$", re.IGNORECASE),
     re.compile(r"^unknown(?: speaker| participant)?$", re.IGNORECASE),
     re.compile(r"^speaker$", re.IGNORECASE),
 )
 
 _INTRO_PATTERNS = (
     re.compile(
-        r"\\b(?:hi[ ,.!-]*)?(?:i am|i'm|im|my name is|this is)\\s+"
-        r"([A-Za-z][A-Za-z'.-]*(?:\\s+[A-Za-z][A-Za-z'.-]*){0,3})",
+        r"\b(?:hi[ ,.!-]*)?(?:i am|i'm|im|my name is|this is)\s+"
+        r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\\b(?:mera\\s+naam)\\s+"
-        r"([A-Za-z][A-Za-z'.-]*(?:\\s+[A-Za-z][A-Za-z'.-]*){0,3})\\s+hai\\b",
+        r"\b(?:mera\s+naam)\s+"
+        r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})\s+hai\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\\bmain\\s+"
-        r"([A-Za-z][A-Za-z'.-]*(?:\\s+[A-Za-z][A-Za-z'.-]*){0,3})\\s+hoon\\b",
+        r"\bmain\s+"
+        r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})\s+hoon\b",
         re.IGNORECASE,
     ),
 )
@@ -64,8 +64,8 @@ _STOPWORDS = {
 
 
 def normalize_person_name(value: Optional[str]) -> str:
-    value = re.sub(r"\\s+", " ", str(value or "").strip())
-    value = value.strip(" \\t\\r\\n.,!?;:()[]{}<>\"'")
+    value = re.sub(r"\s+", " ", str(value or "").strip())
+    value = value.strip(" \t\r\n.,!?;:()[]{}<>\"'")
     return value
 
 
