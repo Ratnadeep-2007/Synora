@@ -174,7 +174,8 @@ class VexaSarvamService:
         while datetime.now(timezone.utc) < deadline:
             data = await self.get_meeting_artifacts(meeting_code)
             for recording in data.get("recordings") or []:
-                if str(recording.get("status", "")).lower() == "completed":
+                status = str(recording.get("status", "") or "").strip().lower()
+                if status in {"completed", "complete", "done"} or recording.get("completed_at"):
                     return recording
             await asyncio.sleep(poll)
         raise VexaSarvamError(
@@ -213,8 +214,10 @@ class VexaSarvamService:
         if raw_url:
             raw_url = urljoin(self.vexa_base_url, raw_url)
 
-        if not media_file_id:
-            raise VexaSarvamError("Vexa recording has no audio media file ID.")
+        # Current Vexa returns a playable raw_url from the master endpoint.
+        # Only require media_file_id when we must construct that URL ourselves.
+        if not raw_url and not media_file_id:
+            raise VexaSarvamError("Vexa recording has no audio media file ID or raw URL.")
         if not raw_url:
             raw_url = urljoin(
                 self.vexa_base_url,
@@ -255,6 +258,7 @@ class VexaSarvamService:
             "model": settings.SARVAM_STT_MODEL,
             "mode": settings.SARVAM_STT_MODE,
             "with_diarization": settings.SARVAM_WITH_DIARIZATION,
+            "with_timestamps": True,
         }
         if settings.SARVAM_LANGUAGE_CODE.strip():
             job_parameters["language_code"] = settings.SARVAM_LANGUAGE_CODE.strip()
@@ -529,20 +533,53 @@ class VexaSarvamService:
             .first()
         )
         if existing:
+            capture = get_capture_metadata(meeting)
+            evidence_projects = (
+                db.query(Evidence.project_id)
+                .filter(
+                    Evidence.meeting_id == meeting.id,
+                    Evidence.project_id != SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID,
+                )
+                .distinct()
+                .all()
+            )
+            resolved_projects = sorted(
+                str(row[0]) for row in evidence_projects if row[0]
+            )
+            if not bool(capture.get("pipeline_processed")):
+                meeting.project_id = (
+                    resolved_projects[0]
+                    if len(resolved_projects) == 1
+                    else SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+                )
+                PipelineCoordinator().process_meeting_with_context(
+                    meeting_id=meeting.id,
+                    project_id=meeting.project_id,
+                    db=db,
+                    actor_id=meeting.user_id,
+                    workspace_id=meeting.workspace_id,
+                    tenant_id="default_tenant",
+                    correlation_id=f"vexa:{meeting.id}:retry",
+                )
+                _set_capture_metadata(meeting, {"pipeline_processed": True})
             _set_capture_metadata(
                 meeting,
                 {
                     "status": "completed",
                     "processed": True,
-                    "sarvam_job_id": sarvam_job_id,
-                    "recording_id": recording_id,
+                    "sarvam_job_id": sarvam_job_id or capture.get("sarvam_job_id"),
+                    "recording_id": recording_id or capture.get("recording_id"),
+                    "entries_count": len(existing.entries),
+                    "resolved_projects": resolved_projects,
                 },
             )
+            meeting.end_time = meeting.end_time or datetime.now(timezone.utc)
+            meeting.status = "ENDED"
             db.commit()
             return {
                 "transcript_id": existing.id,
                 "entries_count": len(existing.entries),
-                "resolved_projects": [],
+                "resolved_projects": resolved_projects,
             }
 
         segments = self.extract_sarvam_entries(sarvam_result)
@@ -717,6 +754,7 @@ class VexaSarvamService:
             {
                 "status": "completed",
                 "processed": True,
+                "pipeline_processed": True,
                 "sarvam_job_id": sarvam_job_id,
                 "recording_id": recording_id,
                 "entries_count": len(segments),
@@ -763,9 +801,19 @@ class VexaSarvamService:
             _set_capture_metadata(meeting, {"status": "transcribing"})
             db.commit()
 
+            content_type_lower = str(content_type or "").lower()
+            if "wav" in content_type_lower:
+                audio_extension = ".wav"
+            elif "webm" in content_type_lower:
+                audio_extension = ".webm"
+            elif "mp3" in content_type_lower or "mpeg" in content_type_lower:
+                audio_extension = ".mp3"
+            else:
+                audio_extension = ".audio"
+
             sarvam_result, job_id = await self.transcribe_with_sarvam(
                 audio_bytes,
-                f"{meeting.id}.webm",
+                f"{meeting.id}{audio_extension}",
                 content_type,
             )
             _set_capture_metadata(
@@ -782,12 +830,17 @@ class VexaSarvamService:
                 db,
             )
         except Exception as exc:
+            # Do not accidentally commit partial transcript/evidence rows from a failed
+            # transaction. The meeting capture state is recorded separately below.
+            db.rollback()
+            meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first() or meeting
             _set_capture_metadata(
                 meeting,
                 {
                     "status": "failed",
                     "error": str(exc)[:1000],
                     "processed": False,
+                    "pipeline_processed": False,
                 },
             )
             db.commit()
