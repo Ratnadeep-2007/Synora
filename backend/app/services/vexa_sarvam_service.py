@@ -16,7 +16,6 @@ from app.models.project import Project, SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.models.source_event import SourceEvent
 from app.services.context_resolution_service import ContextResolutionService
 from app.services.pipeline_coordinator import PipelineCoordinator
-from app.services.speaker_identity_resolver import SpeakerIdentityResolver, roster_names_from_vexa
 from app.services.whisper_transcription_service import WhisperFallbackError, WhisperTranscriptionService
 
 logger = logging.getLogger(__name__)
@@ -275,31 +274,11 @@ class VexaSarvamService:
             "content-type", "audio/webm"
         )
 
-    async def get_meeting_participants(self, meeting_code: str) -> Dict[str, Any]:
-        """Read Vexa's participant/speaker-name hints when the deployed Vexa version exposes them.
-
-        This is best-effort: older Vexa deployments may not have the participants route,
-        and lack of a roster must never block transcription.
-        """
-        async with httpx.AsyncClient(
-            base_url=self.vexa_base_url,
-            timeout=httpx.Timeout(settings.VEXA_HTTP_TIMEOUT_SECONDS),
-        ) as client:
-            response = await self._request(
-                client,
-                "GET",
-                f"meetings/google_meet/{meeting_code}/participants",
-                headers=self._vexa_headers(),
-            )
-            data = response.json()
-            return data if isinstance(data, dict) else {}
-
     async def transcribe_with_sarvam(
         self,
         audio_bytes: bytes,
         filename: str,
         content_type: str,
-        num_speakers: Optional[int] = None,
     ) -> Tuple[Dict[str, Any], str]:
         if not audio_bytes:
             raise VexaSarvamError("Vexa returned an empty audio recording.")
@@ -312,9 +291,8 @@ class VexaSarvamService:
         }
         if settings.SARVAM_LANGUAGE_CODE.strip():
             job_parameters["language_code"] = settings.SARVAM_LANGUAGE_CODE.strip()
-        speaker_count = num_speakers or settings.SARVAM_NUM_SPEAKERS
-        if speaker_count:
-            job_parameters["num_speakers"] = speaker_count
+        if settings.SARVAM_NUM_SPEAKERS:
+            job_parameters["num_speakers"] = settings.SARVAM_NUM_SPEAKERS
         if settings.SARVAM_KEYTERMS.strip():
             job_parameters["keyterms"] = [
                 item.strip()
@@ -696,18 +674,12 @@ class VexaSarvamService:
         routed_projects = set()
 
         for index, segment in enumerate(segments):
-            raw_speaker = str(
-                segment.get("raw_speaker") or segment.get("speaker") or "Unknown Speaker"
-            ).strip() or "Unknown Speaker"
-            speaker = str(
-                segment.get("speaker_name") or segment.get("speaker") or raw_speaker
-            ).strip() or raw_speaker
-
-            participant = participants.get(raw_speaker)
+            speaker = segment["speaker"]
+            participant = participants.get(speaker)
             if participant is None:
                 participant = Participant(
                     meeting_id=meeting.id,
-                    provider_participant_id=f"vexa:{raw_speaker}",
+                    provider_participant_id=f"vexa:{speaker}",
                     display_name=speaker,
                     metadata_json=_json_dump(
                         {
@@ -717,16 +689,12 @@ class VexaSarvamService:
                                 if transcription_provider == "sarvam_saaras"
                                 else "whisper_no_diarization"
                             ),
-                            "raw_speaker_id": raw_speaker,
-                            "identity_status": segment.get("speaker_identity_status"),
-                            "identity_confidence": segment.get("speaker_identity_confidence"),
-                            "identity_source": segment.get("speaker_identity_source"),
                         }
                     ),
                 )
                 db.add(participant)
                 db.flush()
-                participants[raw_speaker] = participant
+                participants[speaker] = participant
 
             base_time = meeting.start_time or datetime.now(timezone.utc)
             start_time = base_time + timedelta(seconds=max(0.0, segment["start_seconds"]))
@@ -747,11 +715,7 @@ class VexaSarvamService:
                         "capture_provider": "vexa",
                         "transcription_provider": transcription_provider,
                         "transcription_model": transcription_model,
-                        "speaker_id": raw_speaker,
-                        "speaker_name": speaker,
-                        "speaker_identity_status": segment.get("speaker_identity_status"),
-                        "speaker_identity_confidence": segment.get("speaker_identity_confidence"),
-                        "speaker_identity_source": segment.get("speaker_identity_source"),
+                        "speaker_id": speaker,
                         "segment_start_seconds": segment["start_seconds"],
                         "segment_end_seconds": segment["end_seconds"],
                     }
@@ -787,10 +751,6 @@ class VexaSarvamService:
                         {
                             "text": segment["text"],
                             "speaker_name": speaker,
-                            "raw_speaker_id": raw_speaker,
-                            "speaker_identity_status": segment.get("speaker_identity_status"),
-                            "speaker_identity_confidence": segment.get("speaker_identity_confidence"),
-                            "speaker_identity_source": segment.get("speaker_identity_source"),
                             "start_time": start_time.isoformat(),
                             "end_time": end_time.isoformat(),
                             "meeting_id": meeting.id,
@@ -977,30 +937,11 @@ class VexaSarvamService:
             db.commit()
 
             recording = await self.wait_for_completed_recording(meeting_code)
-
-            # Vexa's participant read is an identity hint, not an attendance guarantee.
-            # It is optional and must never block the actual transcription path.
-            participant_roster: Dict[str, Any] = {}
-            try:
-                participant_roster = await self.get_meeting_participants(meeting_code)
-            except Exception as exc:
-                logger.info(
-                    "vexa_participant_roster_unavailable: meeting=%s error=%s",
-                    meeting.id,
-                    exc,
-                )
-            known_participant_names = roster_names_from_vexa(
-                participant_roster,
-                bot_name=settings.VEXA_BOT_NAME,
-            )
-
             _set_capture_metadata(
                 meeting,
                 {
                     "status": "recording_ready",
                     "recording_id": recording.get("recording_id") or recording.get("id"),
-                    "participant_names": known_participant_names,
-                    "participant_roster_available": bool(participant_roster),
                 },
             )
             db.commit()
@@ -1050,18 +991,6 @@ class VexaSarvamService:
                 meeting.id,
             )
 
-            # Resolve Sarvam's generic speaker labels only from explicit evidence.
-            # No LLM guessing and no positional "speaker 0 = participant 0" mapping.
-            known_participant_names = [
-                str(name).strip()
-                for name in (get_capture_metadata(meeting).get("participant_names") or [])
-                if str(name).strip()
-            ]
-            segments, speaker_identity_summary = SpeakerIdentityResolver().resolve(
-                segments,
-                known_names=known_participant_names,
-            )
-
             _set_capture_metadata(
                 meeting,
                 {
@@ -1081,7 +1010,6 @@ class VexaSarvamService:
                         if transcription_provider == "whisper_faster_whisper"
                         else None
                     ),
-                    "speaker_identity": speaker_identity_summary,
                 },
             )
             db.commit()

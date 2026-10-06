@@ -20,20 +20,6 @@ export interface VexaCaptureStatus {
   transcription_fallback_reason?: string | null;
   sarvam_job_id?: string | null;
   whisper_job_id?: string | null;
-  participant_names?: string[];
-  participant_roster_available?: boolean;
-  speaker_identity?: {
-    confirmed_speakers?: number;
-    provisional_speakers?: number;
-    unresolved_speakers?: number;
-    total_speaker_keys?: number;
-    speaker_map?: Record<string, {
-      display_name?: string;
-      status?: string;
-      confidence?: number;
-      source?: string;
-    }>;
-  } | null;
   error?: string | null;
 }
 
@@ -186,12 +172,6 @@ export function MeetingsView({
               {vexaCaptureStatus.entries_count || 0} transcript entries processed
               {vexaCaptureStatus.transcription_provider
                 ? " • " + vexaCaptureStatus.transcription_provider
-                : ""}.
-              {vexaCaptureStatus.speaker_identity
-                ? " " +
-                  (vexaCaptureStatus.speaker_identity.confirmed_speakers || 0) +
-                  (vexaCaptureStatus.speaker_identity.provisional_speakers || 0) +
-                  " speakers resolved"
                 : ""}. Project routing, shared memory, and Project Atlas updates are complete.
             </p>
           )}

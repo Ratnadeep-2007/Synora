@@ -89,25 +89,6 @@ WHISPER_COMPUTE_TYPE=float16
 The backend loads Whisper lazily and Docker Compose persists the model cache in the
 whisper_model_cache volume.
 
-## Speaker identity for multi-person meetings
-
-Speaker separation and human identity are treated as separate problems.
-
-Sarvam Saaras v4 remains the diarization backbone. Keep SARVAM_WITH_DIARIZATION=true. When the human speaker count is known, set SARVAM_NUM_SPEAKERS to the expected count, for example 5 for a five-person meeting.
-
-After transcription, Synora runs the SpeakerIdentityResolver:
-
-- Vexa's participants endpoint is read best-effort and supplies candidate names.
-- Participants should introduce themselves once near the start using a simple phrase such as Hi, I'm Siddhi or mera naam Siddhi hai.
-- The matching Sarvam speaker cluster is associated with that name.
-- Roster-backed matches are confirmed; self-introduction-only matches are provisional.
-- Conflicting or missing evidence remains unresolved instead of being guessed.
-- Every transcript entry retains the raw speaker ID, identity status, confidence, and identity source.
-
-This avoids the unsafe rule SPEAKER_00 = first participant. Five speakers can therefore remain distinct even when a human name cannot be resolved.
-
-Whisper fallback does not claim diarization or human identity from the mixed recording and keeps Unknown Speaker.
-
 ## Processing behavior
 
 1. Vexa joins Google Meet and records the meeting.
