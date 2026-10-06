@@ -49,6 +49,9 @@ async def start_vexa_capture(
     except VexaSarvamError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    if background_tasks is None:
+        background_tasks = BackgroundTasks()
+
     meeting = (
         db.query(Meeting)
         .filter(
@@ -81,6 +84,7 @@ async def start_vexa_capture(
         "recording_ready",
         "transcribing",
         "ingesting",
+        "stopping",
     }:
         return {
             "ok": True,
@@ -159,6 +163,7 @@ async def get_vexa_capture_status(
 async def stop_vexa_capture(
     meeting_id: str,
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user),
 ):
     meeting = (
@@ -172,6 +177,14 @@ async def stop_vexa_capture(
     capture = get_capture_metadata(meeting)
     meeting_code = capture.get("meeting_code") or meeting.provider_conference_id
 
+    if capture.get("processed"):
+        return {
+            "ok": True,
+            "meeting_id": meeting.id,
+            "status": "completed",
+            "message": "This meeting has already been processed.",
+        }
+
     try:
         response = await VexaSarvamService().stop_capture(meeting_code)
     except VexaSarvamError as exc:
@@ -179,13 +192,26 @@ async def stop_vexa_capture(
         db.commit()
         raise HTTPException(status_code=502, detail=str(exc))
 
-    _set_capture_metadata(meeting, {"status": "stopped"})
-    meeting.status = "ENDED"
+    # Vexa's DELETE is asynchronous: it returns a stopping state while the
+    # recording is finalized. Keep Synora processing alive and let the same
+    # post-meeting worker wait for the completed recording.
+    _set_capture_metadata(
+        meeting,
+        {
+            "status": "stopping",
+            "stop_requested_at": datetime.now(timezone.utc).isoformat(),
+            "vexa_stop_response": response,
+        },
+    )
+    meeting.status = "ACTIVE"
     db.commit()
+    background_tasks = BackgroundTasks()
+    background_tasks.add_task(process_vexa_meeting_background, meeting.id)
     return {
         "ok": True,
         "meeting_id": meeting.id,
-        "status": "stopped",
+        "status": "stopping",
+        "message": "Vexa stop requested. Synora will process the recording once Vexa finalizes it.",
         "vexa": response,
     }
 
