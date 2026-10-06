@@ -330,10 +330,17 @@ class VexaSarvamService:
                 raise VexaSarvamError("Sarvam did not return an upload URL.")
 
             try:
+                # The upload URL is an Azure Blob Storage SAS URL. Azure
+                # requires x-ms-blob-type on Put Blob; without it the upload
+                # fails with 400 MissingRequiredHeader and the whole primary
+                # path falls back to Whisper. Seen live on 2026-10-06.
                 put_response = await client.put(
                     upload_url,
                     content=audio_bytes,
-                    headers={"Content-Type": content_type or "audio/webm"},
+                    headers={
+                        "Content-Type": content_type or "audio/webm",
+                        "x-ms-blob-type": "BlockBlob",
+                    },
                     timeout=httpx.Timeout(
                         connect=30.0,
                         read=settings.SARVAM_UPLOAD_TIMEOUT_SECONDS,
