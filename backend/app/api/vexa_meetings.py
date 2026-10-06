@@ -49,9 +49,6 @@ async def start_vexa_capture(
     except VexaSarvamError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if background_tasks is None:
-        background_tasks = BackgroundTasks()
-
     meeting = (
         db.query(Meeting)
         .filter(
@@ -162,8 +159,8 @@ async def get_vexa_capture_status(
 @router.post("/meetings/{meeting_id}/stop")
 async def stop_vexa_capture(
     meeting_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user),
 ):
     meeting = (
@@ -205,7 +202,6 @@ async def stop_vexa_capture(
     )
     meeting.status = "ACTIVE"
     db.commit()
-    background_tasks = BackgroundTasks()
     background_tasks.add_task(process_vexa_meeting_background, meeting.id)
     return {
         "ok": True,
