@@ -23,6 +23,8 @@ WORKDIR /app
 # Create unprivileged system user
 RUN groupadd -g 10001 synesis && \
     useradd -u 10001 -g synesis -s /bin/sh -d /app synesis
+    && mkdir -p /app/.cache/whisper \
+    && chown -R synesis:synesis /app/.cache
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /home/synesis/.local
