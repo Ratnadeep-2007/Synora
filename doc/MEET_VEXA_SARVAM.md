@@ -70,11 +70,15 @@ No additional Python STT SDK is required. Synora already depends on httpx.
 7. Hold the meeting normally.
 8. End the meeting.
 9. Vexa finishes the recording.
-10. Synora downloads the completed audio and submits it to Sarvam Batch STT.
-11. Synora stores timestamped transcript entries.
-12. Each segment is routed through Synora's existing context resolver.
-13. Evidence and candidate knowledge are processed by the shared pipeline.
-14. The resolved project memory and Project Atlas are updated.
+10. Synora resolves Vexa's completed audio recording and downloads the full audio once.
+11. Synora submits the full recording to Sarvam Saaras Batch STT with diarization and timestamps.
+12. Synora stores the returned speaker/timestamp segments as the meeting transcript.
+13. The segments are routed through Synora's existing context resolver and Evidence model.
+14. The existing shared intelligence pipeline processes the Evidence into project memory and Project Atlas updates.
+
+Vexa is deliberately configured with `transcribe_enabled=false`: Vexa captures the meeting only. Sarvam is the
+single transcription provider for this bridge. Synora does not run live STT or a second meeting-intelligence
+pipeline during capture.
 
 ## Important behavior
 
