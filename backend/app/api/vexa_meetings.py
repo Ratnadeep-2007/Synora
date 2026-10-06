@@ -86,6 +86,8 @@ async def start_vexa_capture(
         "waiting_for_recording",
         "recording_ready",
         "transcribing",
+        "transcribing_sarvam",
+        "transcribing_whisper",
         "ingesting",
         "stopping",
     }:
@@ -255,6 +257,8 @@ async def process_vexa_capture(
         "waiting_for_recording",
         "recording_ready",
         "transcribing",
+        "transcribing_sarvam",
+        "transcribing_whisper",
         "ingesting",
         "stopping",
     }:
