@@ -94,9 +94,19 @@ class VexaSarvamService:
         vexa_api_key: Optional[str] = None,
         sarvam_api_key: Optional[str] = None,
     ):
+        # An explicitly passed argument always wins, including an empty string.
+        # Previously `or` was used, so passing "" meant "no key" in intent but
+        # silently inherited the configured key instead. Any caller - including a
+        # test asserting the no-Sarvam fallback path - then reached the live
+        # Sarvam API instead of the branch it meant to exercise.
+        # None means "inherit from configuration"; "" means "explicitly disabled".
         self.vexa_base_url = (vexa_base_url or settings.VEXA_BASE_URL).rstrip("/") + "/"
-        self.vexa_api_key = (vexa_api_key or settings.VEXA_API_KEY).strip()
-        self.sarvam_api_key = (sarvam_api_key or settings.SARVAM_API_KEY).strip()
+        self.vexa_api_key = (
+            settings.VEXA_API_KEY if vexa_api_key is None else vexa_api_key
+        ).strip()
+        self.sarvam_api_key = (
+            settings.SARVAM_API_KEY if sarvam_api_key is None else sarvam_api_key
+        ).strip()
 
     def _vexa_headers(self) -> Dict[str, str]:
         if not self.vexa_api_key:
