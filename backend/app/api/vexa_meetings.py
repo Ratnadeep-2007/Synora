@@ -38,10 +38,10 @@ async def start_vexa_capture(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Vexa capture is disabled. Set VEXA_ENABLED=true.",
         )
-    if not settings.SARVAM_API_KEY.strip():
+    if not settings.SARVAM_API_KEY.strip() and not settings.WHISPER_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Sarvam STT is not configured. Set SARVAM_API_KEY.",
+            detail="No transcription provider is configured. Set SARVAM_API_KEY or enable WHISPER_ENABLED.",
         )
 
     try:
@@ -157,7 +157,13 @@ async def get_vexa_capture_status(
         "entries_count": capture.get("entries_count", 0),
         "resolved_projects": capture.get("resolved_projects", []),
         "recording_id": capture.get("recording_id"),
+        "transcription_provider": capture.get("transcription_provider"),
+        "transcription_model": capture.get("transcription_model"),
+        "transcription_job_id": capture.get("transcription_job_id"),
+        "transcription_fallback_used": bool(capture.get("transcription_fallback_used")),
+        "transcription_fallback_reason": capture.get("transcription_fallback_reason"),
         "sarvam_job_id": capture.get("sarvam_job_id"),
+        "whisper_job_id": capture.get("whisper_job_id"),
         "error": capture.get("error"),
     }
 
