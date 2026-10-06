@@ -196,6 +196,108 @@ class PipelineCoordinator:
 
         all_candidates = [c for items in candidates_by_project.values() for c in items]
 
+        # The canvas is a projection of per-project evidence. The WhatsApp
+        # path applies visual updates automatically after ingestion; the
+        # meeting path must do the same, or the canvas silently stops
+        # reflecting new knowledge while memory moves on. The same
+        # evidence-volume gate applies: below it the content still becomes
+        # evidence and knowledge, only the canvas update is withheld.
+        #
+        # This uses the evidence-linked patch path (generate + apply), not
+        # the raw text-to-diagram path: the planner behind the text path is
+        # never given real evidence IDs, so its nodes come back ungrounded
+        # and the compiler refuses the whole plan. The patch path records
+        # the actual evidence IDs and only auto-applies patches whose
+        # operations are add-only (SAFE_AUTO_APPLY).
+        visual_results: Dict[str, Dict[str, Any]] = {}
+        try:
+            from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID as _Unknown
+            from app.services.visual_patch_service import (
+                PatchSafetyClassification,
+                VisualPatchService,
+            )
+
+            patch_service = VisualPatchService()
+            for target_project_id, project_evidence in grouped.items():
+                if target_project_id == _Unknown:
+                    continue
+                total_evidence = (
+                    db.query(Evidence)
+                    .filter(Evidence.project_id == target_project_id)
+                    .count()
+                )
+                if total_evidence < 2:
+                    logger.info(
+                        "meet_visual_deferred: project=%s evidence=%d required=2",
+                        target_project_id,
+                        total_evidence,
+                    )
+                    visual_results[target_project_id] = {
+                        "applied": False,
+                        "reason": "deferred_below_evidence_gate",
+                    }
+                    continue
+                visual_text = "\n".join(
+                    e.content for e in project_evidence if e.content and e.content.strip()
+                )
+                if not visual_text.strip():
+                    continue
+                try:
+                    evidence_ids = [e.id for e in project_evidence]
+                    patch = patch_service.generate_patch_from_evidence(
+                        project_id=target_project_id,
+                        text=visual_text,
+                        db=db,
+                        evidence_ids=evidence_ids,
+                        tenant_id=tenant_id,
+                    )
+                    if patch.safety_classification == PatchSafetyClassification.SAFE_AUTO_APPLY:
+                        patch_service.apply_patch(
+                            project_id=target_project_id,
+                            patch=patch,
+                            db=db,
+                            actor_id=actor_id,
+                            tenant_id=tenant_id,
+                        )
+                        applied = True
+                        reason = "auto_applied_safe_patch"
+                    else:
+                        applied = False
+                        reason = (
+                            f"held_for_review:{patch.safety_classification.value}"
+                        )
+                        logger.info(
+                            "meet_visual_held_for_review: project=%s safety=%s",
+                            target_project_id,
+                            patch.safety_classification.value,
+                        )
+                    visual_results[target_project_id] = {
+                        "applied": applied,
+                        "reason": reason,
+                        "patch_id": patch.patch_id,
+                    }
+                    logger.info(
+                        "meet_visual_updated: project=%s applied=%s",
+                        target_project_id,
+                        applied,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "meet_visual_failed: project=%s error=%s",
+                        target_project_id,
+                        exc,
+                    )
+                    visual_results[target_project_id] = {
+                        "applied": False,
+                        "reason": str(exc)[:500],
+                    }
+        except Exception as exc:
+            logger.warning(
+                "meet_visual_skipped: meeting_id=%s error=%s",
+                meeting_id,
+                exc,
+            )
+
         # Meet has additional session-level structure (speakers, timestamps,
         # segments, action-item owner hints and memory deltas). This is a
         # source-specific projection over the SAME shared Evidence/Candidate/
