@@ -9,6 +9,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - ENVIRONMENT=production
       - DATABASE_URL=postgresql://synesis_app:synesis_secure_pass_prod@db:5432/synesis_db
@@ -19,7 +21,7 @@ services:
       - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8000/auth/google/callback}
       - FRONTEND_URL=http://localhost:3000
       - VEXA_ENABLED=${VEXA_ENABLED:-false}
-      - VEXA_BASE_URL=${VEXA_BASE_URL:-http://localhost:18056}
+      - VEXA_BASE_URL=${VEXA_BASE_URL:-http://host.docker.internal:18056}
       - VEXA_API_KEY=${VEXA_API_KEY:-}
       - VEXA_BOT_NAME=${VEXA_BOT_NAME:-Synora}
       - VEXA_POLL_INTERVAL_SECONDS=${VEXA_POLL_INTERVAL_SECONDS:-10}
@@ -31,7 +33,6 @@ services:
       - SARVAM_STT_MODE=${SARVAM_STT_MODE:-codemix}
       - SARVAM_WITH_DIARIZATION=${SARVAM_WITH_DIARIZATION:-true}
       - SARVAM_LANGUAGE_CODE=${SARVAM_LANGUAGE_CODE:-}
-      - SARVAM_NUM_SPEAKERS=${SARVAM_NUM_SPEAKERS:-}
       - SARVAM_KEYTERMS=${SARVAM_KEYTERMS:-Synora,Excalidraw,WhatsApp,Google Meet}
       - SARVAM_POLL_INTERVAL_SECONDS=${SARVAM_POLL_INTERVAL_SECONDS:-5}
       - SARVAM_MAX_WAIT_SECONDS=${SARVAM_MAX_WAIT_SECONDS:-3600}
