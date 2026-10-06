@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     CONTEXT_RESOLUTION_EVIDENCE_LIMIT: int = Field(default=12)
     AUTO_APPLY_VISUAL_UPDATES: bool = Field(default=True, description="Whether incoming messages auto-apply diagrams directly to Excalidraw")
     WHATSAPP_PROCESSING_INTERVAL_SECONDS: int = Field(default=60, ge=1, description="Durable processing window in seconds.")
+    # Memory-to-canvas reconciliation: how often the background loop checks
+    # whether approved project memory has outrun the visual workspace.
+    VISUAL_SYNC_INTERVAL_SECONDS: int = Field(default=30, ge=5, le=3600)
     WHATSAPP_BATCH_POLL_SECONDS: int = Field(default=1, ge=1, description="Interval for background batch worker to poll.")
     WHATSAPP_BATCH_MAX_MESSAGES: int = Field(default=100, ge=1, le=1000)
     WHATSAPP_BATCH_MAX_RETRIES: int = Field(default=3, ge=1, le=20)

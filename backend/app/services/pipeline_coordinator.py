@@ -162,7 +162,7 @@ class PipelineCoordinator:
                     conflicts_created.append(conflict)
                     cand_conflicts.add(cand.id)
 
-                if cand.category in ("proposal", "decision_candidate", "requirement_candidate"):
+                if cand.category in ("proposal", "decision_candidate", "requirement_candidate", "decision", "requirement"):
                     change = self.state_service.propose_change_from_candidate(
                         candidate=cand,
                         db=db,

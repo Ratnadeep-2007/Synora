@@ -42,6 +42,24 @@ class MeetingIntelligenceService:
             lines.append(f"[EVIDENCE: {ev.id}] {speaker}: {ev.content}")
         return "\n".join(lines)
 
+    # Canonical category vocabulary. The extractor prompt historically asked
+    # for short forms ("decision", "requirement") while every downstream
+    # consumer - the pipeline coordinator's proposal branch and the memory
+    # service's STATE_TARGETS - only understands the "_candidate" forms.
+    # Candidates persisted under the short forms fell through both branches:
+    # never proposed, never memorized. Verified live 2026-10-06: two meeting
+    # candidates with category "decision" produced zero state changes.
+    CATEGORY_ALIASES = {
+        "decision": "decision_candidate",
+        "requirement": "requirement_candidate",
+    }
+
+    @classmethod
+    def normalize_category(cls, category: Optional[str]) -> str:
+        """Map a produced category onto the canonical vocabulary."""
+        value = str(category or "").strip().lower()
+        return cls.CATEGORY_ALIASES.get(value, value)
+
     # The model previously labelled everything "proposal", so meetings that
     # plainly contained decisions and requirements projected as zero decisions
     # and zero requirements. The categories are spelled out because the model
@@ -49,10 +67,10 @@ class MeetingIntelligenceService:
     CATEGORY_GUIDE = """
 CLASSIFY EACH ITEM INTO EXACTLY ONE CATEGORY. These boundaries matter:
 
-- decision: the team has ALREADY settled it. Look for agreement, commitment or
+- decision_candidate: the team has ALREADY settled it. Look for agreement, commitment or
   present-tense statements of fact ("we decided", "we will use", "we are going
   with", "keep it separate"). A decision is NOT a suggestion.
-- requirement: the product or system must do something. Look for "must", "needs
+- requirement_candidate: the product or system must do something. Look for "must", "needs
   to", "has to", "should be able to", or an explicit capability demand.
 - constraint: a rule or limit that restricts the design ("never charge before
   stock confirmation", "read only, no writes", "must not exceed").
@@ -68,7 +86,7 @@ Service" is a DECISION, not a proposal. If nobody disagreed and it is stated as
 the way things will be, it is a decision.
 
 Return "category" as exactly one of these lowercase words:
-decision | requirement | constraint | action_item | question | assumption | proposal
+decision_candidate | requirement_candidate | constraint | action_item | question | assumption | proposal
 """
 
     def extract_proposals(self, evidence_list: List[Evidence]) -> List[CandidateItemDTO]:
@@ -157,6 +175,9 @@ decision | requirement | constraint | action_item | question | assumption | prop
         persisted_candidates: List[CandidateKnowledge] = []
 
         for item in batch_result.items:
+            # Normalize onto the canonical vocabulary before anything else,
+            # so dedup and persistence agree on the stored form.
+            item.category = self.normalize_category(item.category)
             # Deterministic Validation Rule 1: Must have non-empty evidence IDs
             if not item.evidence_ids or len(item.evidence_ids) == 0:
                 logger.warning(f"Rejected candidate '{item.title}' without evidence reference.")
@@ -252,6 +273,9 @@ decision | requirement | constraint | action_item | question | assumption | prop
 
         persisted_candidates: List[CandidateKnowledge] = []
         for item in batch_result.items:
+            # Same canonicalization as analyze_meeting_evidence: the stored
+            # category is what the coordinator and memory service match on.
+            item.category = self.normalize_category(item.category)
             if not item.evidence_ids or len(item.evidence_ids) == 0:
                 continue
 

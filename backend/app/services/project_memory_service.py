@@ -30,8 +30,10 @@ class ProjectMemoryService:
 
     STATE_TARGETS = {
         "requirement_candidate": "requirements",
+        "requirement": "requirements",
         "proposal": "requirements",
         "decision_candidate": "decisions",
+        "decision": "decisions",
         "architectural_change": "architecture",
         "question": "open_questions",
         "assumption": "assumptions",
