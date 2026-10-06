@@ -81,8 +81,11 @@ def is_generic_speaker(value: Optional[str]) -> bool:
 
 
 def _clean_extracted_name(value: str) -> str:
+    # A transcript may place the rest of the sentence immediately after the name.
+    # Cut at sentence punctuation before applying common-word stop rules.
+    value = re.split(r"[,.!?;:]", normalize_person_name(value), maxsplit=1)[0]
     tokens = []
-    for token in normalize_person_name(value).split():
+    for token in value.split():
         if token.lower() in _STOPWORDS:
             break
         tokens.append(token)
