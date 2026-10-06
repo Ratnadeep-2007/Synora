@@ -13,6 +13,7 @@ from app.api.meetings import router as meetings_router
 from app.api.projects import router as projects_router, workspace_router
 from app.api.system import router as system_router
 from app.api.unknown_context import router as unknown_context_router
+from app.api.vexa_meetings import router as vexa_meetings_router
 from app.api.workspace_atlas import router as workspace_atlas_router
 from app.connectors import registry  # Auto-initializes default connectors
 from app.core.config import settings
@@ -196,6 +197,10 @@ app.include_router(projects_router, prefix=f"{settings.API_V1_STR}")
 # Mount Unknown Context triage router
 app.include_router(unknown_context_router)
 app.include_router(unknown_context_router, prefix=settings.API_V1_STR)
+
+# Optional server-side Google Meet capture via self-hosted Vexa + Sarvam STT
+app.include_router(vexa_meetings_router)
+app.include_router(vexa_meetings_router, prefix=settings.API_V1_STR)
 
 # Mount the single workspace Project Atlas router
 app.include_router(workspace_atlas_router)
