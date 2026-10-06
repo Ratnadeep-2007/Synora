@@ -26,7 +26,6 @@ from app.core.exceptions import (
 from app.models.meeting import Meeting, Participant, Transcript, TranscriptEntry
 from app.models.user import User
 from app.schemas.meeting import (
-    AutoCaptureArmRequest,
     MeetingEvidenceRouteRequest,
     MeetingDetailRead,
     MeetingRead,
@@ -492,71 +491,6 @@ async def ingest_transcript_endpoint(
         entries_count=len(parsed_entries),
         pipeline_result=pipeline_res_dict,
     )
-
-
-@router.post(
-    "/auto-capture/arm",
-    summary="Arm voice-activated meeting capture",
-    description=(
-        "Starts the capture process, which waits for someone to speak before "
-        "recording and stops itself after a stretch of silence. Notes are then "
-        "transcribed and ingested automatically, so no console interaction is "
-        "required during the meeting."
-    ),
-)
-async def arm_auto_capture(
-    payload: AutoCaptureArmRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    from app.services.auto_capture_service import AutoCaptureService
-
-    service = AutoCaptureService()
-    pre = service.preflight()
-    if not pre["ready"]:
-        return {
-            "ok": False,
-            "error": "capture_unavailable",
-            "problems": pre["problems"],
-            "preflight": pre,
-        }
-
-    for pid in [payload.project_id, *payload.candidate_project_ids]:
-        exists = db.query(Project.id).filter(Project.id == pid).first()
-        if not exists:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project '{pid}' not found.",
-            )
-
-    return service.arm(
-        project_id=payload.project_id,
-        candidate_project_ids=payload.candidate_project_ids,
-        max_minutes=payload.max_minutes,
-        speakers=payload.speakers,
-        keep_audio=payload.keep_audio,
-    )
-
-
-@router.get(
-    "/auto-capture/status",
-    summary="Current voice-activated capture state",
-)
-async def auto_capture_status(current_user: User = Depends(get_current_user)):
-    from app.services.auto_capture_service import AutoCaptureService
-
-    service = AutoCaptureService()
-    return {**service.status(), "preflight": service.preflight(), "logs": service.logs(40)}
-
-
-@router.post(
-    "/auto-capture/stop",
-    summary="Stop voice-activated capture",
-)
-async def stop_auto_capture(current_user: User = Depends(get_current_user)):
-    from app.services.auto_capture_service import AutoCaptureService
-
-    return AutoCaptureService().stop()
 
 
 @router.post(
