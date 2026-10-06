@@ -5,7 +5,7 @@ Google Meet capture via a self-hosted **Vexa** bot, transcription via **Sarvam**
 Synora evidence → intelligence → memory → atlas pipeline.
 
 **Status: infrastructure verified, end-to-end meeting not yet run.**
-A real two-person Google Meet has not been captured yet, so no transcript has been
+A real multi-person Google Meet has not been captured yet, so no transcript has been
 proven to reach Evidence, Project Memory or Excalidraw. See
 [What is not proven](#8-what-is-not-proven).
 
@@ -16,7 +16,7 @@ proven to reach Evidence, Project Memory or Excalidraw. See
 ```text
                         ordinary Google Meet
                                │
-                               │  second participant needs only a browser
+                               │  participants need only a browser
                                ▼
                   ┌────────────────────────┐
                   │  Vexa bot (LOCAL)      │   joins as a normal participant,
@@ -35,6 +35,14 @@ proven to reach Evidence, Project Memory or Excalidraw. See
                   │  inside Synora backend │            no diarization
                   └───────────┬────────────┘
                               │  normalized segments (one shape)
+                              ▼
+                  ┌────────────────────────┐
+                  │  Speaker Identity      │
+                  │  Resolver              │
+                  │  Vexa name hints +     │
+                  │  explicit self-intro   │
+                  └───────────┬────────────┘
+                              │  name + confidence, or unresolved
                               ▼
                   ┌────────────────────────┐
                   │  Existing Synora       │
