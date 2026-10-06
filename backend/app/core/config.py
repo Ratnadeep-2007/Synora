@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -62,6 +62,28 @@ class Settings(BaseSettings):
 
     # Zero-touch Google Meet connection refresh token
     GOOGLE_REFRESH_TOKEN: str = ""
+
+    # Server-side Google Meet capture + post-meeting Sarvam STT
+    VEXA_ENABLED: bool = False
+    VEXA_BASE_URL: str = "http://localhost:18056"
+    VEXA_API_KEY: str = ""
+    VEXA_BOT_NAME: str = "Synora"
+    VEXA_POLL_INTERVAL_SECONDS: int = Field(default=10, ge=2, le=300)
+    VEXA_MAX_WAIT_SECONDS: int = Field(default=14400, ge=60)
+    VEXA_HTTP_TIMEOUT_SECONDS: float = Field(default=30.0, gt=1)
+    VEXA_RECORDING_DOWNLOAD_TIMEOUT_SECONDS: float = Field(default=900.0, gt=10)
+
+    SARVAM_API_KEY: str = ""
+    SARVAM_STT_MODEL: str = "saaras:v4"
+    SARVAM_STT_MODE: str = "codemix"
+    SARVAM_WITH_DIARIZATION: bool = True
+    SARVAM_LANGUAGE_CODE: str = ""
+    SARVAM_NUM_SPEAKERS: Optional[int] = Field(default=None, ge=1, le=20)
+    SARVAM_KEYTERMS: str = ""
+    SARVAM_POLL_INTERVAL_SECONDS: int = Field(default=5, ge=2, le=300)
+    SARVAM_MAX_WAIT_SECONDS: int = Field(default=3600, ge=60)
+    SARVAM_HTTP_TIMEOUT_SECONDS: float = Field(default=60.0, gt=1)
+    SARVAM_UPLOAD_TIMEOUT_SECONDS: float = Field(default=900.0, gt=10)
 
     # Context Intelligence routing gate thresholds.
     # The Agent auto-routes almost everything: only genuinely hard-to-classify
