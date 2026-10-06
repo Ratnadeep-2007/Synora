@@ -194,7 +194,7 @@ class VexaSarvamService:
         ).strip()
         raw_url = str(recording.get("raw_url") or "").strip()
 
-        if not media_file_id or not raw_url:
+        if not raw_url:
             async with httpx.AsyncClient(
                 base_url=self.vexa_base_url,
                 timeout=httpx.Timeout(settings.VEXA_HTTP_TIMEOUT_SECONDS),
