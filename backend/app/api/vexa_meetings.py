@@ -166,6 +166,9 @@ async def get_vexa_capture_status(
         "transcription_fallback_reason": capture.get("transcription_fallback_reason"),
         "sarvam_job_id": capture.get("sarvam_job_id"),
         "whisper_job_id": capture.get("whisper_job_id"),
+        "participant_names": capture.get("participant_names", []),
+        "participant_roster_available": bool(capture.get("participant_roster_available")),
+        "speaker_identity": capture.get("speaker_identity"),
         "error": capture.get("error"),
     }
 
