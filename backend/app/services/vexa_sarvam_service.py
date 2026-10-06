@@ -760,7 +760,8 @@ class VexaSarvamService:
                         metadata_json=_json_dump(
                             {
                                 "capture_provider": "vexa",
-                                "transcription_provider": "sarvam_saaras",
+                                "transcription_provider": transcription_provider,
+                                "transcription_model": transcription_model,
                                 "speaker_id": speaker,
                             }
                         ),
@@ -798,7 +799,21 @@ class VexaSarvamService:
                 "status": "completed",
                 "processed": True,
                 "pipeline_processed": True,
-                "sarvam_job_id": sarvam_job_id,
+                "transcription_provider": transcription_provider,
+                "transcription_model": transcription_model,
+                "transcription_job_id": transcription_job_id,
+                "transcription_fallback_used": transcription_provider != "sarvam_saaras",
+                "transcription_fallback_reason": fallback_reason,
+                "sarvam_job_id": (
+                    transcription_job_id
+                    if transcription_provider == "sarvam_saaras"
+                    else None
+                ),
+                "whisper_job_id": (
+                    transcription_job_id
+                    if transcription_provider == "whisper_faster_whisper"
+                    else None
+                ),
                 "recording_id": recording_id,
                 "entries_count": len(segments),
                 "resolved_projects": resolved_projects,
@@ -907,7 +922,21 @@ class VexaSarvamService:
             db.commit()
 
             recording_id, audio_bytes, content_type = await self.download_recording(recording)
-            _set_capture_metadata(meeting, {"status": "transcribing"})
+            _set_capture_metadata(
+                meeting,
+                {
+                    "status": (
+                        "transcribing_sarvam"
+                        if self.sarvam_api_key
+                        else "transcribing_whisper"
+                    ),
+                    "transcription_provider": (
+                        "sarvam_saaras"
+                        if self.sarvam_api_key
+                        else "whisper_faster_whisper"
+                    ),
+                },
+            )
             db.commit()
 
             content_type_lower = str(content_type or "").lower()
