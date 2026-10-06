@@ -13,7 +13,13 @@ export interface VexaCaptureStatus {
   entries_count?: number;
   resolved_projects?: string[];
   recording_id?: string | null;
+  transcription_provider?: string | null;
+  transcription_model?: string | null;
+  transcription_job_id?: string | null;
+  transcription_fallback_used?: boolean;
+  transcription_fallback_reason?: string | null;
   sarvam_job_id?: string | null;
+  whisper_job_id?: string | null;
   error?: string | null;
 }
 
@@ -36,6 +42,8 @@ const STATUS_LABELS: Record<string, string> = {
   waiting_for_recording: "Waiting for recording",
   recording_ready: "Recording ready",
   transcribing: "Transcribing",
+  transcribing_sarvam: "Sarvam transcription",
+  transcribing_whisper: "Whisper fallback",
   ingesting: "Updating Synora",
   completed: "Completed",
   stopping: "Finalizing recording",
@@ -62,6 +70,8 @@ export function MeetingsView({
     "waiting_for_recording",
     "recording_ready",
     "transcribing",
+    "transcribing_sarvam",
+    "transcribing_whisper",
     "ingesting",
     "stopping",
   ].includes(status);
@@ -105,8 +115,9 @@ export function MeetingsView({
                 Google Meet capture
               </h2>
               <p className="mt-1 text-xs text-text-muted">
-                Vexa joins the meeting from this machine, records it, and Sarvam transcribes
-                the completed recording. Synora routes the transcript automatically.
+                Vexa joins the meeting from this machine and records it. Sarvam transcribes the
+                completed recording first; Synora automatically falls back to local Whisper on the
+                server if Sarvam is unavailable or fails.
               </p>
             </div>
             <span className="shrink-0 rounded-full bg-canvas px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
@@ -158,8 +169,10 @@ export function MeetingsView({
 
           {vexaCaptureStatus?.processed && (
             <p className="text-[11px] text-success">
-              {vexaCaptureStatus.entries_count || 0} transcript entries processed. Project
-              routing, shared memory, and Project Atlas updates are complete.
+              {vexaCaptureStatus.entries_count || 0} transcript entries processed
+              {vexaCaptureStatus.transcription_provider
+                ? " • " + vexaCaptureStatus.transcription_provider
+                : ""}. Project routing, shared memory, and Project Atlas updates are complete.
             </p>
           )}
         </section>
