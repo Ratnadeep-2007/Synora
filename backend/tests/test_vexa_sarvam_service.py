@@ -5,6 +5,7 @@ from app.services.vexa_sarvam_service import (
     VexaSarvamService,
     parse_google_meet_code,
 )
+from app.services.whisper_transcription_service import WhisperFallbackError
 
 
 def test_parse_google_meet_code():
