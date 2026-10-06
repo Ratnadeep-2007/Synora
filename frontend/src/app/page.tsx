@@ -447,41 +447,36 @@ export default function Home() {
     }
   };
 
-  // Voice-activated meeting capture. The API process spawns the recorder, so
-  // polling status is enough to drive the whole UI.
-  const [captureStatus, setCaptureStatus] = useState<any>(null);
+  const [vexaCaptureMeetingId, setVexaCaptureMeetingId] = useState<string | null>(null);
+  const [vexaCaptureStatus, setVexaCaptureStatus] = useState<any>(null);
 
-  const pollCapture = useCallback(async () => {
+  const pollVexaCapture = useCallback(async () => {
+    if (!vexaCaptureMeetingId) return;
     try {
-      setCaptureStatus(await api.autoCaptureStatus());
+      setVexaCaptureStatus(await api.getVexaCaptureStatus(vexaCaptureMeetingId));
     } catch {
-      /* status polling must never break the page */
+      // Non-blocking status polling.
     }
-  }, []);
+  }, [vexaCaptureMeetingId]);
 
   useEffect(() => {
-    pollCapture();
-    const id = setInterval(pollCapture, 3000);
+    if (!vexaCaptureMeetingId) return;
+    pollVexaCapture();
+    const id = setInterval(pollVexaCapture, 4000);
     return () => clearInterval(id);
-  }, [pollCapture]);
+  }, [pollVexaCapture, vexaCaptureMeetingId]);
 
-  const handleArmCapture = async (opts: {
-    project_id: string;
-    candidate_project_ids: string[];
-    max_minutes: number;
-    speakers: number;
-  }) => {
-    const res = await api.armAutoCapture(opts);
-    if (!(res as any)?.ok) {
-      const problems = (res as any)?.problems?.join(" ") || "capture unavailable";
-      throw new Error(problems);
-    }
-    await pollCapture();
+  const handleStartVexaCapture = async (meetingUrl: string) => {
+    const result = await api.startVexaCapture(meetingUrl);
+    setVexaCaptureMeetingId(result.meeting_id);
+    setVexaCaptureStatus(result);
   };
 
-  const handleStopCapture = async () => {
-    await api.stopAutoCapture();
-    await pollCapture();
+  const handleStopVexaCapture = async () => {
+    if (!vexaCaptureMeetingId) return;
+    const result = await api.stopVexaCapture(vexaCaptureMeetingId);
+    setVexaCaptureStatus(result);
+    await pollVexaCapture();
   };
 
   const handleIngestTranscript = async (payload: {
@@ -742,12 +737,9 @@ export default function Home() {
             meetings={meetings}
             autoSyncStatus={autoSyncStatus}
             onSelectMeeting={(mId) => setSelectedMeetingId(mId)}
-            onProcessPipeline={handleProcessPipeline}
-            onSyncGoogleMeet={handleSyncGoogleMeet}
-            onIngestTranscript={handleIngestTranscript}
-            captureStatus={captureStatus}
-            onArmCapture={handleArmCapture}
-            onStopCapture={handleStopCapture}
+            vexaCaptureStatus={vexaCaptureStatus}
+            onStartVexaCapture={handleStartVexaCapture}
+            onStopVexaCapture={handleStopVexaCapture}
             projects={projects.map((p) => ({ id: p.id, name: p.name }))}
             activeProjectId={currentProjectId}
           />
