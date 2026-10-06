@@ -16,6 +16,7 @@ from app.models.project import Project, SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.models.source_event import SourceEvent
 from app.services.context_resolution_service import ContextResolutionService
 from app.services.pipeline_coordinator import PipelineCoordinator
+from app.services.whisper_transcription_service import WhisperFallbackError, WhisperTranscriptionService
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,9 @@ class VexaSarvamService:
     """
     Post-meeting path:
     Google Meet -> Vexa recording -> Sarvam Saaras STT -> Synora.
+
+    Sarvam is primary. Self-hosted faster-whisper is used only when Sarvam
+    is unavailable or fails.
     """
 
     def __init__(
@@ -521,15 +525,27 @@ class VexaSarvamService:
     def _persist_transcript(
         self,
         meeting: Meeting,
-        sarvam_result: Dict[str, Any],
-        sarvam_job_id: str,
+        segments: List[Dict[str, Any]],
+        transcription_provider: str,
+        transcription_model: str,
+        transcription_job_id: str,
+        transcription_language_code: str,
         recording_id: str,
         db: Session,
+        fallback_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
-        provider_transcript_id = f"vexa_sarvam_{meeting.id}"
+        provider_transcript_id = f"vexa_{meeting.id}"
         existing = (
             db.query(Transcript)
-            .filter(Transcript.provider_transcript_id == provider_transcript_id)
+            .filter(
+                Transcript.provider_transcript_id.in_(
+                    [
+                        provider_transcript_id,
+                        f"vexa_sarvam_{meeting.id}",
+                        f"vexa_whisper_{meeting.id}",
+                    ]
+                )
+            )
             .first()
         )
         if existing:
@@ -567,7 +583,21 @@ class VexaSarvamService:
                 {
                     "status": "completed",
                     "processed": True,
-                    "sarvam_job_id": sarvam_job_id or capture.get("sarvam_job_id"),
+                    "transcription_provider": transcription_provider,
+                    "transcription_model": transcription_model,
+                    "transcription_job_id": transcription_job_id,
+                    "transcription_fallback_used": transcription_provider != "sarvam_saaras",
+                    "transcription_fallback_reason": fallback_reason,
+                    "sarvam_job_id": (
+                        transcription_job_id
+                        if transcription_provider == "sarvam_saaras"
+                        else capture.get("sarvam_job_id")
+                    ),
+                    "whisper_job_id": (
+                        transcription_job_id
+                        if transcription_provider == "whisper_faster_whisper"
+                        else capture.get("whisper_job_id")
+                    ),
                     "recording_id": recording_id or capture.get("recording_id"),
                     "entries_count": len(existing.entries),
                     "resolved_projects": resolved_projects,
@@ -582,9 +612,10 @@ class VexaSarvamService:
                 "resolved_projects": resolved_projects,
             }
 
-        segments = self.extract_sarvam_entries(sarvam_result)
         if not segments:
-            raise VexaSarvamError("Sarvam returned no transcript segments.")
+            raise VexaSarvamError(
+                f"{transcription_provider} returned no transcript segments."
+            )
 
         transcript = Transcript(
             meeting_id=meeting.id,
@@ -596,11 +627,17 @@ class VexaSarvamService:
             metadata_json=_json_dump(
                 {
                     "capture_provider": "vexa",
-                    "transcription_provider": "sarvam_saaras",
-                    "sarvam_job_id": sarvam_job_id,
+                    "transcription_provider": transcription_provider,
+                    "transcription_job_id": transcription_job_id,
+                    "transcription_fallback_used": transcription_provider != "sarvam_saaras",
+                    "transcription_fallback_reason": fallback_reason,
                     "recording_id": recording_id,
-                    "model": settings.SARVAM_STT_MODEL,
-                    "mode": settings.SARVAM_STT_MODE,
+                    "model": transcription_model,
+                    "mode": (
+                        settings.SARVAM_STT_MODE
+                        if transcription_provider == "sarvam_saaras"
+                        else None
+                    ),
                 }
             ),
         )
@@ -622,7 +659,11 @@ class VexaSarvamService:
                     metadata_json=_json_dump(
                         {
                             "capture_provider": "vexa",
-                            "speaker_source": "sarvam_diarization",
+                            "speaker_source": (
+                                "sarvam_diarization"
+                                if transcription_provider == "sarvam_saaras"
+                                else "whisper_no_diarization"
+                            ),
                         }
                     ),
                 )
@@ -638,16 +679,17 @@ class VexaSarvamService:
             entry = TranscriptEntry(
                 transcript_id=transcript.id,
                 provider="google",
-                provider_entry_id=f"vexa_sarvam:{entry_key}",
+                provider_entry_id=f"vexa_{transcription_provider}:{entry_key}",
                 participant_id=participant.id,
                 text=segment["text"],
-                language_code=str(sarvam_result.get("language_code") or "en-IN"),
+                language_code=transcription_language_code or "unknown",
                 start_time=start_time,
                 end_time=end_time,
                 metadata_json=_json_dump(
                     {
                         "capture_provider": "vexa",
-                        "transcription_provider": "sarvam_saaras",
+                        "transcription_provider": transcription_provider,
+                        "transcription_model": transcription_model,
                         "speaker_id": speaker,
                         "segment_start_seconds": segment["start_seconds"],
                         "segment_end_seconds": segment["end_seconds"],
@@ -689,7 +731,8 @@ class VexaSarvamService:
                             "meeting_id": meeting.id,
                             "conference_id": meeting.provider_conference_id,
                             "capture_provider": "vexa",
-                            "transcription_provider": "sarvam_saaras",
+                            "transcription_provider": transcription_provider,
+                            "transcription_model": transcription_model,
                         }
                     ),
                     status="received",
@@ -770,6 +813,72 @@ class VexaSarvamService:
             "resolved_projects": resolved_projects,
         }
 
+    async def _transcribe_with_fallback(
+        self,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str,
+        meeting_id: str,
+    ) -> Tuple[List[Dict[str, Any]], str, str, str, str, Optional[str]]:
+        """Try Sarvam first, then self-hosted Whisper on the same audio."""
+        fallback_reason: Optional[str] = None
+
+        if self.sarvam_api_key:
+            try:
+                result, job_id = await self.transcribe_with_sarvam(
+                    audio_bytes,
+                    filename,
+                    content_type,
+                )
+                segments = self.extract_sarvam_entries(result)
+                if segments:
+                    return (
+                        segments,
+                        "sarvam_saaras",
+                        settings.SARVAM_STT_MODEL,
+                        job_id,
+                        str(result.get("language_code") or "unknown"),
+                        None,
+                    )
+                fallback_reason = "Sarvam returned no usable transcript segments."
+            except Exception as exc:
+                fallback_reason = str(exc)[:1000]
+                logger.warning(
+                    "sarvam_primary_failed_using_whisper_fallback: meeting=%s error=%s",
+                    meeting_id,
+                    fallback_reason,
+                )
+        else:
+            fallback_reason = "SARVAM_API_KEY is not configured."
+
+        if not settings.WHISPER_ENABLED:
+            raise VexaSarvamError(
+                f"Sarvam transcription was unavailable: {fallback_reason}; "
+                "WHISPER_ENABLED is false, so no local fallback is available."
+            )
+
+        try:
+            result, job_id = await WhisperTranscriptionService().transcribe(
+                audio_bytes,
+                filename,
+            )
+            segments = list(result.get("segments") or [])
+            if not segments:
+                raise WhisperFallbackError("Whisper returned no usable transcript segments.")
+            return (
+                segments,
+                "whisper_faster_whisper",
+                settings.WHISPER_MODEL,
+                job_id,
+                str(result.get("language_code") or "unknown"),
+                fallback_reason,
+            )
+        except Exception as whisper_exc:
+            raise VexaSarvamError(
+                f"Sarvam primary failed: {fallback_reason}; "
+                f"Whisper fallback failed: {whisper_exc}"
+            ) from whisper_exc
+
     async def process_meeting(self, meeting_id: str, db: Session) -> Dict[str, Any]:
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
         if not meeting:
@@ -808,26 +917,59 @@ class VexaSarvamService:
                 audio_extension = ".webm"
             elif "mp3" in content_type_lower or "mpeg" in content_type_lower:
                 audio_extension = ".mp3"
+            elif "ogg" in content_type_lower:
+                audio_extension = ".ogg"
             else:
                 audio_extension = ".audio"
 
-            sarvam_result, job_id = await self.transcribe_with_sarvam(
+            audio_filename = f"{meeting.id}{audio_extension}"
+            (
+                segments,
+                transcription_provider,
+                transcription_model,
+                transcription_job_id,
+                transcription_language_code,
+                fallback_reason,
+            ) = await self._transcribe_with_fallback(
                 audio_bytes,
-                f"{meeting.id}{audio_extension}",
+                audio_filename,
                 content_type,
+                meeting.id,
             )
+
             _set_capture_metadata(
                 meeting,
-                {"status": "ingesting", "sarvam_job_id": job_id},
+                {
+                    "status": "ingesting",
+                    "transcription_provider": transcription_provider,
+                    "transcription_model": transcription_model,
+                    "transcription_job_id": transcription_job_id,
+                    "transcription_fallback_used": transcription_provider != "sarvam_saaras",
+                    "transcription_fallback_reason": fallback_reason,
+                    "sarvam_job_id": (
+                        transcription_job_id
+                        if transcription_provider == "sarvam_saaras"
+                        else None
+                    ),
+                    "whisper_job_id": (
+                        transcription_job_id
+                        if transcription_provider == "whisper_faster_whisper"
+                        else None
+                    ),
+                },
             )
             db.commit()
 
             return self._persist_transcript(
                 meeting,
-                sarvam_result,
-                job_id,
+                segments,
+                transcription_provider,
+                transcription_model,
+                transcription_job_id,
+                transcription_language_code,
                 recording_id,
                 db,
+                fallback_reason=fallback_reason,
             )
         except Exception as exc:
             # Do not accidentally commit partial transcript/evidence rows from a failed
