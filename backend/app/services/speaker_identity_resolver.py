@@ -182,7 +182,7 @@ class SpeakerIdentityResolver:
             if match:
                 by_speaker[raw_speaker].append((match[0], match[1], "self_introduction"))
 
-        proposed: Dict[str, Tuple[str, float, str]] = {}
+        proposed: Dict[str, Tuple[str, float, str, str]] = {}
         name_to_speakers: Dict[str, set[str]] = defaultdict(set)
 
         for raw_speaker, observations in by_speaker.items():
@@ -208,10 +208,15 @@ class SpeakerIdentityResolver:
                         best_score = max(best_score, observation_score)
                         break
             if best_name:
+                is_roster_match = any(_name_key(name) == best_key for name in names)
                 proposed[raw_speaker] = (
                     best_name,
-                    min(0.99, best_score + min(0.03, max(0, len(observations) - 1) * 0.01)),
+                    min(
+                        0.99 if is_roster_match else 0.94,
+                        best_score + min(0.03, max(0, len(observations) - 1) * 0.01),
+                    ),
                     source_by_name[best_key],
+                    "confirmed" if is_roster_match else "provisional",
                 )
                 name_to_speakers[_name_key(best_name)].add(raw_speaker)
 
@@ -233,15 +238,15 @@ class SpeakerIdentityResolver:
             item["raw_speaker"] = raw_speaker
 
             if raw_speaker in proposed:
-                display_name, confidence, source = proposed[raw_speaker]
+                display_name, confidence, source, identity_status = proposed[raw_speaker]
                 item["speaker"] = display_name
                 item["speaker_name"] = display_name
-                item["speaker_identity_status"] = "confirmed"
+                item["speaker_identity_status"] = identity_status
                 item["speaker_identity_confidence"] = confidence
                 item["speaker_identity_source"] = source
                 resolved_summary[raw_speaker] = {
                     "display_name": display_name,
-                    "status": "confirmed",
+                    "status": identity_status,
                     "confidence": confidence,
                     "source": source,
                 }
@@ -267,9 +272,11 @@ class SpeakerIdentityResolver:
             resolved_segments.append(item)
 
         confirmed = sum(1 for value in resolved_summary.values() if value["status"] == "confirmed")
+        provisional = sum(1 for value in resolved_summary.values() if value["status"] == "provisional")
         unresolved = sum(1 for value in resolved_summary.values() if value["status"] == "unresolved")
         return resolved_segments, {
             "confirmed_speakers": confirmed,
+            "provisional_speakers": provisional,
             "unresolved_speakers": unresolved,
             "total_speaker_keys": len(resolved_summary),
             "speaker_map": resolved_summary,
