@@ -143,24 +143,21 @@ export const api = {
   getMeetings: (): Promise<MeetingItem[]> =>
     request<MeetingItem[]>("/meetings"),
 
-  // Voice-activated capture. arm starts the recorder (which waits for a voice),
-  // status is polled to drive the UI, stop terminates it early.
-  armAutoCapture: (payload: {
-    project_id: string;
-    candidate_project_ids?: string[];
-    max_minutes?: number;
-    speakers?: number;
-    keep_audio?: boolean;
-  }): Promise<any> =>
-    request<any>("/meetings/auto-capture/arm", {
+  // Server-side Google Meet capture via Vexa; Sarvam transcribes after the meeting.
+  startVexaCapture: (meeting_url: string): Promise<any> =>
+    request<any>("/vexa/meetings/start", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ meeting_url }),
     }),
 
-  autoCaptureStatus: (): Promise<any> => request<any>("/meetings/auto-capture/status"),
+  getVexaCaptureStatus: (meetingId: string): Promise<any> =>
+    request<any>(`/vexa/meetings/${meetingId}`),
 
-  stopAutoCapture: (): Promise<any> =>
-    request<any>("/meetings/auto-capture/stop", { method: "POST" }),
+  stopVexaCapture: (meetingId: string): Promise<any> =>
+    request<any>(`/vexa/meetings/${meetingId}/stop`, { method: "POST" }),
+
+  processVexaCapture: (meetingId: string): Promise<any> =>
+    request<any>(`/vexa/meetings/${meetingId}/process`, { method: "POST" }),
 
   routeMeetingEvidence: (
     meetingId: string,
