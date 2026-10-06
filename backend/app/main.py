@@ -158,6 +158,7 @@ async def root():
             "connections": "/auth/google/connections",
             "meetings_sync": "/meetings/sync",
             "meetings_list": "/meetings",
+            "vexa_capture_start": "/vexa/meetings/start",
             "connectors": "/connectors",
             "health": "/health",
             "metrics": "/metrics",
