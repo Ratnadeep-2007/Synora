@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     SARVAM_HTTP_TIMEOUT_SECONDS: float = Field(default=60.0, gt=1)
     SARVAM_UPLOAD_TIMEOUT_SECONDS: float = Field(default=900.0, gt=10)
 
+    # Self-hosted Whisper fallback. Loaded only when Sarvam is unavailable or fails.
+    WHISPER_ENABLED: bool = True
+    WHISPER_MODEL: str = "large-v3-turbo"
+    WHISPER_DEVICE: str = "cpu"
+    WHISPER_COMPUTE_TYPE: str = "int8"
+    WHISPER_LANGUAGE_CODE: str = ""
+    WHISPER_INITIAL_PROMPT: str = ""
+    WHISPER_BEAM_SIZE: int = Field(default=5, ge=1, le=10)
+    WHISPER_VAD_FILTER: bool = True
+    WHISPER_CPU_THREADS: int = Field(default=4, ge=1, le=64)
+    WHISPER_MODEL_CACHE_DIR: str = "/app/.cache/whisper"
+
     # Context Intelligence routing gate thresholds.
     # The Agent auto-routes almost everything: only genuinely hard-to-classify
     # content (nothing remotely plausible) stays in Unknown Context. A single
