@@ -34,7 +34,7 @@ Rules:
   for ~30 days after the conference ends, so persistence is mandatory.
 - Manual sync is a **reconciliation/recovery mechanism**, not primary ingestion.
 - Native Meet transcription is required.
-- No Vexa. No meeting bot. No browser automation. No raw audio capture.
+- Native Meet transcription remains the canonical path. A self-hosted Vexa recording fallback is documented separately for accounts without native transcripts.
 - No custom Google Meet speech-to-text.
 
 ## 2. OAuth scopes
