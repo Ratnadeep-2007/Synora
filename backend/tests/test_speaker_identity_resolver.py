@@ -159,3 +159,34 @@ def test_generic_speaker_labels_are_detected():
     assert is_generic_speaker("SPEAKER_00")
     assert is_generic_speaker("Unknown Speaker")
     assert not is_generic_speaker("Siddhi")
+
+def test_self_introduction_without_roster_is_provisional_and_clean():
+    segments = [{
+        "id": "s0",
+        "text": "Hi, I'm Siddhi. Let's start the meeting.",
+        "speaker": "SPEAKER_00",
+        "start_seconds": 0.0,
+        "end_seconds": 2.0,
+    }]
+
+    resolved, summary = SpeakerIdentityResolver().resolve(segments)
+
+    assert resolved[0]["speaker"] == "Siddhi"
+    assert resolved[0]["speaker_identity_status"] == "provisional"
+    assert resolved[0]["speaker_identity_confidence"] >= 0.92
+    assert summary["provisional_speakers"] == 1
+
+
+def test_hinglish_self_introduction_without_roster_is_provisional():
+    segments = [{
+        "id": "s0",
+        "text": "Hi, mera naam Ratnadeep hai. Aaj deployment discuss karte hain.",
+        "speaker": "SPEAKER_00",
+        "start_seconds": 0.0,
+        "end_seconds": 2.0,
+    }]
+
+    resolved, _ = SpeakerIdentityResolver().resolve(segments)
+
+    assert resolved[0]["speaker"] == "Ratnadeep"
+    assert resolved[0]["speaker_identity_status"] == "provisional"
