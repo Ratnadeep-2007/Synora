@@ -302,18 +302,6 @@ export default function Home() {
     return currentProjectId;
   };
 
-  const handleProcessPipeline = async (meetingId: string) => {
-    const projectId = requireProject();
-    if (!projectId) return;
-    await api.processMeetingPipeline(projectId, meetingId);
-    try {
-      await api.syncProjectAgentExcalidraw(projectId);
-    } catch {
-      // workspace sync can proceed non-blockingly
-    }
-    await refreshAll();
-  };
-
   const handleReviewConflict = async (
     conflictId: string,
     action: "approve" | "reject" | "mark_unresolved",
@@ -477,28 +465,6 @@ export default function Home() {
     const result = await api.stopVexaCapture(vexaCaptureMeetingId);
     setVexaCaptureStatus(result);
     await pollVexaCapture();
-  };
-
-  const handleIngestTranscript = async (payload: {
-    title: string;
-    raw_transcript: string;
-    provider?: string;
-  }) => {
-    const projectId = requireProject();
-    if (!projectId) return;
-    try {
-      const res = await api.ingestTranscript({
-        project_id: projectId,
-        title: payload.title,
-        provider: payload.provider || "manual_transcript",
-        raw_transcript: payload.raw_transcript,
-        auto_process: true,
-      });
-      alert(res.message || "Transcript ingested and processed successfully!");
-      await refreshAll();
-    } catch (err: any) {
-      alert(`Transcript ingestion failed: ${err.message}`);
-    }
   };
 
   const handleSyncLivingWorkspace = async () => {
