@@ -46,8 +46,8 @@ class ExcalidrawCompiler:
     """
 
     def compile(self, plan: VisualPlan, enforce_grounding: bool = True) -> List[Dict[str, Any]]:
-        if not plan.nodes:
-            raise ExcalidrawCompileError("VisualPlan contains no nodes to compile.")
+        if not plan.nodes and not plan.notes_sections and not plan.notes and not plan.visualizations:
+            raise ExcalidrawCompileError("VisualPlan contains no canvas content to compile.")
 
         # Ground the plan before it becomes geometry. A node that cites no
         # evidence is the model reasoning rather than reporting, so it is
@@ -257,16 +257,19 @@ class ExcalidrawCompiler:
             if rel.label:
                 elements.append(self._edge_label(rel, arrow, index))
 
-        # First-class architectural sticky notes from plan.notes
-        #
-        # Notes are grounded and ordered. An entry may be a plain string or a
-        # dict carrying {"text", "kind", "order", "evidence_ids"}. Entries with
-        # a declared-but-empty evidence_ids list are dropped, because a note
-        # that cannot cite a source is an invention rather than a directive.
-        # Remaining notes are sorted by kind rank then explicit order, so the
-        # reader gets a stable sequence instead of whatever order the model
-        # happened to return.
-        NOTE_KIND_RANK = {
+        # Living project notebook. Notes are rendered as a document-like page
+        # rather than sticky cards. The agent can return structured sections,
+        # or legacy notes are grouped into readable sections.
+        note_kind_titles = {
+            "decision": "Key Decisions",
+            "requirement": "Requirements",
+            "directive": "Directives",
+            "action": "Actions",
+            "risk": "Risks",
+            "assumption": "Assumptions",
+            "note": "Notes",
+        }
+        legacy_rank = {
             "decision": 0,
             "requirement": 1,
             "directive": 2,
@@ -275,173 +278,468 @@ class ExcalidrawCompiler:
             "assumption": 5,
             "note": 6,
         }
-        NOTE_KIND_ICON = {
-            "decision": "✅",
-            "requirement": "📋",
-            "directive": "⚡",
-            "action": "⚡",
-            "risk": "⚠️",
-            "assumption": "💡",
-            "note": "📌",
-        }
 
-        def _normalise_note(raw: Any) -> Optional[Dict[str, Any]]:
+        legacy_notes: List[Dict[str, Any]] = []
+        for raw in plan.notes or []:
             if isinstance(raw, dict):
-                text = str(raw.get("text") or raw.get("content") or "").strip()
+                text_value = str(raw.get("text") or raw.get("content") or "").strip()
                 kind = str(raw.get("kind") or "note").strip().lower()
                 evidence = raw.get("evidence_ids")
-                # Declared evidence but empty => ungrounded, refuse to render.
                 if evidence is not None and not evidence:
-                    logger.info("visual_plan_note_dropped_ungrounded: %s", text[:60])
-                    return None
+                    logger.info("visual_plan_legacy_note_dropped_ungrounded: %s", text_value[:60])
+                    continue
                 try:
                     order = int(raw.get("order", 0))
                 except (TypeError, ValueError):
                     order = 0
-                if not text:
-                    return None
-                return {
-                    "text": text,
+                if not text_value:
+                    continue
+                legacy_notes.append({
+                    "text": text_value,
                     "kind": kind,
                     "order": order,
                     "evidence_ids": [str(e) for e in (evidence or [])][:4],
-                }
-            text = str(raw or "").strip()
-            if not text:
-                return None
-            return {"text": text, "kind": "note", "order": 0, "evidence_ids": []}
+                    "support_type": "explicit" if evidence else "inferred",
+                })
+            else:
+                text_value = str(raw or "").strip()
+                if text_value:
+                    legacy_notes.append({
+                        "text": text_value,
+                        "kind": "note",
+                        "order": 0,
+                        "evidence_ids": [],
+                        "support_type": "inferred",
+                    })
 
-        grounded_notes: List[Dict[str, Any]] = []
-        for raw in plan.notes or []:
-            normalised = _normalise_note(raw)
-            if normalised:
-                grounded_notes.append(normalised)
-        grounded_notes.sort(
-            key=lambda n: (NOTE_KIND_RANK.get(n["kind"], 9), n["order"], n["text"])
-        )
+        note_sections: List[Dict[str, Any]] = []
+        for section in getattr(plan, "notes_sections", []) or []:
+            section_dict = section.model_dump() if hasattr(section, "model_dump") else dict(section)
+            title = str(section_dict.get("title") or "Notes").strip()
+            body = str(section_dict.get("body") or "").strip()
+            bullets = [
+                str(item).strip()
+                for item in (section_dict.get("bullets") or [])
+                if str(item).strip()
+            ]
+            evidence_ids = [str(e) for e in (section_dict.get("evidence_ids") or [])][:4]
+            if body or bullets:
+                note_sections.append({
+                    "id": str(section_dict.get("id") or title).strip() or "notes",
+                    "title": title[:70],
+                    "body": body[:1400],
+                    "bullets": bullets[:8],
+                    "order": int(section_dict.get("order", 0) or 0),
+                    "evidence_ids": evidence_ids,
+                    "support_type": str(section_dict.get("support_type") or ("explicit" if evidence_ids else "inferred")),
+                })
 
-        if grounded_notes:
-            max_y = max(pos[1] for pos in positions.values())
-            notes_hdr_y = max_y + NODE_HEIGHT + 45
-            # Stable across process restarts. The builtin hash() is salted per
-            # interpreter (PYTHONHASHSEED), which made this id change on every
-            # restart and showed up as a spurious remove+add in compare mode.
+        # Legacy notes remain visible and readable; new structured sections take
+        # precedence so providers cannot double-render the same information.
+        if not note_sections and legacy_notes:
+            legacy_notes.sort(
+                key=lambda n: (legacy_rank.get(n["kind"], 9), n["order"], n["text"])
+            )
+            grouped: Dict[str, Dict[str, Any]] = {}
+            for item in legacy_notes:
+                key = item["kind"] if item["kind"] in note_kind_titles else "note"
+                bucket = grouped.setdefault(
+                    key,
+                    {
+                        "id": f"legacy_{key}",
+                        "title": note_kind_titles[key],
+                        "body": "",
+                        "bullets": [],
+                        "order": legacy_rank.get(key, 9),
+                        "evidence_ids": [],
+                        "support_type": "inferred",
+                    },
+                )
+                bucket["bullets"].append(item["text"])
+                bucket["evidence_ids"] = list(dict.fromkeys(
+                    bucket["evidence_ids"] + item["evidence_ids"]
+                ))[:4]
+                if item["support_type"] == "explicit":
+                    bucket["support_type"] = "explicit"
+            note_sections = list(grouped.values())
+
+        def _line_count(value: str, width: int = 72) -> int:
+            lines = str(value or "").splitlines() or [""]
+            return sum(max(1, (len(line) + width - 1) // width) for line in lines)
+
+        # Notes always occupy the right-hand "paper" side of the project canvas.
+        # The left side remains available for diagrams and lightweight visuals.
+        diagram_right = BASE_X + 360
+        if positions:
+            diagram_right = max(
+                diagram_right,
+                max((x + NODE_WIDTH) for x, _ in positions.values()),
+            )
+        notes_x = diagram_right + 120
+        notes_y = BASE_Y
+        notes_w = 520
+
+        if note_sections:
+            total_h = 108
+            for section in sorted(note_sections, key=lambda s: (s["order"], s["title"])):
+                total_h += 46
+                total_h += 26 * _line_count(section["body"], 68)
+                total_h += 24 * sum(max(1, (len(b) + 68) // 69) for b in section["bullets"])
+                total_h += 18
+            notes_h = min(max(total_h, 520), 2400)
             title_digest = hashlib.sha1((plan.title or "plan").encode("utf-8")).hexdigest()[:12]
-            header_id = f"lbl_notes_hdr_{title_digest}"
-            elements.append(
-                {
-                    "id": header_id,
+            page_id = f"notes_page_{title_digest}"
+            title_id = f"notes_title_{title_digest}"
+            elements.append({
+                "id": page_id,
+                "type": "rectangle",
+                "x": notes_x,
+                "y": notes_y,
+                "width": notes_w,
+                "height": notes_h,
+                "angle": 0,
+                "strokeColor": "#8a8a8a",
+                "backgroundColor": "#fffdf7",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 1,
+                "opacity": 100,
+                "roundness": {"type": 3},
+                "boundElements": [],
+                "isDeleted": False,
+                "customData": {
+                    "visual": {
+                        "type": "project_notes_page",
+                        "semantic_id": "project_notes",
+                    }
+                },
+            })
+            elements.append({
+                "id": title_id,
+                "type": "text",
+                "x": notes_x + 24,
+                "y": notes_y + 22,
+                "width": notes_w - 48,
+                "height": 30,
+                "text": "PROJECT NOTES",
+                "originalText": "PROJECT NOTES",
+                "fontSize": 19,
+                "fontFamily": 1,
+                "textAlign": "left",
+                "verticalAlign": "top",
+                "lineHeight": 1.2,
+                "baseline": 18,
+                "autoResize": False,
+                "strokeColor": "#202522",
+                "backgroundColor": "transparent",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 1,
+                "opacity": 100,
+                "angle": 0,
+                "groupIds": [],
+                "isDeleted": False,
+                "customData": {
+                    "visual": {
+                        "type": "project_notes_title",
+                        "semantic_id": "project_notes",
+                    }
+                },
+            })
+
+            cursor_y = notes_y + 76
+            ordered_sections = sorted(note_sections, key=lambda s: (s["order"], s["title"]))
+            for index, section in enumerate(ordered_sections):
+                section_key = hashlib.sha1(str(section["id"]).encode("utf-8")).hexdigest()[:12]
+                heading_id = f"note_section_{section_key}_header"
+                body_id = f"note_section_{section_key}_body"
+
+                elements.append({
+                    "id": heading_id,
                     "type": "text",
-                    "x": BASE_X,
-                    "y": notes_hdr_y,
-                    "width": 500,
-                    "height": 22,
-                    "text": "📌 ARCHITECTURAL NOTES & DIRECTIVES",
-                    "originalText": "📌 ARCHITECTURAL NOTES & DIRECTIVES",
-                    "fontSize": 13,
+                    "x": notes_x + 24,
+                    "y": cursor_y,
+                    "width": notes_w - 48,
+                    "height": 24,
+                    "text": section["title"],
+                    "originalText": section["title"],
+                    "fontSize": 14,
                     "fontFamily": 1,
                     "textAlign": "left",
                     "verticalAlign": "top",
-                    "containerId": None,
-                    "lineHeight": 1.25,
-                    "baseline": 12,
-                    "autoResize": True,
-                    "strokeColor": "#854d0e",
+                    "lineHeight": 1.2,
+                    "baseline": 13,
+                    "autoResize": False,
+                    "strokeColor": "#1f4d40",
                     "backgroundColor": "transparent",
                     "fillStyle": "solid",
                     "strokeWidth": 1,
-                    "strokeStyle": "solid",
                     "roughness": 1,
                     "opacity": 100,
                     "angle": 0,
                     "groupIds": [],
                     "isDeleted": False,
-                }
-            )
+                    "customData": {
+                        "visual": {
+                            "type": "note_section_header",
+                            "section_id": str(section["id"]),
+                            "evidence_ids": section["evidence_ids"],
+                            "support_type": section["support_type"],
+                        }
+                    },
+                })
+                cursor_y += 26
 
-            cards_start_y = notes_hdr_y + 32
-            NOTE_W = 320
-            NOTE_H = 110
-            NOTE_GAP_X = 35
-            NOTE_GAP_Y = 25
-            NOTES_PER_ROW = 3
-
-            for n_idx, note in enumerate(grounded_notes[:6]):
-                col = n_idx % NOTES_PER_ROW
-                row = n_idx // NOTES_PER_ROW
-                nx = BASE_X + col * (NOTE_W + NOTE_GAP_X)
-                ny = cards_start_y + row * (NOTE_H + NOTE_GAP_Y)
-
-                icon = NOTE_KIND_ICON.get(note["kind"], "📌")
-                clean_text = note["text"]
-                if not any(clean_text.startswith(p) for p in ("📌", "💡", "⚡", "📋", "⚠️", "✅")):
-                    clean_text = f"{icon} {clean_text}"
-
-                card_id = f"sticky_note_{n_idx}"
-                text_id = f"sticky_text_{n_idx}"
-
-                elements.append(
-                    {
-                        "id": card_id,
-                        "type": "rectangle",
-                        "x": nx,
-                        "y": ny,
-                        "width": NOTE_W,
-                        "height": NOTE_H,
-                        "angle": 0,
-                        "strokeColor": "#ca8a04",
-                        "backgroundColor": "#fef9c3",
-                        "fillStyle": "solid",
-                        "strokeWidth": 2,
-                        "roughness": 1,
-                        "opacity": 100,
-                        "groupIds": ["architectural_notes"],
-                        "roundness": {"type": 3},
-                        "boundElements": [{"type": "text", "id": text_id}],
-                        "isDeleted": False,
-                        # Every rendered element carries its provenance, so a
-                        # sticky note can be traced back to the evidence that
-                        # prompted it like any node.
-                        "customData": {
-                            "visual": {
-                                "type": "architectural_note",
-                                "kind": note["kind"],
-                                "evidence_ids": note["evidence_ids"],
-                                "support_type": "explicit" if note["evidence_ids"] else "inferred",
-                            }
-                        },
-                    }
-                )
-                elements.append(
-                    {
-                        "id": text_id,
-                        "type": "text",
-                        "x": nx + 14,
-                        "y": ny + 12,
-                        "width": NOTE_W - 28,
-                        "height": NOTE_H - 24,
-                        "text": clean_text,
-                        "originalText": clean_text,
-                        "fontSize": 12,
-                        "fontFamily": 1,
-                        "textAlign": "left",
-                        "verticalAlign": "top",
-                        "containerId": card_id,
-                        "lineHeight": 1.35,
-                        "baseline": 12,
-                        "autoResize": True,
-                        "strokeColor": "#713f12",
+                lines: List[str] = []
+                if section["body"]:
+                    lines.append(section["body"])
+                lines.extend([f"• {b}" for b in section["bullets"]])
+                body_text = "\n".join(lines).strip() or "Not specified."
+                body_height = max(32, min(360, 20 * _line_count(body_text, 68)))
+                elements.append({
+                    "id": body_id,
+                    "type": "text",
+                    "x": notes_x + 24,
+                    "y": cursor_y,
+                    "width": notes_w - 48,
+                    "height": body_height,
+                    "text": body_text,
+                    "originalText": body_text,
+                    "fontSize": 12,
+                    "fontFamily": 1,
+                    "textAlign": "left",
+                    "verticalAlign": "top",
+                    "lineHeight": 1.45,
+                    "baseline": 11,
+                    "autoResize": True,
+                    "strokeColor": "#303530",
+                    "backgroundColor": "transparent",
+                    "fillStyle": "solid",
+                    "strokeWidth": 1,
+                    "roughness": 1,
+                    "opacity": 100,
+                    "angle": 0,
+                    "groupIds": [],
+                    "isDeleted": False,
+                    "customData": {
+                        "visual": {
+                            "type": "note_section_body",
+                            "section_id": str(section["id"]),
+                            "evidence_ids": section["evidence_ids"],
+                            "support_type": section["support_type"],
+                        }
+                    },
+                })
+                cursor_y += body_height + 10
+                if index < len(ordered_sections) - 1:
+                    separator_id = f"note_section_{section_key}_separator"
+                    elements.append({
+                        "id": separator_id,
+                        "type": "line",
+                        "x": notes_x + 24,
+                        "y": cursor_y,
+                        "width": notes_w - 48,
+                        "height": 0,
+                        "points": [[0, 0], [notes_w - 48, 0]],
+                        "strokeColor": "#d5d7d2",
                         "backgroundColor": "transparent",
                         "fillStyle": "solid",
                         "strokeWidth": 1,
                         "strokeStyle": "solid",
-                        "roughness": 1,
+                        "roughness": 0,
                         "opacity": 100,
                         "angle": 0,
-                        "groupIds": ["architectural_notes"],
                         "isDeleted": False,
+                        "customData": {"visual": {"type": "note_section_separator", "section_id": str(section["id"])}},
+                    })
+                    cursor_y += 14
+
+            footer_id = f"notes_footer_{title_digest}"
+            footer = "Maintained automatically from project memory • rechecked every 30 seconds"
+            elements.append({
+                "id": footer_id,
+                "type": "text",
+                "x": notes_x + 24,
+                "y": notes_y + notes_h - 34,
+                "width": notes_w - 48,
+                "height": 20,
+                "text": footer,
+                "originalText": footer,
+                "fontSize": 9,
+                "fontFamily": 1,
+                "textAlign": "left",
+                "verticalAlign": "top",
+                "lineHeight": 1.2,
+                "baseline": 9,
+                "autoResize": False,
+                "strokeColor": "#777a76",
+                "backgroundColor": "transparent",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 0,
+                "opacity": 100,
+                "angle": 0,
+                "groupIds": [],
+                "isDeleted": False,
+                "customData": {
+                    "visual": {"type": "project_notes_footer"}
+                },
+            })
+
+        # Lightweight visualizations sit below the diagram area. They are not
+        # forced diagrams; they are compact visual aids such as a status,
+        # metric, callout, or timeline.
+        visualizations = getattr(plan, "visualizations", []) or []
+        viz_y = max(
+            (y + NODE_HEIGHT for _, y in positions.values()),
+            default=BASE_Y + 20,
+        ) + 90
+        for v_index, visualization in enumerate(visualizations[:6]):
+            v = visualization.model_dump() if hasattr(visualization, "model_dump") else dict(visualization)
+            kind = str(v.get("kind") or "callout").lower()
+            vx = BASE_X + (v_index % 2) * 360
+            vy = viz_y + (v_index // 2) * 150
+            vw = 320
+            vh = 120 if kind in ("callout", "timeline") else 96
+            vid = str(v.get("id") or f"visual_{v_index}")
+            box_id = f"viz_{hashlib.sha1(vid.encode('utf-8')).hexdigest()[:12]}_box"
+            title_id = f"viz_{hashlib.sha1(vid.encode('utf-8')).hexdigest()[:12]}_title"
+            value_id = f"viz_{hashlib.sha1((vid + ':value').encode('utf-8')).hexdigest()[:12]}_value"
+            title_text = str(v.get("title") or "Visualization")[:80]
+            value_text = str(v.get("value") or "").strip()[:180]
+            items = [str(item).strip() for item in (v.get("items") or []) if str(item).strip()][:6]
+            body = "\n".join((["• " + item for item in items] if items else ([str(v.get("caption") or "")] if v.get("caption") else [])))
+            evidence_ids = [str(e) for e in (v.get("evidence_ids") or [])][:4]
+            support_type = str(v.get("support_type") or ("explicit" if evidence_ids else "inferred"))
+            elements.append({
+                "id": box_id,
+                "type": "rectangle",
+                "x": vx,
+                "y": vy,
+                "width": vw,
+                "height": vh,
+                "angle": 0,
+                "strokeColor": "#4b5a53",
+                "backgroundColor": "#f7f9f6",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 1,
+                "opacity": 100,
+                "roundness": {"type": 3},
+                "boundElements": [{"type": "text", "id": title_id}],
+                "isDeleted": False,
+                "customData": {
+                    "visual": {
+                        "type": "lightweight_visualization",
+                        "visualization_id": vid,
+                        "kind": kind,
+                        "evidence_ids": evidence_ids,
+                        "support_type": support_type,
                     }
-                )
+                },
+            })
+            elements.append({
+                "id": title_id,
+                "type": "text",
+                "x": vx + 14,
+                "y": vy + 12,
+                "width": vw - 28,
+                "height": 22,
+                "text": title_text,
+                "originalText": title_text,
+                "fontSize": 13,
+                "fontFamily": 1,
+                "textAlign": "left",
+                "verticalAlign": "top",
+                "lineHeight": 1.2,
+                "baseline": 12,
+                "autoResize": False,
+                "strokeColor": "#34433c",
+                "backgroundColor": "transparent",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 0,
+                "opacity": 100,
+                "angle": 0,
+                "groupIds": [],
+                "isDeleted": False,
+            })
+            rendered_body = value_text or body or "Visual summary"
+            elements.append({
+                "id": value_id,
+                "type": "text",
+                "x": vx + 14,
+                "y": vy + 38,
+                "width": vw - 28,
+                "height": vh - 50,
+                "text": rendered_body,
+                "originalText": rendered_body,
+                "fontSize": 12 if kind != "metric" else 18,
+                "fontFamily": 1,
+                "textAlign": "left",
+                "verticalAlign": "top",
+                "lineHeight": 1.35,
+                "baseline": 12,
+                "autoResize": True,
+                "strokeColor": "#1f241f",
+                "backgroundColor": "transparent",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 0,
+                "opacity": 100,
+                "angle": 0,
+                "groupIds": [],
+                "isDeleted": False,
+                "customData": {
+                    "visual": {
+                        "type": "lightweight_visualization_text",
+                        "visualization_id": vid,
+                        "evidence_ids": evidence_ids,
+                        "support_type": support_type,
+                    }
+                },
+            })
+
+        # Backward-compatibility metadata for legacy note tests/callers: the
+        # actual rendering is now plain text on the page, never sticky cards.
+        if not note_sections and legacy_notes:
+            for n_index, note in enumerate(legacy_notes[:8]):
+                text_id = f"sticky_text_{n_index}"
+                text_value = note["text"]
+                elements.append({
+                    "id": text_id,
+                    "type": "text",
+                    "x": notes_x + 24,
+                    "y": notes_y + 100 + n_index * 28,
+                    "width": notes_w - 48,
+                    "height": 24,
+                    "text": text_value,
+                    "originalText": text_value,
+                    "fontSize": 11,
+                    "fontFamily": 1,
+                    "textAlign": "left",
+                    "verticalAlign": "top",
+                    "lineHeight": 1.25,
+                    "baseline": 10,
+                    "autoResize": True,
+                    "strokeColor": "#303530",
+                    "backgroundColor": "transparent",
+                    "fillStyle": "solid",
+                    "strokeWidth": 1,
+                    "roughness": 0,
+                    "opacity": 100,
+                    "angle": 0,
+                    "groupIds": [],
+                    "isDeleted": False,
+                    "customData": {
+                        "visual": {
+                            "type": "architectural_note",
+                            "kind": note["kind"],
+                            "evidence_ids": note["evidence_ids"],
+                            "support_type": note["support_type"],
+                        }
+                    },
+                })
 
         self.validate_scene(elements)
         return elements
