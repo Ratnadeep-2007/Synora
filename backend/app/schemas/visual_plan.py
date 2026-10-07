@@ -15,8 +15,6 @@ class VisualNode(BaseModel):
     emphasis: Optional[str] = Field(default=None, description="normal | primary | muted")
     annotations: List[str] = []
     # Provenance. A node must cite the evidence that justifies it.
-    # support_type separates what the source actually stated from what the
-    # model inferred on top of it.
     evidence_ids: List[str] = Field(default=[], description="Evidence ids justifying this node")
 
     @model_validator(mode="before")
@@ -102,15 +100,72 @@ class VisualRelationship(BaseModel):
         return data
 
 
-class VisualPlan(BaseModel):
-    """A structured, semantic description of a diagram.
+class VisualNoteSection(BaseModel):
+    """A document-like notes section rendered on the notes page."""
 
-    The AI produces a VisualPlan, NEVER raw Excalidraw JSON. The deterministic
-    compiler owns coordinates, spacing, alignment, routing, dimensions,
-    collision avoidance, typography and viewport fitting.
+    id: str = Field(description="Stable semantic section id")
+    title: str
+    body: str = ""
+    bullets: List[str] = []
+    order: int = 0
+    evidence_ids: List[str] = []
+    support_type: str = Field(default="explicit", description="explicit | inferred")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_section(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            return {"id": "notes", "title": "Notes", "body": data}
+        if isinstance(data, dict):
+            data = dict(data)
+            if "content" in data and "body" not in data:
+                data["body"] = data.pop("content")
+            if "text" in data and "body" not in data:
+                data["body"] = data.pop("text")
+            if "evidence_id" in data and "evidence_ids" not in data:
+                data["evidence_ids"] = [data.pop("evidence_id")]
+        return data
+
+
+class VisualVisualization(BaseModel):
+    """A lightweight visual when a full diagram would not add enough value."""
+
+    id: str = Field(description="Stable semantic visualization id")
+    kind: str = Field(
+        default="callout",
+        description="metric | status | callout | timeline",
+    )
+    title: str
+    value: Optional[str] = None
+    items: List[str] = []
+    caption: Optional[str] = None
+    evidence_ids: List[str] = []
+    support_type: str = Field(default="explicit", description="explicit | inferred")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_visualization(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            if "text" in data and "value" not in data:
+                data["value"] = data.pop("text")
+            if "evidence_id" in data and "evidence_ids" not in data:
+                data["evidence_ids"] = [data.pop("evidence_id")]
+        return data
+
+
+class VisualPlan(BaseModel):
+    """A structured, semantic canvas plan.
+
+    The AI decides what deserves plain text, lightweight visualization, or a
+    genuine diagram. The deterministic compiler owns all pixel geometry.
     """
 
     title: Optional[str] = None
+    canvas_strategy: str = Field(
+        default="mixed",
+        description="text | mixed | diagram",
+    )
     layout_direction: str = Field(default="horizontal", description="horizontal | vertical")
     grouping_intent: List[str] = []
     nodes: List[VisualNode] = []
@@ -122,10 +177,9 @@ class VisualPlan(BaseModel):
     add: List[str] = []
     change: List[str] = []
     remove: List[str] = []
-    # A note is either a plain string or a structured directive carrying
-    # {"text", "kind", "order", "evidence_ids"}. Structured notes let the
-    # compiler order them deterministically and refuse to render a note that
-    # declares evidence but supplies none.
+    notes_sections: List[VisualNoteSection] = []
+    visualizations: List[VisualVisualization] = []
+    # Backward-compatible note representation retained for existing callers.
     notes: List[Union[str, Dict[str, Any]]] = []
     model: str = ""
     prompt_version: str = ""
@@ -143,6 +197,10 @@ class VisualPlan(BaseModel):
                     data.setdefault("layout_direction", "horizontal")
                 elif dir_val in ("top_to_bottom", "vertical"):
                     data.setdefault("layout_direction", "vertical")
+            if "note_sections" in data and "notes_sections" not in data:
+                data["notes_sections"] = data.pop("note_sections")
+            if "visuals" in data and "visualizations" not in data:
+                data["visualizations"] = data.pop("visuals")
         return data
 
     @property
