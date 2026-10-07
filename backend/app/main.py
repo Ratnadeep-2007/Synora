@@ -78,13 +78,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Synesis Backend...")
     stop_event.set()
     worker_task.cancel()
-    visual_sync_task.cancel()
     try:
         await worker_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await visual_sync_task
     except asyncio.CancelledError:
         pass
 
