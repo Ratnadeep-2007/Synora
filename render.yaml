@@ -106,3 +106,47 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+
+
+  - type: worker
+    name: synora-visual-sync
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    dockerCommand: python -m app.services.visual_sync_worker
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: synora-backend
+          property: envVar
+          envVar: SECRET_KEY
+      - key: ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: synora-backend
+          property: envVar
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: META_API_KEY
+        sync: false
+      - key: META_BASE_URL
+        sync: false
+      - key: META_MODEL
+        value: muse-spark-1.3-contributor
+      - key: VISUAL_DESIGN_MODE
+        value: free
+      - key: VISUAL_SYNC_INTERVAL_SECONDS
+        value: "30"
+\n
