@@ -233,8 +233,14 @@ def test_text_diagram_is_held_as_proposal_when_critique_fails(db_session, monkey
     all, so a plan the critic would have rejected was committed anyway.
     """
     import app.services.visual_critique_service as critique_mod
+    from app.core.config import settings
     from app.models.project import Project
     from app.services.excalidraw_service import ExcalidrawService
+
+    # This test asserts grounded-mode behavior. The local .env may select
+    # free design mode, so pin it: the free-mode counterpart lives in
+    # test_meta_provider.py.
+    monkeypatch.setattr(settings, "VISUAL_DESIGN_MODE", "grounded")
 
     # The method imports the critique service inside the function body, so the
     # patch has to land on the defining module.

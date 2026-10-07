@@ -87,6 +87,15 @@ class VisualPlanService:
         if provider in ("deterministic", "mock", "test"):
             return self._deterministic_plan(state_summary, current_nodes or [], focus_prompt, evidence_snippets), AI_STATUS_DETERMINISTIC
 
+        # Design authority first: when Meta is selected and configured, the
+        # agent designs with complete freedom per project.
+        if provider == "meta" and settings.is_meta_configured:
+            plan = self._call_meta(
+                state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
+            )
+            if plan is not None:
+                return plan, AI_STATUS_AI
+
         if provider == "gemini" and settings.is_gemini_configured:
             plan = self._call_gemini(
                 state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
@@ -109,6 +118,12 @@ class VisualPlanService:
                 return plan, AI_STATUS_AI
 
         # Fallback to any active configured semantic provider
+        if settings.is_meta_configured:
+            plan = self._call_meta(
+                state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
+            )
+            if plan is not None:
+                return plan, AI_STATUS_AI
         if settings.is_gemini_configured:
             plan = self._call_gemini(
                 state_summary, current_nodes or [], evidence_snippets or [], focus_prompt, constraints
@@ -161,6 +176,11 @@ class VisualPlanService:
         if provider in ("deterministic", "mock", "test"):
             return self._plan_from_text_deterministic(text, clean_title, _text_evidence_id(text)), AI_STATUS_DETERMINISTIC
 
+        if provider == "meta" and settings.is_meta_configured:
+            plan = self._call_meta(state_summary, [], [text], text, None)
+            if plan is not None:
+                return plan, AI_STATUS_AI
+
         if provider == "gemini" and settings.is_gemini_configured:
             plan = self._call_gemini(state_summary, [], [text], text, None)
             if plan is not None:
@@ -176,6 +196,10 @@ class VisualPlanService:
             if plan is not None:
                 return plan, AI_STATUS_AI
 
+        if settings.is_meta_configured:
+            plan = self._call_meta(state_summary, [], [text], text, None)
+            if plan is not None:
+                return plan, AI_STATUS_AI
         if settings.is_gemini_configured:
             plan = self._call_gemini(state_summary, [], [text], text, None)
             if plan is not None:
@@ -201,9 +225,53 @@ class VisualPlanService:
         evidence_snippets: List[str],
         focus_prompt: Optional[str],
         constraints: Optional[List[str]],
+        free: bool = False,
     ) -> str:
         project_title = state_summary.get("title") or "Project"
         is_synora_project = project_title.strip().lower() in ("synora", "synesis")
+
+        # In free design mode the agent has complete freedom per project: no
+        # boilerplate ban, no mandatory grounding. Evidence is still shown so
+        # the model can cite it, and citations are still recorded - they are
+        # simply not enforced.
+        if free:
+            schema = (
+                '{"title": str, "layout_direction": "horizontal|vertical", '
+                '"grouping_intent": [str], '
+                '"nodes": [{"id": str, "label": str, "node_type": '
+                '"client|service|datastore|actor|decision|requirement|group|note", '
+                '"group": str|null, "emphasis": "normal|primary|muted", "annotations": [str], '
+                '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
+                '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed", '
+                '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
+                '"preserve": [str], "add": [str], "change": [str], "remove": [str], '
+                '"notes": [{"text": str, "kind": "decision|requirement|directive|action|risk|assumption|note", '
+                '"order": int, "evidence_ids": [str]}]}'
+            )
+            lines = [
+                f"You are the visual architecture designer for the project: '{project_title}'.",
+                "Design this project's canvas with complete freedom. Choose the nodes, relationships,",
+                "grouping and layout that best express what this project is and where it is going.",
+                "Cite evidence ids where the evidence supports a node; where you design beyond the",
+                "evidence, mark support_type inferred. Never return Excalidraw JSON, only the plan schema.",
+                "",
+                f"Respond with ONLY JSON matching: {schema}",
+                "",
+                "--- CURRENT PROJECT STATE ---",
+                json.dumps(state_summary, default=str)[:4000],
+                "",
+                f"--- CURRENT CANVAS NODES --- {json.dumps(current_nodes)[:800]}",
+            ]
+            if evidence_snippets:
+                lines += ["", "--- RELEVANT EVIDENCE ---"] + [
+                    f"- [EVIDENCE: {_evidence_id_of(s)}] {_snippet_text(s)[:200]}"
+                    for s in evidence_snippets[:8]
+                ]
+            if constraints:
+                lines += ["", "--- VISUAL DESIGN CONSTRAINTS ---"] + [f"- {c}" for c in constraints]
+            if focus_prompt:
+                lines += ["", f"--- REQUESTED CHANGE --- {focus_prompt}"]
+            return "\n".join(lines)
 
         # Disallow generic platform meta-scaffolding from leaking into domain architectures
         disallowed_meta = {
@@ -373,6 +441,50 @@ class VisualPlanService:
             logger.warning("visual_plan_gemini_failed: %s", exc)
             return None
         plan = self._parse(content, model=f"gemini/{settings.GEMINI_MODEL}")
+        return self._ensure_efficient_notes(plan, state, focus)
+
+    def _call_meta(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
+        """Design authority path: Meta Muse Spark with complete per-project freedom."""
+        if not settings.is_meta_configured:
+            return None
+        import httpx
+
+        prompt = self._build_prompt(state, nodes, evidence, focus, constraints, free=True)
+        project_title = state.get("title") or "Project"
+        system_instruction = (
+            f"You are the visual architecture designer for project '{project_title}'. "
+            "You have complete freedom: design the canvas that best expresses this project. "
+            "Cite evidence ids where evidence supports a node; mark the rest inferred. "
+            "Return ONLY strict JSON matching the requested schema. You never return Excalidraw JSON."
+        )
+        payload = {
+            "model": settings.META_MODEL,
+            "messages": [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.4,
+            "response_format": {"type": "json_object"},
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.META_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.post(
+                    f"{settings.META_BASE_URL.rstrip('/')}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                if resp.status_code != 200:
+                    logger.warning("visual_plan_meta_http_%s", resp.status_code)
+                    return None
+                content = resp.json()["choices"][0]["message"]["content"]
+        except Exception as exc:
+            logger.warning("visual_plan_meta_failed: %s", exc)
+            return None
+        plan = self._parse(content, model=f"meta/{settings.META_MODEL}")
         return self._ensure_efficient_notes(plan, state, focus)
 
     def _call_nim(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:

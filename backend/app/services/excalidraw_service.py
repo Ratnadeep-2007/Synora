@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import SynesisException
+from app.core.config import settings
 from app.models.excalidraw import (
     ExcalidrawArtifact,
     ExcalidrawProposal,
@@ -317,7 +318,8 @@ class ExcalidrawService:
             focus_prompt=reason,
         )
         try:
-            proposed_elements = ExcalidrawCompiler().compile(plan)
+            free_state = settings.visual_design_free
+            proposed_elements = ExcalidrawCompiler().compile(plan, enforce_grounding=not free_state)
         except ExcalidrawCompileError as exc:
             # Grounding refused the plan (no evidence-backed nodes). Record why
             # and leave the canvas untouched rather than raising through the
@@ -338,10 +340,18 @@ class ExcalidrawService:
         # A critique finding blocks auto-apply. Previously critique.ok was only
         # recorded in the diff preview and logged, so a plan that dropped
         # preserved nodes or overlapped badly was committed anyway.
-        if critique.issues:
+        # In free design mode findings are recorded for audit but do not block:
+        # the agent has complete freedom and owns the result.
+        if critique.issues and not settings.visual_design_free:
             auto_apply = False
             logger.warning(
                 "visual_auto_apply_blocked_by_critique: project=%s issues=%s",
+                project_id,
+                "; ".join(critique.issues[:3]),
+            )
+        elif critique.issues:
+            logger.info(
+                "visual_free_mode_critique_noted: project=%s issues=%s",
                 project_id,
                 "; ".join(critique.issues[:3]),
             )
@@ -481,15 +491,23 @@ class ExcalidrawService:
         )
 
         compiler = ExcalidrawCompiler()
-        proposed_elements = compiler.compile(plan)
+        free = settings.visual_design_free
+        proposed_elements = compiler.compile(plan, enforce_grounding=not free)
 
         critique = VisualCritiqueService().critique(plan, proposed_elements)
         # Critique findings downgrade this to a reviewable proposal instead of
-        # writing straight to the canvas.
-        if critique.issues:
+        # writing straight to the canvas. In free design mode they are
+        # recorded but do not block: the agent owns the result.
+        if critique.issues and not free:
             direct_apply = False
             logger.warning(
                 "visual_auto_apply_blocked_by_critique: project=%s issues=%s",
+                project_id,
+                "; ".join(critique.issues[:3]),
+            )
+        elif critique.issues:
+            logger.info(
+                "visual_free_mode_critique_noted: project=%s issues=%s",
                 project_id,
                 "; ".join(critique.issues[:3]),
             )
@@ -624,10 +642,11 @@ class ExcalidrawService:
         planner = VisualPlanService()
         plan, ai_status = planner.build_plan_from_text(text=text, title=title)
 
-        # 2. Compile to Excalidraw Elements
+        # 2. Compile to Excalidraw Elements (free mode: ungrounded nodes render)
         compiler = ExcalidrawCompiler()
         try:
-            compiled_elements = compiler.compile(plan)
+            free = settings.visual_design_free
+            compiled_elements = compiler.compile(plan, enforce_grounding=not free)
         except ExcalidrawCompileError as exc:
             # Grounding refused the plan. Record why and leave the canvas
             # untouched rather than raising through the API.
@@ -649,10 +668,16 @@ class ExcalidrawService:
         # previously had no critique at all: whatever the planner produced was
         # committed without ever being checked.
         critique = VisualCritiqueService().critique(plan, compiled_elements)
-        if critique.issues:
+        if critique.issues and not settings.visual_design_free:
             auto_apply = False
             logger.warning(
                 "visual_auto_apply_blocked_by_critique: project=%s issues=%s",
+                project_id,
+                "; ".join(critique.issues[:3]),
+            )
+        elif critique.issues:
+            logger.info(
+                "visual_free_mode_critique_noted: project=%s issues=%s",
                 project_id,
                 "; ".join(critique.issues[:3]),
             )

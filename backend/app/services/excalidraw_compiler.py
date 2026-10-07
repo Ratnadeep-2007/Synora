@@ -45,7 +45,7 @@ class ExcalidrawCompiler:
     element ids so recompiling an unchanged plan is idempotent.
     """
 
-    def compile(self, plan: VisualPlan) -> List[Dict[str, Any]]:
+    def compile(self, plan: VisualPlan, enforce_grounding: bool = True) -> List[Dict[str, Any]]:
         if not plan.nodes:
             raise ExcalidrawCompileError("VisualPlan contains no nodes to compile.")
 
@@ -54,19 +54,32 @@ class ExcalidrawCompiler:
         # refused here. Previously any node survived, which is how a single
         # WhatsApp sentence produced a seven-node architecture whose contents
         # came from the model's imagination.
+        #
+        # In free design mode (enforce_grounding=False) the agent has complete
+        # freedom: ungrounded nodes render, still tagged inferred and still
+        # carrying whatever evidence_ids the model cited.
         grounded_nodes = [n for n in plan.nodes if n.evidence_ids]
-        if not grounded_nodes:
-            raise ExcalidrawCompileError(
-                "VisualPlan has no evidence-backed nodes; refusing to compile an ungrounded diagram."
-            )
-        if len(grounded_nodes) < len(plan.nodes):
+        if enforce_grounding:
+            if not grounded_nodes:
+                raise ExcalidrawCompileError(
+                    "VisualPlan has no evidence-backed nodes; refusing to compile an ungrounded diagram."
+                )
+            if len(grounded_nodes) < len(plan.nodes):
+                logger.info(
+                    "visual_plan_nodes_dropped_ungrounded: kept=%d dropped=%d",
+                    len(grounded_nodes),
+                    len(plan.nodes) - len(grounded_nodes),
+                )
+            plan = plan.model_copy(update={"nodes": grounded_nodes})
+        elif len(grounded_nodes) < len(plan.nodes):
             logger.info(
-                "visual_plan_nodes_dropped_ungrounded: kept=%d dropped=%d",
+                "visual_plan_free_mode: kept=%d ungrounded=%d",
                 len(grounded_nodes),
                 len(plan.nodes) - len(grounded_nodes),
             )
-        plan = plan.model_copy(update={"nodes": grounded_nodes})
-        valid_node_ids = {n.id for n in grounded_nodes}
+        # In enforce mode plan.nodes is already the grounded subset; in free
+        # mode it is the full set. Either way this is the rendered set.
+        valid_node_ids = {n.id for n in plan.nodes}
         # An edge is only meaningful if both endpoints survived grounding.
         plan.relationships = [
             r

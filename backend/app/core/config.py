@@ -41,9 +41,11 @@ class Settings(BaseSettings):
     COOKIE_SAMESITE: str = "lax"
 
     # Free runtime provider abstraction.
-    # Default: Google Gemini with gemini-3.8-flash and gemini-embedding-2.
-    # Supported: gemini | groq | nvidia | deterministic
-    LLM_PROVIDER: str = Field(default="gemini", description="gemini | groq | nvidia | deterministic")
+    # Design authority: Meta Muse Spark (muse-spark-1.3-contributor) with
+    # complete per-project freedom. Falls through to the next configured
+    # provider when Meta is not yet configured.
+    # Supported: meta | gemini | groq | nvidia | deterministic
+    LLM_PROVIDER: str = Field(default="meta", description="meta | gemini | groq | nvidia | deterministic")
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
@@ -53,6 +55,19 @@ class Settings(BaseSettings):
     NVIDIA_API_KEY: str = ""
     NVIDIA_MODEL: str = "deepseek-ai/deepseek-v4.1-flash"
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
+
+    # Design authority: Meta Muse Spark. Endpoint details unconfirmed - until
+    # META_BASE_URL and META_API_KEY are supplied the client is never built
+    # and selection falls through to the next provider.
+    META_API_KEY: str = ""
+    META_BASE_URL: str = ""
+    META_MODEL: str = "muse-spark-1.3-contributor"
+
+    # Visual design authority: "free" gives the design model complete freedom
+    # per project - ungrounded nodes render, critique findings are recorded but
+    # do not block. "grounded" would keep grounding enforcement and the critique
+    # gate. Meta is the design authority, so free is the correct default.
+    VISUAL_DESIGN_MODE: str = Field(default="free")
 
     # Groq high-speed Whisper audio & LLM provider
     GROQ_API_KEY: str = ""
@@ -138,6 +153,14 @@ class Settings(BaseSettings):
     @property
     def is_groq_configured(self) -> bool:
         return bool(self.GROQ_API_KEY.strip())
+
+    @property
+    def is_meta_configured(self) -> bool:
+        return bool(self.META_API_KEY.strip() and self.META_BASE_URL.strip())
+
+    @property
+    def visual_design_free(self) -> bool:
+        return str(self.VISUAL_DESIGN_MODE or "").strip().lower() == "free"
 
 
     @field_validator("GOOGLE_OAUTH_SCOPES")

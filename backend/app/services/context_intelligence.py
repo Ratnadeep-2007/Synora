@@ -411,9 +411,11 @@ class ContextIntelligenceService:
                 # Deterministic-only mode: no semantic candidates, and no fabricated output.
                 return [], "deterministic_only", False
             is_active = (
-                (provider == "gemini" and settings.is_gemini_configured)
+                (provider == "meta" and settings.is_meta_configured)
+                or (provider == "gemini" and settings.is_gemini_configured)
                 or (provider == "groq" and settings.is_groq_configured)
                 or (provider == "nvidia" and settings.is_nvidia_nim_configured)
+                or settings.is_meta_configured
                 or settings.is_gemini_configured
                 or settings.is_groq_configured
                 or settings.is_nvidia_nim_configured

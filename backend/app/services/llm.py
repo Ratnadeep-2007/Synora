@@ -574,6 +574,107 @@ class GroqLLMClient(LLMClient):
             return self._fallback_client.generate_structured(prompt, schema)
 
 
+class MetaLLMClient(LLMClient):
+    """
+    Meta Muse Spark client (e.g. muse-spark-1.3-contributor).
+
+    Assumed OpenAI-compatible chat/completions transport, the same shape as
+    the Groq client: Bearer auth, model field, json_object response format.
+    The endpoint details are NOT yet confirmed - until META_BASE_URL and
+    META_API_KEY are supplied this client is never constructed (see
+    is_meta_configured) and selection falls through to the next provider.
+    If Meta's actual API differs, only this class changes; every call site
+    keeps working through the LLMClient interface.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "muse-spark-1.3-contributor",
+        base_url: str = "",
+        timeout_seconds: float = 30.0,
+        fallback_client: Optional[LLMClient] = None,
+    ):
+        self.api_key = api_key.strip() if api_key else ""
+        self.model_name = model_name
+        self.base_url = (base_url or "").rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self._fallback_client = fallback_client or DeterministicRuleLLMClient()
+
+    def _configured(self) -> bool:
+        return bool(
+            self.api_key
+            and not self.api_key.startswith("your-")
+            and self.api_key.strip()
+            and self.base_url
+        )
+
+    def generate_structured(self, prompt: str, schema: Type[T]) -> T:
+        if not self._configured():
+            logger.info("Meta API not configured. Using fallback client.")
+            return self._fallback_client.generate_structured(prompt, schema)
+
+        import httpx
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Synora/1.0",
+        }
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an enterprise software architecture intelligence extraction model for Synora. "
+                        "Respond strictly in valid JSON matching the requested schema."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+                if resp.status_code != 200:
+                    logger.warning(
+                        f"Meta API returned HTTP {resp.status_code}: {resp.text[:200]}. Failing over to fallback client."
+                    )
+                    return self._fallback_client.generate_structured(prompt, schema)
+
+                res_json = resp.json()
+                msg = res_json["choices"][0]["message"]
+                content = msg.get("content") or ""
+                if not content or not content.strip():
+                    logger.warning("Meta API returned empty content. Failing over to fallback client.")
+                    return self._fallback_client.generate_structured(prompt, schema)
+
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+
+                parsed = json.loads(content)
+
+                if schema == ExtractionBatchResult:
+                    return ExtractionBatchResult(
+                        items=normalize_extraction_payload(parsed),
+                        model=f"meta/{self.model_name}",
+                        prompt_version="v2.0-meta",
+                    )  # type: ignore
+
+                return schema.model_validate(parsed)
+
+        except Exception as exc:
+            logger.warning(f"Meta LLM call failed: {exc}. Failing over to fallback client.")
+            return self._fallback_client.generate_structured(prompt, schema)
+
+
 class GeminiLLMClient(LLMClient):
     """
     Google Gemini LLM client for structured reasoning and extraction.
@@ -712,6 +813,28 @@ def get_default_llm_client() -> LLMClient:
             fallback_client=groq_client or nim_client or deterministic_client,
         )
 
+    # Tier 0: Meta Muse Spark. The operator's primary agent branch, with
+    # Groq as the secondary. Every chain below honors Meta -> Groq first.
+    meta_client: Optional[MetaLLMClient] = None
+    if settings.is_meta_configured:
+        meta_client = MetaLLMClient(
+            api_key=settings.META_API_KEY,
+            model_name=settings.META_MODEL,
+            base_url=settings.META_BASE_URL,
+            fallback_client=groq_client or gemini_client or nim_client or deterministic_client,
+        )
+
+    if provider == "meta":
+        if meta_client:
+            return meta_client
+        if groq_client:
+            return groq_client
+        if gemini_client:
+            return gemini_client
+        if nim_client:
+            return nim_client
+        return deterministic_client
+
     if provider == "gemini":
         if gemini_client:
             return gemini_client
@@ -745,11 +868,13 @@ def get_default_llm_client() -> LLMClient:
             return groq_client
         return deterministic_client
 
-    # Auto-select best configured provider
-    if gemini_client:
-        return gemini_client
+    # Auto-select best configured provider: Meta primary, Groq secondary.
+    if meta_client:
+        return meta_client
     if groq_client:
         return groq_client
+    if gemini_client:
+        return gemini_client
     if nim_client:
         return nim_client
     return deterministic_client
