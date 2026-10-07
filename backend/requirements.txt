@@ -3,6 +3,10 @@ uvicorn[standard]>=0.28.0
 pydantic>=2.6.0
 pydantic-settings>=2.2.0
 sqlalchemy>=2.0.0
+# PostgreSQL driver for cloud databases (Neon). SQLite needs no driver, so
+# local dev works without this, but any postgres:// DATABASE_URL fails at
+# engine creation without it.
+psycopg[binary]>=3.1.0
 cryptography>=42.0.0
 httpx>=0.27.0
 python-dotenv>=1.0.0

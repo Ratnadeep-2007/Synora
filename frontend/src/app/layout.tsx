@@ -15,6 +15,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased bg-canvas text-text-main">
+        {/* Runtime backend URL (SYNORA_API_URL). Plain script so it executes
+            before page bundles; api.ts reads window.__SYNORA_API_URL__. */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/runtime-config.js" />
         {children}
       </body>
     </html>

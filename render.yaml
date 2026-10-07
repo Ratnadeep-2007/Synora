@@ -1,0 +1,108 @@
+# Render blueprint for Synora: backend + frontend + background worker.
+# Database is Neon Postgres (created separately); Redis is intentionally absent
+# (the backend does not use Redis - the local compose entry is unused).
+#
+# Deploy: dashboard.render.com -> New -> Blueprint -> point at this repo.
+# Set the sync:false values below when prompted (DATABASE_URL from Neon, OAuth
+# secrets, LLM/STT keys). Service names determine public URLs:
+#   backend  -> https://synora-backend.onrender.com
+#   frontend -> https://synora-frontend.onrender.com
+
+services:
+  - type: web
+    name: synora-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health/ready
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false # Neon pooled connection string, with ?sslmode=require
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: FRONTEND_URL
+        value: https://synora-frontend.onrender.com
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        value: https://synora-backend.onrender.com/auth/google/callback
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # Meet capture stays OFF in the cloud until Vexa runs on a reachable
+      # host (VPS). Vexa's 13 containers need a real Docker daemon; Render
+      # cannot run them. Keep the local Vexa stack for local dev.
+      - key: VEXA_ENABLED
+        value: "false"
+      - key: VEXA_BASE_URL
+        value: http://localhost:18056
+      # Sarvam is the cloud STT path. Local faster-whisper is disabled here:
+      # the free tier has neither the RAM nor the ephemeral disk for it.
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: WHISPER_ENABLED
+        value: "false"
+      - key: CONTEXT_RESOLUTION_MIN_CONFIDENCE
+        value: "0.72"
+      - key: CONTEXT_RESOLUTION_MIN_MARGIN
+        value: "0.08"
+      - key: WHATSAPP_BATCH_POLL_SECONDS
+        value: "5"
+      - key: VISUAL_SYNC_INTERVAL_SECONDS
+        value: "30"
+
+  - type: web
+    name: synora-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: free
+    # Backend URL is injected at container start (entrypoint.sh writes it
+    # into public/runtime-config.js), so no rebuild is needed to retarget.
+    # Must match the backend service name below.
+    envVars:
+      - key: SYNORA_API_URL
+        value: https://synora-backend.onrender.com
+      - key: PORT
+        value: "3000"
+
+  - type: worker
+    name: synora-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    dockerCommand: python -m app.services.whatsapp_batch_worker
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false # same Neon connection string as the backend
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: synora-backend
+          property: envVar
+          envVar: SECRET_KEY
+      - key: ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: synora-backend
+          property: envVar
+          envVar: ENCRYPTION_KEY
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

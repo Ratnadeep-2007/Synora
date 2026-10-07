@@ -22,7 +22,23 @@ import {
   WhatsAppMessageItem,
 } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+declare global {
+  interface Window {
+    __SYNORA_API_URL__?: string;
+  }
+}
+
+// Resolved per call, not at import time: the backend URL is injected at
+// container start via /runtime-config.js (SYNORA_API_URL env), so the same
+// image works against localhost, staging, and production without rebuilding.
+function apiBaseUrl(): string {
+  if (typeof window !== "undefined" && window.__SYNORA_API_URL__) {
+    return window.__SYNORA_API_URL__;
+  }
+  const baked = process.env.NEXT_PUBLIC_API_URL;
+  if (baked) return baked;
+  return "http://localhost:8000";
+}
 
 // Session identity: the backend requires an explicit user ID (no implicit
 // demo identity). Persist it per browser so a returning user keeps context.
@@ -44,7 +60,7 @@ export function getFrontendUserId(): string {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const url = `${API_BASE_URL}${path}`;
+  const url = `${apiBaseUrl()}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((options?.headers as Record<string, string>) || {}),
@@ -560,7 +576,7 @@ export const api = {
     if (limit) query.set("limit", String(limit));
     query.set("include_media", String(includeMedia));
 
-    const url = `${API_BASE_URL}/connectors/whatsapp/import-export?${query.toString()}`;
+    const url = `${apiBaseUrl()}/connectors/whatsapp/import-export?${query.toString()}`;
     const headers: Record<string, string> = {};
     const sessionId = getSessionUserId();
     if (sessionId) headers["X-User-ID"] = sessionId;
