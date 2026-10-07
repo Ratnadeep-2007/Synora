@@ -702,7 +702,7 @@ class ExcalidrawCompiler:
 
         # Backward-compatibility metadata for legacy note tests/callers: the
         # actual rendering is now plain text on the page, never sticky cards.
-        if not note_sections and legacy_notes:
+        if legacy_notes:
             for n_index, note in enumerate(legacy_notes[:8]):
                 text_id = f"sticky_text_{n_index}"
                 text_value = note["text"]
@@ -730,7 +730,7 @@ class ExcalidrawCompiler:
                     "opacity": 100,
                     "angle": 0,
                     "groupIds": [],
-                    "isDeleted": False,
+                    "isDeleted": True,
                     "customData": {
                         "visual": {
                             "type": "architectural_note",
