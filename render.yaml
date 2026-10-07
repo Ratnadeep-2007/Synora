@@ -100,7 +100,6 @@ services:
           name: synora-backend
           property: envVar
           envVar: ENCRYPTION_KEY
-          envVar: ENCRYPTION_KEY
       - key: LLM_PROVIDER
         value: gemini
       - key: GEMINI_API_KEY
@@ -150,4 +149,3 @@ services:
         value: free
       - key: VISUAL_SYNC_INTERVAL_SECONDS
         value: "30"
-\n
