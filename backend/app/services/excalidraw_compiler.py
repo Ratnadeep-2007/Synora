@@ -389,7 +389,7 @@ class ExcalidrawCompiler:
             notes_h = min(max(total_h, 520), 2400)
             title_digest = hashlib.sha1((plan.title or "plan").encode("utf-8")).hexdigest()[:12]
             page_id = f"notes_page_{title_digest}"
-            title_id = f"notes_title_{title_digest}"
+            title_id = f"lbl_notes_hdr_{title_digest}"
             elements.append({
                 "id": page_id,
                 "type": "rectangle",
