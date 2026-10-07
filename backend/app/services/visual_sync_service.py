@@ -1,25 +1,16 @@
-"""Periodic memory-to-canvas reconciliation.
+"""Periodic project-memory to Excalidraw reconciliation.
 
-Project memory (ProjectState + approved StateChanges) advances through many
-paths: meetings, WhatsApp, manual approvals. The canvas (VisualRevision per
-project) only moves when something explicitly draws it. This service closes
-that gap on a timer: when approved memory exists that no canvas revision
-reflects yet, it draws the delta through the same evidence-linked,
-safety-gated patch path the ingestion pipelines use.
+Every cycle rebuilds the project's *desired* canvas from authoritative project
+memory plus recent evidence, then compares it with the current revision.
+The agent decides whether content belongs in readable notes, a lightweight
+visualization, or a genuine diagram. The compiler owns layout and geometry.
 
-Safety properties, all deliberate:
+User-authored Excalidraw elements are preserved. Agent-owned elements are
+reconciled from scratch, which lets stale diagrams/notes disappear when memory
+changes instead of accumulating duplicate cards.
 
-- Only APPROVED state changes drive the loop. Proposed-but-unreviewed items
-  never reach the canvas from here.
-- Only add-only patches auto-apply (SAFE_AUTO_APPLY). Anything destructive is
-  recorded as held_for_review and left alone.
-- The evidence-volume gate applies: a project with fewer than two evidence
-  rows keeps its canvas untouched.
-- No-op detection: if the merged scene is fingerprint-identical to the
-  current scene, no revision is committed. The loop is therefore safe to run
-  every 30 seconds without spamming revision history.
-- Everything is derived from persisted rows. There is no cursor to corrupt,
-  no lock to leak, and a restart simply re-derives the same answer.
+The worker is intentionally stateless: restarting it simply reconstructs the
+same answer from persisted memory and the current canvas.
 """
 
 import hashlib
@@ -29,9 +20,9 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
+from app.core.config import settings
 
-MIN_EVIDENCE_FOR_VISUAL = 2
+logger = logging.getLogger(__name__)
 
 
 def _scene_fingerprint(elements: List[Dict[str, Any]]) -> str:
@@ -39,8 +30,47 @@ def _scene_fingerprint(elements: List[Dict[str, Any]]) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _is_agent_managed(element: Dict[str, Any]) -> bool:
+    custom = element.get("customData") or {}
+    visual = custom.get("visual") if isinstance(custom, dict) else None
+    return isinstance(visual, dict) and bool(visual)
+
+
+def _canvas_summary(scene: List[Dict[str, Any]]) -> List[str]:
+    summary: List[str] = []
+    for element in scene[:100]:
+        visual = ((element.get("customData") or {}).get("visual") or {})
+        if not isinstance(visual, dict):
+            visual = {}
+        semantic_id = visual.get("semantic_id")
+        if semantic_id:
+            text_value = element.get("text")
+            label = f"{semantic_id}"
+            if text_value:
+                label += f": {str(text_value)[:90]}"
+            summary.append(label)
+        elif visual.get("type"):
+            summary.append(str(visual.get("type")))
+    return summary[:50]
+
+
+def _state_summary(project: Any, state_row: Any) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    if state_row and state_row.state_json:
+        try:
+            result = json.loads(state_row.state_json)
+        except Exception:
+            result = {}
+    result = dict(result)
+    result.setdefault("title", getattr(project, "name", None) or "Project")
+    description = getattr(project, "description", None)
+    if description and not result.get("description"):
+        result["description"] = description
+    return result
+
+
 class VisualSyncService:
-    """Reconcile each project's canvas with its approved memory."""
+    """Reconcile a project's full visual notebook with current memory."""
 
     def sync_project(
         self,
@@ -52,167 +82,161 @@ class VisualSyncService:
         from app.models.evidence import Evidence
         from app.models.project import Project
         from app.services.project_state_service import ProjectStateService
-        from app.services.visual_merge_service import VisualMergeService
-        from app.services.visual_patch_service import (
-            PatchSafetyClassification,
-            VisualPatchService,
-        )
+        from app.services.visual_plan_service import VisualPlanService
         from app.services.visual_revision_service import VisualRevisionService
+        from app.services.excalidraw_compiler import ExcalidrawCompiler, ExcalidrawCompileError
 
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project or getattr(project, "is_system", False):
             return {"project_id": project_id, "synced": False, "reason": "unknown_or_system"}
 
-        state = ProjectStateService().get_or_create_state(project_id, db)
+        state_row = ProjectStateService().get_or_create_state(project_id, db)
+        state_summary = _state_summary(project, state_row)
+
         revision_service = VisualRevisionService()
         current_rev = revision_service.current_revision(project_id, db)
-        rev_time = (
-            current_rev.created_at.isoformat()
-            if current_rev and current_rev.created_at
-            else ""
-        )
-
-        # Approved memory newer than the canvas = unsynced delta. The
-        # StateChange rows carry their own evidence IDs, so the patch draws
-        # exactly what changed, not the whole project history.
-        from app.models.project_state import StateChange
-
-        pending = (
-            db.query(StateChange)
-            .filter(
-                StateChange.project_id == project_id,
-                StateChange.approval_status == "approved",
-            )
-            .order_by(StateChange.created_at.asc())
-            .all()
-        )
-        if current_rev is not None:
-            pending = [
-                ch for ch in pending
-                if (ch.created_at.isoformat() if ch.created_at else "") > rev_time
-            ]
-        if not pending:
-            return {
-                "project_id": project_id,
-                "synced": False,
-                "reason": "up_to_date",
-                "state_version": state.current_version,
-            }
-
-        total_evidence = (
-            db.query(Evidence).filter(Evidence.project_id == project_id).count()
-        )
-        if total_evidence < MIN_EVIDENCE_FOR_VISUAL:
-            logger.info(
-                "visual_sync_deferred: project=%s evidence=%d required=%d",
-                project_id,
-                total_evidence,
-                MIN_EVIDENCE_FOR_VISUAL,
-            )
-            return {
-                "project_id": project_id,
-                "synced": False,
-                "reason": "deferred_below_evidence_gate",
-            }
-
-        wanted_ids: List[str] = []
-        for ch in pending:
-            try:
-                ids = json.loads(ch.evidence_ids_json or "[]")
-            except Exception:
-                ids = []
-            for ev_id in ids:
-                if ev_id and ev_id not in wanted_ids:
-                    wanted_ids.append(ev_id)
-        rows = (
-            db.query(Evidence).filter(Evidence.id.in_(wanted_ids)).all()
-            if wanted_ids
-            else []
-        )
-        # Fall back to recent project evidence when a change carries no IDs;
-        # the gate above already ensured the project is non-trivial.
-        if not rows:
-            rows = (
-                db.query(Evidence)
-                .filter(Evidence.project_id == project_id)
-                .order_by(Evidence.occurred_at.desc())
-                .limit(10)
-                .all()
-            )
-        text = "\n".join(r.content for r in rows if r.content and r.content.strip())
-        if not text.strip():
-            return {"project_id": project_id, "synced": False, "reason": "empty_text"}
-
-        patch_service = VisualPatchService()
-        try:
-            patch = patch_service.generate_patch_from_evidence(
-                project_id=project_id,
-                text=text,
-                db=db,
-                evidence_ids=[r.id for r in rows],
-                tenant_id=tenant_id,
-            )
-        except Exception as exc:
-            logger.warning("visual_sync_patch_failed: project=%s error=%s", project_id, exc)
-            return {"project_id": project_id, "synced": False, "reason": f"patch_failed: {exc}"[:300]}
-
-        if patch.safety_classification != PatchSafetyClassification.SAFE_AUTO_APPLY:
-            logger.info(
-                "visual_sync_held_for_review: project=%s safety=%s patch=%s",
-                project_id,
-                patch.safety_classification.value,
-                patch.patch_id,
-            )
-            return {
-                "project_id": project_id,
-                "synced": False,
-                "reason": f"held_for_review:{patch.safety_classification.value}",
-                "patch_id": patch.patch_id,
-            }
-
-        # No-op detection: same scene, no new revision. Stable semantic node
-        # IDs make re-application converge, so this comparison is meaningful.
-        base_elements: List[Dict[str, Any]] = []
+        base_scene: List[Dict[str, Any]] = []
         if current_rev and current_rev.scene_json:
             try:
-                base_elements = json.loads(current_rev.scene_json)
+                base_scene = json.loads(current_rev.scene_json)
             except Exception:
-                base_elements = []
-        merged, _, _ = VisualMergeService().merge(
-            base_elements=base_elements,
-            user_elements=base_elements,
-            patch=patch,
+                base_scene = []
+
+        evidence_rows = (
+            db.query(Evidence)
+            .filter(Evidence.project_id == project_id)
+            .order_by(Evidence.occurred_at.desc())
+            .limit(16)
+            .all()
         )
-        if _scene_fingerprint(merged) == _scene_fingerprint(base_elements):
-            logger.info("visual_sync_no_change: project=%s patch=%s", project_id, patch.patch_id)
+        evidence_snippets = [
+            {"id": row.id, "content": row.content, "source": getattr(row, "source", None)}
+            for row in reversed(evidence_rows)
+            if row.content and row.content.strip()
+        ]
+
+        current_canvas = _canvas_summary(base_scene)
+        constraints = [
+            "Use a text-first project notebook.",
+            "Keep readable notes in a document-like page on the right side of the canvas.",
+            "Use the left side for diagrams or lightweight visuals only when they improve comprehension.",
+            "Create a proper diagram only when at least two concrete concepts have a meaningful relationship such as a flow, architecture, hierarchy, dependency, or sequence.",
+            "When a diagram is not justified, leave nodes and relationships empty and put the information in notes_sections instead.",
+            "Use lightweight visualizations only when a status, metric, timeline, or compact callout adds information that prose does not communicate as well.",
+            "Never create sticky-note boards for ordinary project notes.",
+            "Preserve all user-authored Excalidraw elements that are not marked as agent-managed.",
+        ]
+
+        try:
+            plan, ai_status = VisualPlanService().build_plan(
+                state_summary=state_summary,
+                current_nodes=current_canvas,
+                evidence_snippets=evidence_snippets,
+                focus_prompt=None,
+                constraints=constraints,
+            )
+        except Exception as exc:
+            logger.warning("visual_sync_plan_failed: project=%s error=%s", project_id, exc)
+            return {"project_id": project_id, "synced": False, "reason": f"plan_failed: {exc}"[:300]}
+
+        # A proper diagram needs relational structure. This is deliberately
+        # stricter than "the model returned a node": isolated boxes remain
+        # notes/visualizations rather than pretending to be an architecture.
+        proper_diagram = len(plan.nodes) >= 2 and len(plan.relationships) >= 1
+        if not proper_diagram:
+            plan.nodes = []
+            plan.relationships = []
+            plan.groups = []
+            plan.canvas_strategy = "text" if not getattr(plan, "visualizations", []) else "mixed"
+        elif plan.canvas_strategy == "text":
+            plan.canvas_strategy = "mixed"
+
+        compiler = ExcalidrawCompiler()
+        try:
+            compiled_agent_scene = compiler.compile(
+                plan,
+                enforce_grounding=not settings.visual_design_free,
+            )
+        except ExcalidrawCompileError as exc:
+            logger.warning("visual_sync_compile_failed: project=%s error=%s", project_id, exc)
+            return {"project_id": project_id, "synced": False, "reason": f"compile_failed: {exc}"[:300]}
+
+        # Keep anything the human drew/added that is not part of Synora's
+        # managed semantic layer. Rebuild only agent-managed content so removed
+        # memory items disappear cleanly.
+        user_scene = [element for element in base_scene if not _is_agent_managed(element)]
+        merged_scene = user_scene + compiled_agent_scene
+
+        if _scene_fingerprint(merged_scene) == _scene_fingerprint(base_scene):
             return {
                 "project_id": project_id,
                 "synced": False,
                 "reason": "no_change",
-                "patch_id": patch.patch_id,
+                "state_version": getattr(state_row, "current_version", None),
+                "ai_status": ai_status,
+                "diagram": proper_diagram,
             }
 
-        new_rev = patch_service.apply_patch(
+        plan_dump = plan.model_dump(mode="json")
+        plan_fingerprint = hashlib.sha256(
+            json.dumps(plan_dump, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+        revision = revision_service.commit_revision(
             project_id=project_id,
-            patch=patch,
+            scene=merged_scene,
             db=db,
-            actor_id=actor_id,
             tenant_id=tenant_id,
+            app_state={
+                "living_canvas": {
+                    "ai_status": ai_status,
+                    "representation": plan.canvas_strategy,
+                    "diagram_created": proper_diagram,
+                    "plan_fingerprint": plan_fingerprint,
+                    "memory_version": getattr(state_row, "current_version", None),
+                    "evidence_ids": [row.id for row in evidence_rows],
+                    "notes_sections": len(getattr(plan, "notes_sections", []) or []),
+                    "visualizations": len(getattr(plan, "visualizations", []) or []),
+                }
+            },
+            operations=[
+                {
+                    "op_type": "reconcile",
+                    "target_element_id": "project_canvas",
+                    "payload": {
+                        "mode": "living_notebook",
+                        "representation": plan.canvas_strategy,
+                        "diagram_created": proper_diagram,
+                        "agent_status": ai_status,
+                    },
+                    "source_evidence_ids": [row.id for row in evidence_rows],
+                }
+            ],
+            evidence_ids=[row.id for row in evidence_rows],
+            derived_from_project_state_version=getattr(state_row, "current_version", None),
+            actor_id=actor_id,
+            reason="30-second project-memory canvas reconciliation",
+            workspace_name="Living Project Notebook",
         )
+
         logger.info(
-            "visual_sync_applied: project=%s revision=%s changes=%d",
+            "visual_sync_reconciled: project=%s revision=%s number=%s representation=%s diagram=%s",
             project_id,
-            new_rev.id,
-            len(pending),
+            revision.id,
+            revision.revision_number,
+            plan.canvas_strategy,
+            proper_diagram,
         )
         return {
             "project_id": project_id,
             "synced": True,
-            "reason": "applied",
-            "revision_id": new_rev.id,
-            "revision_number": new_rev.revision_number,
-            "patch_id": patch.patch_id,
-            "changes": len(pending),
+            "reason": "reconciled",
+            "revision_id": revision.id,
+            "revision_number": revision.revision_number,
+            "ai_status": ai_status,
+            "representation": plan.canvas_strategy,
+            "diagram": proper_diagram,
+            "state_version": getattr(state_row, "current_version", None),
         }
 
     def sync_all(
@@ -222,8 +246,7 @@ class VisualSyncService:
         tenant_id: str = "default_tenant",
         project_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Reconcile every eligible project. One project's failure never
-        blocks the others; the summary records each outcome."""
+        """Reconcile every eligible project."""
         from app.models.project import Project
 
         if project_ids is None:
@@ -240,7 +263,12 @@ class VisualSyncService:
                 )
             except Exception as exc:
                 logger.warning("visual_sync_failed: project=%s error=%s", pid, exc)
-                results[pid] = {"project_id": pid, "synced": False, "reason": f"error: {exc}"[:300]}
-        applied = sum(1 for r in results.values() if r.get("synced"))
+                results[pid] = {
+                    "project_id": pid,
+                    "synced": False,
+                    "reason": f"error: {exc}"[:300],
+                }
+
+        applied = sum(1 for result in results.values() if result.get("synced"))
         logger.info("visual_sync_cycle: projects=%d applied=%d", len(results), applied)
         return {"projects": len(results), "applied": applied, "results": results}
