@@ -244,14 +244,18 @@ class VisualPlanService:
                 '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
                 '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed", '
                 '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
+                '"canvas_strategy": "text|mixed|diagram", "notes_sections": [{"id": str, "title": str, "body": str, "bullets": [str], "order": int, "evidence_ids": [str], "support_type": "explicit|inferred"}], '
+                '"visualizations": [{"id": str, "kind": "metric|status|callout|timeline", "title": str, "value": str|null, "items": [str], "caption": str|null, "evidence_ids": [str], "support_type": "explicit|inferred"}], '
                 '"preserve": [str], "add": [str], "change": [str], "remove": [str], '
                 '"notes": [{"text": str, "kind": "decision|requirement|directive|action|risk|assumption|note", '
                 '"order": int, "evidence_ids": [str]}]}'
             )
             lines = [
                 f"You are the visual architecture designer for the project: '{project_title}'.",
-                "Design this project's canvas with complete freedom. Choose the nodes, relationships,",
-                "grouping and layout that best express what this project is and where it is going.",
+                "Design this project's canvas with complete freedom, but prefer readable text over unnecessary diagrams.",
+                "Only create nodes + relationships when a genuine visual structure (flow, architecture, hierarchy, dependency, sequence) is supported; an empty nodes list is valid.",
+                "Use visualizations only when a compact status, metric, callout, or timeline communicates better than prose.",
+                "Use notes_sections for proper document-like notes. Never force a diagram or use a diagram/card just to decorate ordinary text.",
                 "Cite evidence ids where the evidence supports a node; where you design beyond the",
                 "evidence, mark support_type inferred. Never return Excalidraw JSON, only the plan schema.",
                 "",
@@ -300,22 +304,15 @@ class VisualPlanService:
             f"You are the Synora visual architecture planner for the project: '{project_title}'.",
             "Produce a STRUCTURED, PRODUCTION-GRADE VISUAL PLAN (pure JSON, never Excalidraw JSON).",
             "",
-            "CRITICAL ARCHITECTURAL DIRECTIVES:",
-            f"1. DOMAIN FOCUS: Model the concrete domain architecture of '{project_title}' (e.g. client apps, core services, autonomous agents, datastores, message queues, external APIs).",
-            "2. ZERO PLATFORM BOILERPLATE: NEVER emit internal Synora platform meta-nodes ('Synora Agent', 'Project State', 'Living Workspace', 'Evidence', or generic 'BA'/'Tech'/'Frappe' nodes). Every node must be a functional component of the target project.",
-            "3. GROUNDING IS MANDATORY: every node, relationship and note MUST carry "
-            '"evidence_ids" listing the EVIDENCE ids that justify it, taken verbatim from the '
-            "--- RELEVANT EVIDENCE --- block below. A node you cannot cite will be discarded "
-            "before rendering. Do NOT invent a component just because a real system of this "
-            "kind would normally have one. Fewer, grounded nodes beat many speculative ones.",
-            '4. SUPPORT TYPE: use "support_type": "explicit" when the evidence states that the '
-            'component exists, and "inferred" when you reasoned it out. Never claim "explicit" '
-            "for something the evidence only implies.",
-            "5. VISUAL-FIRST ARCHITECTURE: organize grounded components into logical layers such as Experience, Core Logic, Data, Integrations when the evidence supports them.",
-            "6. NODE LABELS: Keep node labels short, crisp, and professional (2-4 words).",
-            "7. RELATIONSHIPS: Connect components with directional data flow and a short edge label describing what actually moves.",
-            "8. SUPPORTING NOTES: use them only for decisions, constraints, assumptions, risks, or open questions. Each note must cite evidence_ids.",
-            "9. HUMAN READABILITY: A reviewer should be able to answer what enters the system, what transforms it, where state is stored, and what external systems participate.",
+            "CRITICAL VISUAL REPRESENTATION DIRECTIVES:",
+            "1. TEXT FIRST: Build proper readable notes in notes_sections. The canvas must remain useful even when no diagram is appropriate.",
+            "2. DIAGRAM ONLY WHEN JUSTIFIED: populate nodes + relationships only for a coherent architecture, flow, hierarchy, dependency, or sequence. A text-only plan is fully valid.",
+            "3. LIGHTWEIGHT VISUALS: use visualizations only when a status, metric, timeline, or callout materially improves comprehension.",
+            "4. NO STICKY-NOTE BOARD: notes_sections render as a document-like notes page on the right side of the canvas.",
+            "5. CURRENT TRUTH: reconcile the current project state and current canvas. Preserve useful content and update only what project memory supports.",
+            "6. GROUNDING: cite evidence ids where available. Use support_type=inferred for reasoning. Do not invent project-specific facts.",
+            "7. DOMAIN FOCUS: when a genuine diagram exists, model concrete domain components rather than Synora internal scaffolding.",
+            "8. HUMAN READABILITY: the notes must tell the project story even when the reviewer ignores the visual area.",
             "",
             f"Respond with ONLY JSON matching: {schema}",
             "",
@@ -352,30 +349,99 @@ class VisualPlanService:
     def _ensure_efficient_notes(
         self, plan: Optional[VisualPlan], state: Dict[str, Any], focus: Optional[str]
     ) -> Optional[VisualPlan]:
-        """Ensures the plan always carries concise, high-signal notes even if the model omitted them."""
-        if not plan:
-            return None
-        if not plan.notes:
-            auto_notes = []
-            if focus:
-                clean_f = focus.replace("Update the living visual project memory from this WhatsApp batch.", "").strip()
-                clean_f = clean_f.replace("Extract only meaningful project knowledge and represent it as concise visual notes, decisions, requirements, actions, questions, risks, and architecture relationships. Preserve useful current content and do not dump the transcript. Batch content:", "").strip()
-                if clean_f:
-                    first_line = clean_f.splitlines()[0].strip()
-                    auto_notes.append(f"⚡ Directive: {first_line[:90]}")
-            if state.get("vision"):
-                auto_notes.append(f"💡 Scope: {str(state['vision'])[:90]}")
-            reqs = state.get("requirements") or []
-            if reqs:
-                req = reqs[0]
-                req_title = req.get("title") if isinstance(req, dict) else str(req)
-                auto_notes.append(f"📋 Requirement: {str(req_title)[:90]}")
-            decs = state.get("decisions") or []
-            if decs:
-                dec = decs[0]
-                dec_title = dec.get("title") or dec.get("text") if isinstance(dec, dict) else str(dec)
-                auto_notes.append(f"💡 Decision: {str(dec_title)[:90]}")
-            plan.notes = auto_notes or ["Domain architecture components and operational directives."]
+        """Backstop proper notebook notes when a provider omits them."""
+        if not plan or plan.notes_sections:
+            return plan
+
+        sections: List[Dict[str, Any]] = []
+        vision = str(state.get("vision") or "").strip()
+        if vision:
+            sections.append({
+                "id": "project_overview",
+                "title": "Overview",
+                "body": vision[:1200],
+                "bullets": [],
+                "order": 0,
+                "evidence_ids": [],
+                "support_type": "explicit",
+            })
+
+        architecture = state.get("architecture") or []
+        arch_lines: List[str] = []
+        for entry in architecture[:8]:
+            if isinstance(entry, dict):
+                label = entry.get("component") or entry.get("name") or entry.get("title")
+                detail = entry.get("detail") or entry.get("description")
+                value = " — ".join(str(v).strip() for v in (label, detail) if v)
+            else:
+                value = str(entry).strip()
+            if value:
+                arch_lines.append(value[:220])
+        if arch_lines:
+            sections.append({
+                "id": "architecture_context",
+                "title": "Current Architecture",
+                "body": "",
+                "bullets": arch_lines,
+                "order": 1,
+                "evidence_ids": [],
+                "support_type": "explicit",
+            })
+
+        state_sections = [
+            ("requirements", "requirements", "Requirements"),
+            ("decisions", "key_decisions", "Key Decisions"),
+            ("constraints", "constraints", "Constraints"),
+            ("risks", "risks", "Risks"),
+            ("open_questions", "open_questions", "Open Questions"),
+            ("actions", "actions", "Actions"),
+        ]
+        for order, (state_key, section_id, section_title) in enumerate(state_sections, start=2):
+            items = state.get(state_key) or []
+            bullets: List[str] = []
+            for item in items[:8]:
+                if isinstance(item, dict):
+                    value = item.get("title") or item.get("text") or item.get("content") or item.get("detail")
+                else:
+                    value = item
+                if value and str(value).strip():
+                    bullets.append(str(value).strip()[:220])
+            if bullets:
+                sections.append({
+                    "id": section_id,
+                    "title": section_title,
+                    "body": "",
+                    "bullets": bullets,
+                    "order": order,
+                    "evidence_ids": [],
+                    "support_type": "explicit",
+                })
+
+        if focus:
+            clean_focus = str(focus).strip()
+            if clean_focus:
+                sections.append({
+                    "id": "latest_context",
+                    "title": "Latest Context",
+                    "body": clean_focus[:1200],
+                    "bullets": [],
+                    "order": 20,
+                    "evidence_ids": [],
+                    "support_type": "inferred",
+                })
+
+        if not sections:
+            sections.append({
+                "id": "project_notes",
+                "title": "Project Notes",
+                "body": str(state.get("title") or "Project").strip(),
+                "bullets": [],
+                "order": 0,
+                "evidence_ids": [],
+                "support_type": "inferred",
+            })
+
+        plan.notes_sections = sections
         return plan
 
     def _call_client(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
