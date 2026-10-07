@@ -433,6 +433,29 @@ class VisualPlanService:
                     "support_type": "inferred",
                 })
 
+        # Deterministic/offline plans may still carry useful legacy notes
+        # derived directly from evidence. Never discard that information just
+        # because the provider did not return the new section format.
+        if not sections and plan.notes:
+            legacy_bullets: List[str] = []
+            for item in plan.notes[:8]:
+                if isinstance(item, dict):
+                    value = item.get("text") or item.get("content")
+                else:
+                    value = item
+                if value and str(value).strip():
+                    legacy_bullets.append(str(value).strip()[:220])
+            if legacy_bullets:
+                sections.append({
+                    "id": "recent_context",
+                    "title": "Recent Context",
+                    "body": "",
+                    "bullets": legacy_bullets,
+                    "order": 10,
+                    "evidence_ids": [],
+                    "support_type": "inferred",
+                })
+
         if not sections:
             sections.append({
                 "id": "project_notes",
