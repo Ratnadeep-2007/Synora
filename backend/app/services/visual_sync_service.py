@@ -139,16 +139,13 @@ class VisualSyncService:
             logger.warning("visual_sync_plan_failed: project=%s error=%s", project_id, exc)
             return {"project_id": project_id, "synced": False, "reason": f"plan_failed: {exc}"[:300]}
 
-        # A proper diagram needs relational structure. This is deliberately
-        # stricter than "the model returned a node": isolated boxes remain
-        # notes/visualizations rather than pretending to be an architecture.
-        proper_diagram = len(plan.nodes) >= 2 and len(plan.relationships) >= 1
-        if not proper_diagram:
-            plan.nodes = []
-            plan.relationships = []
-            plan.groups = []
-            plan.canvas_strategy = "text" if not getattr(plan, "visualizations", []) else "mixed"
-        elif plan.canvas_strategy == "text":
+        # Do not second-guess the agent's visual decision here. A diagram,
+        # sketch, single-node model, timeline, matrix, or another composition
+        # may be useful in context. The only hard layout rule is that geometry
+        # is assigned by the compiler.
+        visual_content_exists = bool(plan.nodes or plan.relationships or getattr(plan, "visualizations", []))
+        proper_diagram = bool(plan.nodes or plan.relationships)
+        if visual_content_exists and plan.canvas_strategy == "text":
             plan.canvas_strategy = "mixed"
 
         compiler = ExcalidrawCompiler()
