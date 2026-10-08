@@ -659,6 +659,44 @@ class VisualPlanService:
         focus_prompt: Optional[str] = None,
         evidence_snippets: Optional[List[Any]] = None,
     ) -> VisualPlan:
+        # In free design mode, an unavailable model must not silently fall back to
+        # the old fixed architecture template. Preserve the user's content as a
+        # plain derived notebook entry instead of fabricating a diagram.
+        if settings.visual_design_free:
+            project_title = str(state_summary.get("title") or "Project Notes")
+            source_text = " ".join(
+                _snippet_text(item) for item in (evidence_snippets or []) if _snippet_text(item).strip()
+            ).strip()
+            source_text = source_text or str(
+                focus_prompt or state_summary.get("vision") or state_summary.get("description") or ""
+            ).strip()
+            source_text = " ".join(source_text.split())[:5000]
+            return VisualPlan(
+                title=project_title,
+                canvas_strategy="text",
+                notes_document=NotesDocument(
+                    title=project_title,
+                    subtitle="Deterministic fallback — semantic design provider unavailable",
+                    sections=[
+                        NoteSection(
+                            id="notes",
+                            title="Notes",
+                            order=0,
+                            blocks=[
+                                NoteBlock(
+                                    id="notes_content",
+                                    block_type="paragraph",
+                                    text=source_text or "No source content available yet.",
+                                    evidence_ids=[_evidence_id_of(item) for item in (evidence_snippets or []) if _evidence_id_of(item)][:8],
+                                    support_type="explicit" if evidence_snippets else "inferred",
+                                )
+                            ],
+                        )
+                    ],
+                    updated_label="Deterministic fallback",
+                ),
+            )
+
         nodes: List[VisualNode] = []
         relationships: List[VisualRelationship] = []
         notes_list: List[Any] = []
