@@ -52,6 +52,7 @@ export default function Home() {
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [connections, setConnections] = useState<SourceConnection[]>([]);
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
+  const [meetingCanvas, setMeetingCanvas] = useState<any>(null);
   const [excalArtifact, setExcalArtifact] = useState<ExcalidrawArtifact | null>(null);
   const [excalProposals, setExcalProposals] = useState<ExcalidrawProposal[]>([]);
   const [atlasData, setAtlasData] = useState<WorkspaceAtlasData | null>(null);
@@ -224,12 +225,18 @@ export default function Home() {
   useEffect(() => {
     if (!selectedMeetingId) {
       setMeetingDetail(null);
+      setMeetingCanvas(null);
       return;
     }
-    api
-      .getMeetingDetail(selectedMeetingId)
-      .then((data) => setMeetingDetail(data))
-      .catch((err) => console.error("Failed to fetch meeting detail:", err));
+    Promise.allSettled([
+      api.getMeetingDetail(selectedMeetingId),
+      api.getMeetingCanvas(selectedMeetingId),
+    ]).then(([detailResult, canvasResult]) => {
+      if (detailResult.status === "fulfilled") setMeetingDetail(detailResult.value);
+      else console.error("Failed to fetch meeting detail:", detailResult.reason);
+      if (canvasResult.status === "fulfilled") setMeetingCanvas(canvasResult.value);
+      else console.error("Failed to fetch meeting canvas:", canvasResult.reason);
+    });
   }, [selectedMeetingId]);
 
   // Handlers
@@ -774,6 +781,7 @@ export default function Home() {
           <MeetingDetailView
             meetingId={selectedMeetingId}
             meetingData={meetingDetail}
+            meetingCanvas={meetingCanvas}
             candidates={candidates.filter(
               (c) => !c.meeting_id || c.meeting_id === selectedMeetingId
             )}
