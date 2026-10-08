@@ -52,17 +52,17 @@ interface MeetingsViewProps {
 
 const STATUS_LABELS: Record<string, string> = {
   idle: "Idle",
-  starting: "Connecting Vexa Bot...",
-  waiting_for_recording: "Admitted • Awaiting Audio Stream",
-  recording_ready: "Recording Ingest Active",
-  transcribing: "Neural Audio Transcription",
-  transcribing_sarvam: "Sarvam Speech-to-Text",
-  transcribing_whisper: "Whisper Neural Fallback",
-  ingesting: "Consolidating into Project Brain",
-  completed: "Synthesized & Synchronized",
-  stopping: "Finalizing Audio Stream...",
+  starting: "Starting capture...",
+  waiting_for_recording: "In call · waiting for audio",
+  recording_ready: "Recording",
+  transcribing: "Transcribing",
+  transcribing_sarvam: "Transcribing with Sarvam",
+  transcribing_whisper: "Transcribing with Whisper",
+  ingesting: "Saving to project memory",
+  completed: "Complete",
+  stopping: "Stopping...",
   stopped: "Stopped",
-  failed: "Stream Ingest Interrupted",
+  failed: "Failed",
 };
 
 export function MeetingsView({
@@ -123,13 +123,13 @@ export function MeetingsView({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
             <Video className="h-3.5 w-3.5" />
-            Audio Memory Stream
+            Meetings
           </div>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-text-main">
-            Meetings & Conversations
+            Meetings
           </h1>
           <p className="mt-1 text-sm text-text-muted max-w-2xl leading-relaxed">
-            Real-time audio streams and conferences transcribed and synthesized into verified project memory without manual note-taking.
+            Conversations transcribed into verified project memory. Each meeting shows what was captured, what was extracted, and what changed.
           </p>
         </div>
 
@@ -157,13 +157,13 @@ export function MeetingsView({
               </div>
               <div>
                 <h2 className="text-sm font-bold text-text-main flex items-center gap-2">
-                  <span>Google Meet Neural Capture Deck</span>
+                  <span>Meeting capture</span>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-canvas border border-border text-primary uppercase">
                     Sarvam + Whisper
                   </span>
                 </h2>
                 <p className="text-xs text-text-muted">
-                  Vexa joins the conference directly, streams high-fidelity audio, and extracts project facts.
+                  The bot joins the call, records audio, and files the transcript to the project.
                 </p>
               </div>
             </div>
@@ -199,14 +199,14 @@ export function MeetingsView({
                 disabled={busy}
                 className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-semibold transition-all shadow-[0_0_14px_rgba(16,185,129,0.2)] disabled:opacity-50 shrink-0"
               >
-                {busy ? "Deploying Bot..." : "Deploy Vexa Bot"}
+                {busy ? "Starting..." : "Start capture"}
               </button>
             ) : (
               <button
                 onClick={() => onStopVexaCapture?.()}
                 className="px-5 py-2.5 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all shrink-0"
               >
-                Terminate Capture
+                Stop capture
               </button>
             )}
           </div>
