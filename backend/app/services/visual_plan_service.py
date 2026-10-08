@@ -252,36 +252,30 @@ class VisualPlanService:
             '"preserve": [str], "add": [str], "change": [str], "remove": [str]}'
         )
 
+        free_mode = bool(free or settings.visual_design_free)
         prompt_lines = [
-            f"You are the visual project-memory designer for '{project_title}'.",
-            "Your output is the living project notebook and optional visual model for ONE project.",
+            f"You are the visual canvas designer for '{project_title}'.",
+            "Your output is the living visual workspace for ONE project or ONE scoped conversation.",
             "",
-            "NOTES ARE THE PRIMARY ARTIFACT.",
-            "Write useful project notes as a maintained document, not transcript fragments and not a wall of sticky notes.",
-            "Decide the section structure yourself. Create only sections that are meaningful for this project.",
-            "Possible topics include overview, context, goals, requirements, decisions, architecture notes, implementation status, actions, risks, assumptions, open questions, constraints, trade-offs, milestones, unresolved items, and next steps.",
-            "Do not force these topics into every project. Merge duplicate facts, rewrite stale wording when memory has changed, and remove information that is no longer true.",
-            "Prefer paragraphs for explanation, bullets for lists, numbered items for ordered procedures, checklists for actionable work, key-value blocks for compact facts, tables for genuine comparisons, quotes only for important source wording, and callouts only when emphasis is useful.",
-            "Do not copy the meeting transcript. Synthesize the current project understanding.",
-            "Make notes readable by a human who has never seen the source conversation.",
-            "Give stable semantic ids to sections and blocks so the same note can be updated instead of duplicated.",
-            "Keep uncertainty explicit: distinguish confirmed facts from assumptions, proposals, and open questions.",
+            "CONTENT AND REPRESENTATION ARE OPEN-ENDED.",
+            "There is NO required note-taking structure, no mandatory sections, no fixed note categories, no fixed diagram type, and no minimum number of diagrams.",
+            "Choose the representation that best communicates the information: prose, headings, bullets, tables, callouts, sketches, timelines, flows, hierarchies, matrices, or a custom composition.",
+            "Do not force unrelated information into categories merely because a schema offers them.",
+            "For project work, keep useful context understandable as a maintained working canvas and evolve obsolete material instead of blindly accumulating duplicates.",
+            "For meeting work, capture only the meeting discussion and do not import project-wide facts from elsewhere.",
             "",
-            "VISUAL MODELING IS OPTIONAL AND UNRESTRICTED IN SEMANTIC FORM.",
-            "Use a proper diagram only when relationships, sequence, hierarchy, dependencies, structure, spatial organization, or another visual relationship genuinely adds information.",
-            "Otherwise leave nodes and relationships empty and put the information into the notes document.",
-            "You may invent any useful visualization form: architecture sketch, flow, timeline, matrix, quadrant, scorecard, map-like concept, lifecycle, dependency view, comparison, state machine, funnel, hierarchy, or a custom composition.",
-            "Do not constrain yourself to a fixed visualization vocabulary. Use the visualizations.elements primitives and style hints to express the idea.",
-            "You may choose primitive types, labels, dimensions, grouping, connectors, typography, shapes, emphasis, and visual semantics.",
-            "NEVER provide x, y, position, canvas coordinates, or absolute placement. The compiler owns positioning, spacing, collision avoidance, and canvas zones.",
+            "VISUAL MODELING.",
+            "Use diagrams or visual compositions when they add meaning; omit them when text is clearer.",
+            "You may invent any semantic visualization form. There is no fixed visualization vocabulary.",
+            "You may choose semantic primitive types, labels, dimensions, grouping, connectors, typography, shapes, emphasis, and visual semantics.",
+            "NEVER provide x, y, position, canvas coordinates, or absolute placement. The renderer/compiler handles geometry and collision avoidance.",
             "Never emit raw Excalidraw JSON.",
             "",
-            "CURRENT-CANVAS RECONCILIATION.",
-            "Treat the current canvas as an existing working document. Preserve useful information, evolve outdated sections, and avoid duplicate representations.",
-            "When the best representation changes (for example text becomes a flow diagram, or a diagram becomes obsolete), change the representation instead of accumulating both.",
+            "CURRENT CANVAS.",
+            "Treat the current canvas as an existing working document. Preserve useful content, update stale representations, and avoid pointless duplication.",
         ]
 
-        if free:
+        if free_mode:
             prompt_lines += [
                 "",
                 "DESIGN FREEDOM: use your strongest judgment. There is no requirement to create a diagram or visualization, and no fixed taxonomy for visual form.",
@@ -462,7 +456,7 @@ class VisualPlanService:
         return plan
 
     def _call_client(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
-        prompt = self._build_prompt(state, nodes, evidence, focus, constraints)
+        prompt = self._build_prompt(state, nodes, evidence, focus, constraints, free=settings.visual_design_free)
         try:
             content = self.client.generate_visual_plan(prompt)
         except Exception as exc:
@@ -471,14 +465,14 @@ class VisualPlanService:
         if not content:
             return None
         plan = self._parse(content, model=getattr(self.client, "model_name", "client"))
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     def _call_gemini(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
         if not settings.is_gemini_configured:
             return None
         import httpx
 
-        prompt = self._build_prompt(state, nodes, evidence, focus, constraints)
+        prompt = self._build_prompt(state, nodes, evidence, focus, constraints, free=settings.visual_design_free)
         project_title = state.get("title") or "Project"
         system_instruction = (
             f"You are the Synora visual architecture planner for project '{project_title}'. "
@@ -524,7 +518,7 @@ class VisualPlanService:
             logger.warning("visual_plan_gemini_failed: %s", exc)
             return None
         plan = self._parse(content, model=f"gemini/{settings.GEMINI_MODEL}")
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     def _call_meta(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
         """Design authority path: Meta Muse Spark with complete per-project freedom."""
@@ -610,7 +604,7 @@ class VisualPlanService:
             logger.warning("visual_plan_nim_failed: %s", exc)
             return None
         plan = self._parse(content, model=f"nvidia-nim/{settings.NVIDIA_MODEL}")
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     def _call_groq(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
         import httpx
@@ -653,7 +647,7 @@ class VisualPlanService:
             logger.warning("visual_plan_groq_failed: %s", exc)
             return None
         plan = self._parse(content, model=f"groq/{settings.GROQ_MODEL}")
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     # ------------------------------------------------------------------
     # Deterministic fallback (explicitly NOT AI)
