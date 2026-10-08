@@ -792,7 +792,11 @@ export default function Home() {
             meetingData={meetingDetail}
             meetingCanvas={meetingCanvas}
             candidates={candidates.filter(
-              (c) => !c.meeting_id || c.meeting_id === selectedMeetingId
+              // Strict meeting scoping: only this meeting's own candidates.
+              // Legacy rows without a meeting_id previously leaked into every
+              // meeting's detail view (e.g. data-pipeline items appearing on
+              // a hospital-queue meeting).
+              (c) => c.meeting_id && c.meeting_id === selectedMeetingId
             )}
             onBack={() => setSelectedMeetingId(null)}
             onOpenEvidence={handleOpenEvidence}
