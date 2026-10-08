@@ -56,11 +56,14 @@ class Settings(BaseSettings):
     NVIDIA_MODEL: str = "deepseek-ai/deepseek-v4.1-flash"
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
 
-    # Design authority: Meta Muse Spark. Endpoint details unconfirmed - until
-    # META_BASE_URL and META_API_KEY are supplied the client is never built
-    # and selection falls through to the next provider.
+    # Design authority: Meta Muse Spark via Meta Model API
+    # (https://api.meta.ai/v1, OpenAI-compatible Chat Completions).
+    # Until META_API_KEY is supplied the client is never built and selection
+    # falls through to Groq. Get a key from the Model API dashboard.
+    # Note: the -contributor tier trades a lower price for permission to
+    # train on prompts; use muse-spark-1.3 (Standard) if that is unacceptable.
     META_API_KEY: str = ""
-    META_BASE_URL: str = ""
+    META_BASE_URL: str = "https://api.meta.ai/v1"
     META_MODEL: str = "muse-spark-1.3-contributor"
 
     # Visual design authority: "free" gives the design model complete freedom
