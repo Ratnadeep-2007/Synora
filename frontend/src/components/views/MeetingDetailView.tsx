@@ -88,6 +88,7 @@ export function MeetingDetailView({
   onOpenEvidence,
 }: MeetingDetailViewProps) {
   const [intelligenceFilter, setIntelligenceFilter] = useState<string>("all");
+  const [meetingSurface, setMeetingSurface] = useState<"canvas" | "intelligence">("canvas");
 
   const meeting = meetingData?.meeting || meetingData || {};
   const entries = meetingData?.transcript_entries || [];
@@ -122,6 +123,35 @@ export function MeetingDetailView({
         </div>
       </div>
 
+      {/* Explicit meeting surface switch: the Meeting Canvas is a first-class UI surface,
+          separate from the intelligence/transcript projection. */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface p-1.5 shadow-xs">
+        <div className="flex items-center gap-1">
+          {[
+            { key: "canvas" as const, label: "Meeting Canvas" },
+            { key: "intelligence" as const, label: "Meeting Intelligence" },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setMeetingSurface(item.key)}
+              className={
+                "rounded-lg px-3.5 py-2 text-xs font-semibold transition-all " +
+                (meetingSurface === item.key
+                  ? "bg-primary-soft text-primary border border-primary/20"
+                  : "text-text-muted border border-transparent hover:bg-canvas hover:text-text-main")
+              }
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <span className="hidden sm:block px-2.5 text-[10px] font-mono uppercase tracking-wider text-text-muted">
+          {meetingSurface === "canvas" ? "Free-form visual workspace" : "Transcript + extracted intelligence"}
+        </span>
+      </div>
+
+      {meetingSurface === "canvas" && (
       {/* Independent free-form Meeting Canvas. This is the meeting's working surface,
           not a projection of Project State and not constrained to fixed note types. */}
       <section className="rounded-2xl border border-border bg-surface shadow-sm overflow-hidden">
@@ -161,7 +191,10 @@ export function MeetingDetailView({
           )}
         </div>
       </section>
+      )}
 
+      {meetingSurface === "intelligence" && (
+      <>
       {/* Meet-only session intelligence: a projection over the same shared evidence/memory. */}
       {meetingData?.session_intelligence && (
         <section className="p-5 rounded-xl bg-surface border border-border shadow-xs space-y-4">
@@ -410,6 +443,8 @@ export function MeetingDetailView({
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
