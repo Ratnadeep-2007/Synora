@@ -209,6 +209,8 @@ export const api = {
 
   getMeetingDetail: (meetingId: string): Promise<any> =>
     request<any>(`/meetings/${meetingId}`),
+  getMeetingCanvas: (meetingId: string): Promise<any> =>
+    request<any>(`/meetings/${meetingId}/canvas`),
 
   getMeetingIntelligence: (meetingId: string): Promise<any> =>
     request<any>(`/meetings/${meetingId}/intelligence`),
