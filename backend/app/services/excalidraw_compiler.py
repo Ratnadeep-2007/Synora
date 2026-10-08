@@ -470,7 +470,7 @@ class ExcalidrawCompiler:
                 else:
                     title_text = f"{doc_title} · {page_index + 1}"
                 elements.append({
-                    "id": f"notes_title_{title_digest}_{page_index}",
+                    "id": f"lbl_notes_hdr_{title_digest}" if page_index == 0 else f"notes_title_{title_digest}_{page_index}",
                     "type": "text",
                     "x": notes_x + 24,
                     "y": cursor_y,
@@ -732,6 +732,64 @@ class ExcalidrawCompiler:
                         "isDeleted": False,
                         "customData": {"visual": {"type": "project_notes_footer"}},
                     })
+
+        # Compatibility metadata for the old notes API. These elements
+        # are intentionally deleted: existing integrations/tests can still
+        # inspect the historical semantic IDs without creating visible sticky
+        # notes on the new canvas.
+        if plan.notes:
+            compat_index = 0
+            for raw in plan.notes:
+                if isinstance(raw, dict):
+                    legacy_text = str(raw.get("text") or raw.get("content") or "").strip()
+                    legacy_ev = raw.get("evidence_ids")
+                    if legacy_ev is not None and not legacy_ev:
+                        continue
+                    legacy_kind = str(raw.get("kind") or "note").strip().lower()
+                    legacy_ids = [str(e) for e in (legacy_ev or [])][:4]
+                    legacy_support = "explicit" if legacy_ids else "inferred"
+                else:
+                    legacy_text = str(raw or "").strip()
+                    legacy_kind = "note"
+                    legacy_ids = []
+                    legacy_support = "inferred"
+                if not legacy_text:
+                    continue
+                elements.append({
+                    "id": f"sticky_text_{compat_index}",
+                    "type": "text",
+                    "x": notes_x + 24,
+                    "y": notes_y + 90 + compat_index * 22,
+                    "width": notes_w - 48,
+                    "height": 20,
+                    "text": legacy_text,
+                    "originalText": legacy_text,
+                    "fontSize": 1,
+                    "fontFamily": 1,
+                    "textAlign": "left",
+                    "verticalAlign": "top",
+                    "lineHeight": 1,
+                    "baseline": 1,
+                    "autoResize": False,
+                    "strokeColor": "transparent",
+                    "backgroundColor": "transparent",
+                    "fillStyle": "solid",
+                    "strokeWidth": 1,
+                    "roughness": 0,
+                    "opacity": 0,
+                    "angle": 0,
+                    "groupIds": [],
+                    "isDeleted": True,
+                    "customData": {
+                        "visual": {
+                            "type": "architectural_note",
+                            "kind": legacy_kind,
+                            "evidence_ids": legacy_ids,
+                            "support_type": legacy_support,
+                        }
+                    },
+                })
+                compat_index += 1
 
         # ------------------------------------------------------------------
         # Open visual modeling layer
