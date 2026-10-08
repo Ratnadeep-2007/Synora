@@ -257,18 +257,11 @@ class ExcalidrawCompiler:
             if rel.label:
                 elements.append(self._edge_label(rel, arrow, index))
 
-        # Living project notebook. Notes are rendered as a document-like page
-        # rather than sticky cards. The agent can return structured sections,
-        # or legacy notes are grouped into readable sections.
-        note_kind_titles = {
-            "decision": "Key Decisions",
-            "requirement": "Requirements",
-            "directive": "Directives",
-            "action": "Actions",
-            "risk": "Risks",
-            "assumption": "Assumptions",
-            "note": "Notes",
-        }
+        # ------------------------------------------------------------------
+        # Living project notebook
+        # ------------------------------------------------------------------
+        # The notes side is a real document. The agent decides the sections and
+        # block types; the compiler only lays them out as readable Excalidraw text.
         legacy_rank = {
             "decision": 0,
             "requirement": 1,
@@ -278,375 +271,585 @@ class ExcalidrawCompiler:
             "assumption": 5,
             "note": 6,
         }
+        legacy_titles = {
+            "decision": "Key Decisions",
+            "requirement": "Requirements",
+            "directive": "Directives",
+            "action": "Actions",
+            "risk": "Risks",
+            "assumption": "Assumptions",
+            "note": "Notes",
+        }
 
-        legacy_notes: List[Dict[str, Any]] = []
-        for raw in plan.notes or []:
-            if isinstance(raw, dict):
-                text_value = str(raw.get("text") or raw.get("content") or "").strip()
-                kind = str(raw.get("kind") or "note").strip().lower()
-                evidence = raw.get("evidence_ids")
-                if evidence is not None and not evidence:
-                    logger.info("visual_plan_legacy_note_dropped_ungrounded: %s", text_value[:60])
-                    continue
-                try:
-                    order = int(raw.get("order", 0))
-                except (TypeError, ValueError):
-                    order = 0
+        def _legacy_document() -> Dict[str, Any]:
+            grouped: Dict[str, Dict[str, Any]] = {}
+            for raw in plan.notes or []:
+                if isinstance(raw, dict):
+                    text_value = str(raw.get("text") or raw.get("content") or "").strip()
+                    kind = str(raw.get("kind") or "note").strip().lower()
+                    evidence = raw.get("evidence_ids")
+                    if evidence is not None and not evidence:
+                        continue
+                    support = "explicit" if evidence else "inferred"
+                    evidence_ids = [str(e) for e in (evidence or [])][:4]
+                else:
+                    text_value = str(raw or "").strip()
+                    kind = "note"
+                    support = "inferred"
+                    evidence_ids = []
                 if not text_value:
                     continue
-                legacy_notes.append({
-                    "text": text_value,
-                    "kind": kind,
-                    "order": order,
-                    "evidence_ids": [str(e) for e in (evidence or [])][:4],
-                    "support_type": "explicit" if evidence else "inferred",
-                })
-            else:
-                text_value = str(raw or "").strip()
-                if text_value:
-                    legacy_notes.append({
-                        "text": text_value,
-                        "kind": "note",
-                        "order": 0,
-                        "evidence_ids": [],
-                        "support_type": "inferred",
-                    })
-
-        note_sections: List[Dict[str, Any]] = []
-        for section in getattr(plan, "notes_sections", []) or []:
-            section_dict = section.model_dump() if hasattr(section, "model_dump") else dict(section)
-            title = str(section_dict.get("title") or "Notes").strip()
-            body = str(section_dict.get("body") or "").strip()
-            bullets = [
-                str(item).strip()
-                for item in (section_dict.get("bullets") or [])
-                if str(item).strip()
-            ]
-            evidence_ids = [str(e) for e in (section_dict.get("evidence_ids") or [])][:4]
-            if body or bullets:
-                note_sections.append({
-                    "id": str(section_dict.get("id") or title).strip() or "notes",
-                    "title": title[:70],
-                    "body": body[:1400],
-                    "bullets": bullets[:8],
-                    "order": int(section_dict.get("order", 0) or 0),
-                    "evidence_ids": evidence_ids,
-                    "support_type": str(section_dict.get("support_type") or ("explicit" if evidence_ids else "inferred")),
-                })
-
-        # Legacy notes remain visible and readable; new structured sections take
-        # precedence so providers cannot double-render the same information.
-        if not note_sections and legacy_notes:
-            legacy_notes.sort(
-                key=lambda n: (legacy_rank.get(n["kind"], 9), n["order"], n["text"])
-            )
-            grouped: Dict[str, Dict[str, Any]] = {}
-            for item in legacy_notes:
-                key = item["kind"] if item["kind"] in note_kind_titles else "note"
                 bucket = grouped.setdefault(
-                    key,
+                    kind if kind in legacy_titles else "note",
                     {
-                        "id": f"legacy_{key}",
-                        "title": note_kind_titles[key],
-                        "body": "",
-                        "bullets": [],
-                        "order": legacy_rank.get(key, 9),
+                        "id": f"legacy_{kind}",
+                        "title": legacy_titles.get(kind, "Notes"),
+                        "blocks": [],
+                        "order": legacy_rank.get(kind, 9),
                         "evidence_ids": [],
-                        "support_type": "inferred",
+                        "support_type": support,
                     },
                 )
-                bucket["bullets"].append(item["text"])
+                bucket["blocks"].append({
+                    "id": f"legacy_block_{len(bucket['blocks'])}",
+                    "block_type": "bullets",
+                    "items": [text_value],
+                    "evidence_ids": evidence_ids,
+                    "support_type": support,
+                })
                 bucket["evidence_ids"] = list(dict.fromkeys(
-                    bucket["evidence_ids"] + item["evidence_ids"]
+                    bucket["evidence_ids"] + evidence_ids
                 ))[:4]
-                if item["support_type"] == "explicit":
+                if support == "explicit":
                     bucket["support_type"] = "explicit"
-            note_sections = list(grouped.values())
+            return {
+                "title": "PROJECT NOTES",
+                "subtitle": None,
+                "sections": list(grouped.values()),
+                "updated_label": "Maintained from project memory",
+            }
 
-        def _line_count(value: str, width: int = 72) -> int:
-            lines = str(value or "").splitlines() or [""]
-            return sum(max(1, (len(line) + width - 1) // width) for line in lines)
+        document = None
+        if getattr(plan, "notes_document", None):
+            document = plan.notes_document.model_dump(mode="json")
+        elif getattr(plan, "notes_sections", None):
+            document = {
+                "title": "PROJECT NOTES",
+                "subtitle": None,
+                "sections": [
+                    section.model_dump(mode="json")
+                    if hasattr(section, "model_dump") else dict(section)
+                    for section in plan.notes_sections
+                ],
+                "updated_label": "Maintained from project memory",
+            }
+        elif plan.notes:
+            document = _legacy_document()
 
-        # Notes always occupy the right-hand "paper" side of the project canvas.
-        # The left side remains available for diagrams and lightweight visuals.
+        # Positioning is deliberately fixed here: diagrams/visuals stay left,
+        # the living written notebook stays on the right.
         diagram_right = BASE_X + 360
         if positions:
-            diagram_right = max(
-                diagram_right,
-                max((x + NODE_WIDTH) for x, _ in positions.values()),
-            )
+            diagram_right = max(diagram_right, max(x + NODE_WIDTH for x, _ in positions.values()))
         notes_x = diagram_right + 120
         notes_y = BASE_Y
-        notes_w = 520
+        notes_w = 560
 
-        if note_sections:
-            total_h = 108
-            for section in sorted(note_sections, key=lambda s: (s["order"], s["title"])):
-                total_h += 46
-                total_h += 26 * _line_count(section["body"], 68)
-                total_h += 24 * sum(max(1, (len(b) + 68) // 69) for b in section["bullets"])
-                total_h += 18
-            notes_h = min(max(total_h, 520), 2400)
-            title_digest = hashlib.sha1((plan.title or "plan").encode("utf-8")).hexdigest()[:12]
-            page_id = f"notes_page_{title_digest}"
-            title_id = f"lbl_notes_hdr_{title_digest}"
-            elements.append({
-                "id": page_id,
-                "type": "rectangle",
-                "x": notes_x,
-                "y": notes_y,
-                "width": notes_w,
-                "height": notes_h,
-                "angle": 0,
-                "strokeColor": "#8a8a8a",
-                "backgroundColor": "#fffdf7",
-                "fillStyle": "solid",
-                "strokeWidth": 1,
-                "roughness": 1,
-                "opacity": 100,
-                "roundness": {"type": 3},
-                "boundElements": [],
-                "isDeleted": False,
-                "customData": {
-                    "visual": {
-                        "type": "project_notes_page",
-                        "semantic_id": "project_notes",
-                    }
-                },
-            })
-            elements.append({
-                "id": title_id,
-                "type": "text",
-                "x": notes_x + 24,
-                "y": notes_y + 22,
-                "width": notes_w - 48,
-                "height": 30,
-                "text": "PROJECT NOTES",
-                "originalText": "PROJECT NOTES",
-                "fontSize": 19,
-                "fontFamily": 1,
-                "textAlign": "left",
-                "verticalAlign": "top",
-                "lineHeight": 1.2,
-                "baseline": 18,
-                "autoResize": False,
-                "strokeColor": "#202522",
-                "backgroundColor": "transparent",
-                "fillStyle": "solid",
-                "strokeWidth": 1,
-                "roughness": 1,
-                "opacity": 100,
-                "angle": 0,
-                "groupIds": [],
-                "isDeleted": False,
-                "customData": {
-                    "visual": {
-                        "type": "project_notes_title",
-                        "semantic_id": "project_notes",
-                    }
-                },
-            })
+        def _line_count(value: str, width: int = 72) -> int:
+            raw_lines = str(value or "").splitlines() or [""]
+            return sum(max(1, (len(line) + width - 1) // width) for line in raw_lines)
 
-            cursor_y = notes_y + 76
-            ordered_sections = sorted(note_sections, key=lambda s: (s["order"], s["title"]))
-            for index, section in enumerate(ordered_sections):
-                section_key = hashlib.sha1(str(section["id"]).encode("utf-8")).hexdigest()[:12]
-                heading_id = f"note_section_{section_key}_header"
-                body_id = f"note_section_{section_key}_body"
+        def _block_text(block: Dict[str, Any]) -> str:
+            kind = str(block.get("block_type") or "paragraph").lower()
+            text_value = str(block.get("text") or "").strip()
+            title_value = str(block.get("title") or "").strip()
+            items = [str(item).strip() for item in (block.get("items") or []) if str(item).strip()]
+            rows = block.get("rows") or []
 
+            if kind in ("heading", "paragraph", "quote", "callout"):
+                return text_value
+            if kind == "bullets":
+                return "\n".join(f"• {item}" for item in items)
+            if kind == "numbered":
+                return "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
+            if kind == "checklist":
+                return "\n".join(f"☐ {item}" for item in items)
+            if kind == "key_value":
+                return "\n".join(
+                    f"{str(row[0]).strip()}: {str(row[1]).strip()}"
+                    for row in rows
+                    if isinstance(row, (list, tuple)) and len(row) >= 2
+                ) or "\n".join(f"{item}" for item in items)
+            if kind == "table":
+                return "\n".join(
+                    "  |  ".join(str(cell).strip() for cell in row)
+                    for row in rows
+                    if isinstance(row, (list, tuple))
+                )
+            if kind == "divider":
+                return ""
+            return text_value or "\n".join(items)
+
+        def _block_height(block: Dict[str, Any]) -> int:
+            kind = str(block.get("block_type") or "paragraph").lower()
+            if kind == "divider":
+                return 22
+            if kind == "heading":
+                return 34
+            rendered = _block_text(block)
+            return min(360, max(34, 20 * _line_count(rendered, 72) + 8))
+
+        if document and document.get("sections"):
+            ordered_sections = sorted(
+                document.get("sections") or [],
+                key=lambda sec: (int(sec.get("order", 0) or 0), str(sec.get("title") or "")),
+            )
+
+            # Build logical pages so long-running projects do not become one
+            # enormous text object. The page break is compiler-owned.
+            pages: List[List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]] = []
+            current_page: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]] = []
+            current_height = 96
+            max_page_height = 2200
+
+            for section in ordered_sections:
+                sec = dict(section)
+                blocks = [
+                    block.model_dump(mode="json") if hasattr(block, "model_dump") else dict(block)
+                    for block in (sec.get("blocks") or [])
+                ]
+                blocks = [b for b in blocks if _block_text(b) or str(b.get("block_type") or "").lower() == "divider"]
+                if not blocks:
+                    continue
+                section_height = 42 + sum(_block_height(b) + 12 for b in blocks) + 18
+                if current_page and current_height + section_height > max_page_height:
+                    pages.append(current_page)
+                    current_page = []
+                    current_height = 96
+                current_page.append((sec, blocks))
+                current_height += section_height
+            if current_page:
+                pages.append(current_page)
+
+            title_digest = hashlib.sha1((document.get("title") or "PROJECT NOTES").encode("utf-8")).hexdigest()[:12]
+            for page_index, page_sections in enumerate(pages):
+                page_height = 120
+                for _, blocks in page_sections:
+                    page_height += 52 + sum(_block_height(b) + 12 for b in blocks) + 18
+                page_height = min(max(page_height, 520), max_page_height)
+                page_id = f"notes_page_{title_digest}_{page_index}"
                 elements.append({
-                    "id": heading_id,
+                    "id": page_id,
+                    "type": "rectangle",
+                    "x": notes_x,
+                    "y": notes_y + page_index * (page_height + 70),
+                    "width": notes_w,
+                    "height": page_height,
+                    "angle": 0,
+                    "strokeColor": "#8a8a8a",
+                    "backgroundColor": "#fffdf7",
+                    "fillStyle": "solid",
+                    "strokeWidth": 1,
+                    "roughness": 0,
+                    "opacity": 100,
+                    "roundness": {"type": 3},
+                    "boundElements": [],
+                    "isDeleted": False,
+                    "customData": {
+                        "visual": {
+                            "type": "project_notes_page",
+                            "semantic_id": "project_notes",
+                            "page": page_index + 1,
+                        }
+                    },
+                })
+                cursor_y = notes_y + page_index * (page_height + 70) + 24
+                doc_title = str(document.get("title") or "PROJECT NOTES")
+                if page_index == 0:
+                    title_text = doc_title
+                else:
+                    title_text = f"{doc_title} · {page_index + 1}"
+                elements.append({
+                    "id": f"notes_title_{title_digest}_{page_index}",
                     "type": "text",
                     "x": notes_x + 24,
                     "y": cursor_y,
                     "width": notes_w - 48,
-                    "height": 24,
-                    "text": section["title"],
-                    "originalText": section["title"],
-                    "fontSize": 14,
+                    "height": 32,
+                    "text": title_text,
+                    "originalText": title_text,
+                    "fontSize": 19,
                     "fontFamily": 1,
                     "textAlign": "left",
                     "verticalAlign": "top",
                     "lineHeight": 1.2,
-                    "baseline": 13,
+                    "baseline": 18,
                     "autoResize": False,
-                    "strokeColor": "#1f4d40",
+                    "strokeColor": "#202522",
                     "backgroundColor": "transparent",
                     "fillStyle": "solid",
                     "strokeWidth": 1,
-                    "roughness": 1,
+                    "roughness": 0,
                     "opacity": 100,
                     "angle": 0,
                     "groupIds": [],
                     "isDeleted": False,
                     "customData": {
                         "visual": {
-                            "type": "note_section_header",
-                            "section_id": str(section["id"]),
-                            "evidence_ids": section["evidence_ids"],
-                            "support_type": section["support_type"],
+                            "type": "project_notes_title",
+                            "semantic_id": "project_notes",
                         }
                     },
                 })
-                cursor_y += 26
-
-                lines: List[str] = []
-                if section["body"]:
-                    lines.append(section["body"])
-                lines.extend([f"• {b}" for b in section["bullets"]])
-                body_text = "\n".join(lines).strip() or "Not specified."
-                body_height = max(32, min(360, 20 * _line_count(body_text, 68)))
-                elements.append({
-                    "id": body_id,
-                    "type": "text",
-                    "x": notes_x + 24,
-                    "y": cursor_y,
-                    "width": notes_w - 48,
-                    "height": body_height,
-                    "text": body_text,
-                    "originalText": body_text,
-                    "fontSize": 12,
-                    "fontFamily": 1,
-                    "textAlign": "left",
-                    "verticalAlign": "top",
-                    "lineHeight": 1.45,
-                    "baseline": 11,
-                    "autoResize": True,
-                    "strokeColor": "#303530",
-                    "backgroundColor": "transparent",
-                    "fillStyle": "solid",
-                    "strokeWidth": 1,
-                    "roughness": 1,
-                    "opacity": 100,
-                    "angle": 0,
-                    "groupIds": [],
-                    "isDeleted": False,
-                    "customData": {
-                        "visual": {
-                            "type": "note_section_body",
-                            "section_id": str(section["id"]),
-                            "evidence_ids": section["evidence_ids"],
-                            "support_type": section["support_type"],
-                        }
-                    },
-                })
-                cursor_y += body_height + 10
-                if index < len(ordered_sections) - 1:
-                    separator_id = f"note_section_{section_key}_separator"
+                cursor_y += 36
+                subtitle = str(document.get("subtitle") or "").strip()
+                if page_index == 0 and subtitle:
                     elements.append({
-                        "id": separator_id,
-                        "type": "line",
+                        "id": f"notes_subtitle_{title_digest}",
+                        "type": "text",
                         "x": notes_x + 24,
                         "y": cursor_y,
                         "width": notes_w - 48,
-                        "height": 0,
-                        "points": [[0, 0], [notes_w - 48, 0]],
-                        "strokeColor": "#d5d7d2",
+                        "height": 24,
+                        "text": subtitle[:180],
+                        "originalText": subtitle[:180],
+                        "fontSize": 11,
+                        "fontFamily": 1,
+                        "textAlign": "left",
+                        "verticalAlign": "top",
+                        "lineHeight": 1.3,
+                        "baseline": 10,
+                        "autoResize": True,
+                        "strokeColor": "#6c746e",
                         "backgroundColor": "transparent",
                         "fillStyle": "solid",
                         "strokeWidth": 1,
-                        "strokeStyle": "solid",
                         "roughness": 0,
                         "opacity": 100,
                         "angle": 0,
+                        "groupIds": [],
                         "isDeleted": False,
-                        "customData": {"visual": {"type": "note_section_separator", "section_id": str(section["id"])}},
+                        "customData": {"visual": {"type": "project_notes_subtitle"}},
                     })
-                    cursor_y += 14
+                    cursor_y += 26
 
-            footer_id = f"notes_footer_{title_digest}"
-            footer = "Maintained automatically from project memory • rechecked every 30 seconds"
-            elements.append({
-                "id": footer_id,
-                "type": "text",
-                "x": notes_x + 24,
-                "y": notes_y + notes_h - 34,
-                "width": notes_w - 48,
-                "height": 20,
-                "text": footer,
-                "originalText": footer,
-                "fontSize": 9,
-                "fontFamily": 1,
-                "textAlign": "left",
-                "verticalAlign": "top",
-                "lineHeight": 1.2,
-                "baseline": 9,
-                "autoResize": False,
-                "strokeColor": "#777a76",
-                "backgroundColor": "transparent",
-                "fillStyle": "solid",
-                "strokeWidth": 1,
-                "roughness": 0,
-                "opacity": 100,
-                "angle": 0,
-                "groupIds": [],
-                "isDeleted": False,
-                "customData": {
-                    "visual": {"type": "project_notes_footer"}
-                },
-            })
+                for sec_index, (section, blocks) in enumerate(page_sections):
+                    sec_id = str(section.get("id") or section.get("title") or f"section_{sec_index}")
+                    sec_key = hashlib.sha1(sec_id.encode("utf-8")).hexdigest()[:12]
+                    heading = str(section.get("title") or "Notes")[:100]
+                    section_evidence = [str(e) for e in (section.get("evidence_ids") or [])][:4]
+                    section_support = str(section.get("support_type") or ("explicit" if section_evidence else "inferred"))
+                    elements.append({
+                        "id": f"note_section_{sec_key}_header",
+                        "type": "text",
+                        "x": notes_x + 24,
+                        "y": cursor_y,
+                        "width": notes_w - 48,
+                        "height": 26,
+                        "text": heading,
+                        "originalText": heading,
+                        "fontSize": 14,
+                        "fontFamily": 1,
+                        "textAlign": "left",
+                        "verticalAlign": "top",
+                        "lineHeight": 1.2,
+                        "baseline": 13,
+                        "autoResize": False,
+                        "strokeColor": "#1f4d40",
+                        "backgroundColor": "transparent",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "roughness": 0,
+                        "opacity": 100,
+                        "angle": 0,
+                        "groupIds": [],
+                        "isDeleted": False,
+                        "customData": {
+                            "visual": {
+                                "type": "note_section_header",
+                                "section_id": sec_id,
+                                "evidence_ids": section_evidence,
+                                "support_type": section_support,
+                            }
+                        },
+                    })
+                    cursor_y += 30
 
-        # Lightweight visualizations sit below the diagram area. They are not
-        # forced diagrams; they are compact visual aids such as a status,
-        # metric, callout, or timeline.
+                    for block_index, block in enumerate(blocks):
+                        kind = str(block.get("block_type") or "paragraph").lower()
+                        block_id = str(block.get("id") or f"{sec_id}_block_{block_index}")
+                        block_key = hashlib.sha1(block_id.encode("utf-8")).hexdigest()[:12]
+                        block_evidence = [str(e) for e in (block.get("evidence_ids") or section_evidence)][:4]
+                        block_support = str(block.get("support_type") or ("explicit" if block_evidence else "inferred"))
+                        rendered = _block_text(block)
+                        bh = _block_height(block)
+
+                        if kind == "divider":
+                            elements.append({
+                                "id": f"note_block_{block_key}_divider",
+                                "type": "line",
+                                "x": notes_x + 24,
+                                "y": cursor_y + 8,
+                                "width": notes_w - 48,
+                                "height": 0,
+                                "points": [[0, 0], [notes_w - 48, 0]],
+                                "strokeColor": "#d5d7d2",
+                                "backgroundColor": "transparent",
+                                "fillStyle": "solid",
+                                "strokeWidth": 1,
+                                "roughness": 0,
+                                "opacity": 100,
+                                "angle": 0,
+                                "isDeleted": False,
+                                "customData": {
+                                    "visual": {
+                                        "type": "note_block_divider",
+                                        "block_id": block_id,
+                                    }
+                                },
+                            })
+                            cursor_y += bh
+                            continue
+
+                        if kind in ("callout",):
+                            box_id = f"note_block_{block_key}_box"
+                            elements.append({
+                                "id": box_id,
+                                "type": "rectangle",
+                                "x": notes_x + 18,
+                                "y": cursor_y - 2,
+                                "width": notes_w - 36,
+                                "height": bh + 6,
+                                "angle": 0,
+                                "strokeColor": "#66736a",
+                                "backgroundColor": "#f5f8f4",
+                                "fillStyle": "solid",
+                                "strokeWidth": 1,
+                                "roughness": 0,
+                                "opacity": 100,
+                                "roundness": {"type": 3},
+                                "boundElements": [],
+                                "isDeleted": False,
+                                "customData": {
+                                    "visual": {
+                                        "type": "note_block_callout",
+                                        "block_id": block_id,
+                                        "evidence_ids": block_evidence,
+                                        "support_type": block_support,
+                                    }
+                                },
+                            })
+
+                        font_size = 17 if kind == "heading" else 12
+                        if kind == "heading":
+                            font_size = max(12, 18 - int(block.get("level", 2) or 2))
+                        stroke = "#202522" if kind not in ("quote",) else "#59635d"
+                        elements.append({
+                            "id": f"note_block_{block_key}_text",
+                            "type": "text",
+                            "x": notes_x + 28,
+                            "y": cursor_y + (2 if kind != "heading" else 0),
+                            "width": notes_w - 56,
+                            "height": bh,
+                            "text": rendered or title_text,
+                            "originalText": rendered or title_text,
+                            "fontSize": font_size,
+                            "fontFamily": 1,
+                            "textAlign": "left",
+                            "verticalAlign": "top",
+                            "lineHeight": 1.4,
+                            "baseline": 12,
+                            "autoResize": True,
+                            "strokeColor": stroke,
+                            "backgroundColor": "transparent",
+                            "fillStyle": "solid",
+                            "strokeWidth": 1,
+                            "roughness": 0,
+                            "opacity": 100,
+                            "angle": 0,
+                            "groupIds": [],
+                            "isDeleted": False,
+                            "customData": {
+                                "visual": {
+                                    "type": "note_block",
+                                    "block_id": block_id,
+                                    "block_type": kind,
+                                    "evidence_ids": block_evidence,
+                                    "support_type": block_support,
+                                }
+                            },
+                        })
+
+                        if kind == "quote":
+                            elements.append({
+                                "id": f"note_block_{block_key}_quote_bar",
+                                "type": "line",
+                                "x": notes_x + 20,
+                                "y": cursor_y,
+                                "width": 0,
+                                "height": bh,
+                                "points": [[0, 0], [0, bh]],
+                                "strokeColor": "#728077",
+                                "backgroundColor": "transparent",
+                                "fillStyle": "solid",
+                                "strokeWidth": 3,
+                                "roughness": 0,
+                                "opacity": 100,
+                                "angle": 0,
+                                "isDeleted": False,
+                                "customData": {"visual": {"type": "note_block_quote_bar", "block_id": block_id}},
+                            })
+
+                        cursor_y += bh + 12
+
+                if page_index == len(pages) - 1:
+                    footer = str(document.get("updated_label") or "Maintained automatically from project memory")
+                    footer_text = footer + " • rechecked every 30 seconds"
+                    elements.append({
+                        "id": f"notes_footer_{title_digest}",
+                        "type": "text",
+                        "x": notes_x + 24,
+                        "y": notes_y + page_index * (page_height + 70) + page_height - 34,
+                        "width": notes_w - 48,
+                        "height": 20,
+                        "text": footer_text[:180],
+                        "originalText": footer_text[:180],
+                        "fontSize": 9,
+                        "fontFamily": 1,
+                        "textAlign": "left",
+                        "verticalAlign": "top",
+                        "lineHeight": 1.2,
+                        "baseline": 9,
+                        "autoResize": False,
+                        "strokeColor": "#777a76",
+                        "backgroundColor": "transparent",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "roughness": 0,
+                        "opacity": 100,
+                        "angle": 0,
+                        "groupIds": [],
+                        "isDeleted": False,
+                        "customData": {"visual": {"type": "project_notes_footer"}},
+                    })
+
+        # ------------------------------------------------------------------
+        # Open visual modeling layer
+        # ------------------------------------------------------------------
+        # The agent may choose any visual kind and any semantic primitives.
+        # It never supplies x/y coordinates. The compiler lays out each
+        # composition inside the left visual zone.
         visualizations = getattr(plan, "visualizations", []) or []
-        viz_y = max(
-            (y + NODE_HEIGHT for _, y in positions.values()),
-            default=BASE_Y + 20,
-        ) + 90
-        for v_index, visualization in enumerate(visualizations[:6]):
-            v = visualization.model_dump() if hasattr(visualization, "model_dump") else dict(visualization)
-            kind = str(v.get("kind") or "callout").lower()
-            vx = BASE_X + (v_index % 2) * 360
-            vy = viz_y + (v_index // 2) * 150
-            vw = 320
-            vh = 120 if kind in ("callout", "timeline") else 96
+
+        def _safe_style(style: Any) -> Dict[str, Any]:
+            if not isinstance(style, dict):
+                return {}
+            allowed = {
+                "strokeColor", "backgroundColor", "fillStyle", "strokeWidth",
+                "strokeStyle", "roughness", "opacity", "fontSize", "fontFamily",
+                "textAlign", "verticalAlign", "roundness",
+            }
+            return {k: v for k, v in style.items() if k in allowed and k not in {"x", "y"}}
+
+        visual_base_y = max(
+            [y + NODE_HEIGHT for _, y in positions.values()] or [BASE_Y + 20]
+        ) + 100
+        for v_index, visualization in enumerate(visualizations[:12]):
+            v = visualization.model_dump(mode="json") if hasattr(visualization, "model_dump") else dict(visualization)
             vid = str(v.get("id") or f"visual_{v_index}")
-            box_id = f"viz_{hashlib.sha1(vid.encode('utf-8')).hexdigest()[:12]}_box"
-            title_id = f"viz_{hashlib.sha1(vid.encode('utf-8')).hexdigest()[:12]}_title"
-            value_id = f"viz_{hashlib.sha1((vid + ':value').encode('utf-8')).hexdigest()[:12]}_value"
-            title_text = str(v.get("title") or "Visualization")[:80]
-            value_text = str(v.get("value") or "").strip()[:180]
-            items = [str(item).strip() for item in (v.get("items") or []) if str(item).strip()][:6]
-            body = "\n".join((["• " + item for item in items] if items else ([str(v.get("caption") or "")] if v.get("caption") else [])))
-            evidence_ids = [str(e) for e in (v.get("evidence_ids") or [])][:4]
-            support_type = str(v.get("support_type") or ("explicit" if evidence_ids else "inferred"))
+            kind = str(v.get("kind") or "custom")
+            primitives = v.get("elements") or []
+            vx = BASE_X
+            vy = visual_base_y + v_index * 260
+            vw = 720
+            vh = 220
+
+            if not primitives:
+                # A custom visualization is still allowed to be semantic-only.
+                # Render its purpose/content as a visual callout rather than
+                # silently discarding it.
+                text_parts = []
+                if v.get("title"):
+                    text_parts.append(str(v["title"]))
+                if v.get("purpose"):
+                    text_parts.append(str(v["purpose"]))
+                content_dict = v.get("content") or {}
+                if isinstance(content_dict, dict):
+                    value = content_dict.get("text") or content_dict.get("value")
+                    if value:
+                        text_parts.append(str(value))
+                primitives = [{
+                    "id": f"{vid}_summary",
+                    "primitive_type": "rectangle",
+                    "text": "\n".join(text_parts)[:420] or kind,
+                    "width": 620,
+                    "height": 130,
+                    "style": {},
+                    "metadata": {},
+                }]
+
+            # Reserve a local grid. This is the only place where positioning is decided.
+            placed: Dict[str, Tuple[float, float, float, float]] = {}
+            non_connectors = [p for p in primitives if str(p.get("primitive_type") or "").lower() not in ("arrow", "line", "connector", "connect")]
+            connectors = [p for p in primitives if p not in non_connectors]
+
+            cursor_x = vx
+            cursor_y = vy + 42
+            row_height = 0
+            for p_index, raw_p in enumerate(non_connectors):
+                p = raw_p if isinstance(raw_p, dict) else {}
+                pid = str(p.get("id") or f"{vid}_p_{p_index}")
+                pw = max(120, min(320, float(p.get("width") or 220)))
+                ph = max(44, min(180, float(p.get("height") or 90)))
+                if cursor_x + pw > vx + vw:
+                    cursor_x = vx
+                    cursor_y += row_height + 24
+                    row_height = 0
+                placed[pid] = (cursor_x, cursor_y, pw, ph)
+                cursor_x += pw + 28
+                row_height = max(row_height, ph)
+            total_needed = cursor_y - vy + row_height + 32
+            vh = max(vh, min(total_needed, 720))
+
+            digest = hashlib.sha1(vid.encode("utf-8")).hexdigest()[:12]
+            frame_id = f"visual_{digest}_frame"
             elements.append({
-                "id": box_id,
+                "id": frame_id,
                 "type": "rectangle",
                 "x": vx,
                 "y": vy,
                 "width": vw,
                 "height": vh,
                 "angle": 0,
-                "strokeColor": "#4b5a53",
-                "backgroundColor": "#f7f9f6",
+                "strokeColor": "#a0aaa4",
+                "backgroundColor": "transparent",
                 "fillStyle": "solid",
                 "strokeWidth": 1,
-                "roughness": 1,
+                "strokeStyle": "dashed",
+                "roughness": 0,
                 "opacity": 100,
                 "roundness": {"type": 3},
-                "boundElements": [{"type": "text", "id": title_id}],
+                "boundElements": [],
                 "isDeleted": False,
                 "customData": {
                     "visual": {
-                        "type": "lightweight_visualization",
+                        "type": "freeform_visual_frame",
                         "visualization_id": vid,
                         "kind": kind,
-                        "evidence_ids": evidence_ids,
-                        "support_type": support_type,
+                        "evidence_ids": [str(e) for e in (v.get("evidence_ids") or [])][:4],
+                        "support_type": v.get("support_type") or "inferred",
                     }
                 },
             })
             elements.append({
-                "id": title_id,
+                "id": f"visual_{digest}_title",
                 "type": "text",
-                "x": vx + 14,
-                "y": vy + 12,
-                "width": vw - 28,
+                "x": vx + 18,
+                "y": vy + 14,
+                "width": vw - 36,
                 "height": 22,
-                "text": title_text,
-                "originalText": title_text,
+                "text": str(v.get("title") or kind)[:100],
+                "originalText": str(v.get("title") or kind)[:100],
                 "fontSize": 13,
                 "fontFamily": 1,
                 "textAlign": "left",
@@ -664,82 +867,202 @@ class ExcalidrawCompiler:
                 "groupIds": [],
                 "isDeleted": False,
             })
-            rendered_body = value_text or body or "Visual summary"
-            elements.append({
-                "id": value_id,
-                "type": "text",
-                "x": vx + 14,
-                "y": vy + 38,
-                "width": vw - 28,
-                "height": vh - 50,
-                "text": rendered_body,
-                "originalText": rendered_body,
-                "fontSize": 12 if kind != "metric" else 18,
-                "fontFamily": 1,
-                "textAlign": "left",
-                "verticalAlign": "top",
-                "lineHeight": 1.35,
-                "baseline": 12,
-                "autoResize": True,
-                "strokeColor": "#1f241f",
-                "backgroundColor": "transparent",
-                "fillStyle": "solid",
-                "strokeWidth": 1,
-                "roughness": 0,
-                "opacity": 100,
-                "angle": 0,
-                "groupIds": [],
-                "isDeleted": False,
-                "customData": {
-                    "visual": {
-                        "type": "lightweight_visualization_text",
-                        "visualization_id": vid,
-                        "evidence_ids": evidence_ids,
-                        "support_type": support_type,
-                    }
-                },
-            })
 
-        # Backward-compatibility metadata for legacy note tests/callers: the
-        # actual rendering is now plain text on the page, never sticky cards.
-        if legacy_notes:
-            for n_index, note in enumerate(legacy_notes[:8]):
-                text_id = f"sticky_text_{n_index}"
-                text_value = note["text"]
+            visual_ids: Dict[str, str] = {}
+            for p_index, raw_p in enumerate(non_connectors):
+                p = raw_p if isinstance(raw_p, dict) else {}
+                pid = str(p.get("id") or f"{vid}_p_{p_index}")
+                px, py, pw, ph = placed[pid]
+                ptype = str(p.get("primitive_type") or "rectangle").lower()
+                style = _safe_style(p.get("style"))
+                ex_id = f"visual_{digest}_{hashlib.sha1(pid.encode('utf-8')).hexdigest()[:10]}"
+                visual_ids[pid] = ex_id
+
+                if ptype in ("text", "label", "paragraph"):
+                    el = {
+                        "id": ex_id,
+                        "type": "text",
+                        "x": px,
+                        "y": py,
+                        "width": pw,
+                        "height": ph,
+                        "text": str(p.get("text") or p.get("title") or "")[:1200],
+                        "originalText": str(p.get("text") or p.get("title") or "")[:1200],
+                        "fontSize": 12,
+                        "fontFamily": 1,
+                        "textAlign": "left",
+                        "verticalAlign": "top",
+                        "lineHeight": 1.35,
+                        "baseline": 11,
+                        "autoResize": True,
+                        "backgroundColor": "transparent",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "roughness": 0,
+                        "opacity": 100,
+                        "angle": 0,
+                        "groupIds": [],
+                        "isDeleted": False,
+                    }
+                    el.update(style)
+                else:
+                    shape = {
+                        "ellipse": "ellipse",
+                        "circle": "ellipse",
+                        "diamond": "diamond",
+                        "line": "line",
+                        "frame": "rectangle",
+                        "box": "rectangle",
+                        "card": "rectangle",
+                        "rectangle": "rectangle",
+                    }.get(ptype, "rectangle")
+                    label_id = f"{ex_id}_label"
+                    text_value = str(p.get("text") or p.get("title") or "")
+                    el = {
+                        "id": ex_id,
+                        "type": shape,
+                        "x": px,
+                        "y": py,
+                        "width": pw,
+                        "height": ph,
+                        "angle": 0,
+                        "strokeColor": "#4b5a53",
+                        "backgroundColor": "#f7f9f6",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "roughness": 0,
+                        "opacity": 100,
+                        "roundness": {"type": 3},
+                        "boundElements": [{"type": "text", "id": label_id}] if text_value else [],
+                        "isDeleted": False,
+                    }
+                    el.update(style)
+                    elements.append(el)
+                    if text_value:
+                        elements.append({
+                            "id": label_id,
+                            "type": "text",
+                            "x": px + 12,
+                            "y": py + 12,
+                            "width": pw - 24,
+                            "height": ph - 24,
+                            "text": text_value[:800],
+                            "originalText": text_value[:800],
+                            "fontSize": int(style.get("fontSize") or 12),
+                            "fontFamily": int(style.get("fontFamily") or 1),
+                            "textAlign": str(style.get("textAlign") or "center"),
+                            "verticalAlign": "middle",
+                            "lineHeight": 1.3,
+                            "baseline": 11,
+                            "autoResize": True,
+                            "strokeColor": str(style.get("strokeColor") or "#23302a"),
+                            "backgroundColor": "transparent",
+                            "fillStyle": "solid",
+                            "strokeWidth": 1,
+                            "roughness": 0,
+                            "opacity": 100,
+                            "angle": 0,
+                            "groupIds": [],
+                            "isDeleted": False,
+                            "customData": {
+                                "visual": {
+                                    "type": "freeform_visual_label",
+                                    "visualization_id": vid,
+                                    "primitive_id": pid,
+                                    "evidence_ids": [str(e) for e in (p.get("evidence_ids") or v.get("evidence_ids") or [])][:4],
+                                    "support_type": p.get("support_type") or v.get("support_type") or "inferred",
+                                }
+                            },
+                        })
+                el["customData"] = {
+                    "visual": {
+                        "type": "freeform_visual_primitive",
+                        "visualization_id": vid,
+                        "primitive_id": pid,
+                        "kind": kind,
+                        "evidence_ids": [str(e) for e in (p.get("evidence_ids") or v.get("evidence_ids") or [])][:4],
+                        "support_type": p.get("support_type") or v.get("support_type") or "inferred",
+                    }
+                }
+                if ptype in ("text", "label", "paragraph"):
+                    elements.append(el)
+
+            # Connectors are rendered after node placement so they can bind to
+            # actual compiler-assigned positions.
+            for c_index, raw_c in enumerate(connectors):
+                c = raw_c if isinstance(raw_c, dict) else {}
+                source_id = str(c.get("source") or "")
+                target_id = str(c.get("target") or "")
+                if not source_id or not target_id or source_id not in visual_ids or target_id not in visual_ids:
+                    continue
+                sx, sy, sw, sh = placed[source_id]
+                tx, ty, tw, th = placed[target_id]
+                start_x = sx + sw
+                start_y = sy + sh / 2
+                end_x = tx
+                end_y = ty + th / 2
+                arrow_id = f"visual_{digest}_connector_{c_index}"
                 elements.append({
-                    "id": text_id,
-                    "type": "text",
-                    "x": notes_x + 24,
-                    "y": notes_y + 100 + n_index * 28,
-                    "width": notes_w - 48,
-                    "height": 24,
-                    "text": text_value,
-                    "originalText": text_value,
-                    "fontSize": 11,
-                    "fontFamily": 1,
-                    "textAlign": "left",
-                    "verticalAlign": "top",
-                    "lineHeight": 1.25,
-                    "baseline": 10,
-                    "autoResize": True,
-                    "strokeColor": "#303530",
+                    "id": arrow_id,
+                    "type": "arrow",
+                    "x": start_x,
+                    "y": start_y,
+                    "width": max(1, abs(end_x - start_x)),
+                    "height": max(1, abs(end_y - start_y)),
+                    "points": [[0, 0], [end_x - start_x, end_y - start_y]],
+                    "strokeColor": "#425248",
                     "backgroundColor": "transparent",
                     "fillStyle": "solid",
-                    "strokeWidth": 1,
+                    "strokeWidth": 2,
+                    "strokeStyle": "dashed" if str(c.get("style") or "").lower() == "dashed" else "solid",
                     "roughness": 0,
                     "opacity": 100,
                     "angle": 0,
                     "groupIds": [],
-                    "isDeleted": True,
+                    "endArrowhead": "arrow",
+                    "isDeleted": False,
+                    "startBinding": {"elementId": visual_ids[source_id], "focus": 0, "gap": 6},
+                    "endBinding": {"elementId": visual_ids[target_id], "focus": 0, "gap": 6},
                     "customData": {
                         "visual": {
-                            "type": "architectural_note",
-                            "kind": note["kind"],
-                            "evidence_ids": note["evidence_ids"],
-                            "support_type": note["support_type"],
+                            "type": "freeform_visual_connector",
+                            "visualization_id": vid,
+                            "source": source_id,
+                            "target": target_id,
+                            "evidence_ids": [str(e) for e in (c.get("evidence_ids") or v.get("evidence_ids") or [])][:4],
+                            "support_type": c.get("support_type") or v.get("support_type") or "inferred",
                         }
                     },
                 })
+                if c.get("label"):
+                    label_text = str(c["label"])[:80]
+                    elements.append({
+                        "id": f"{arrow_id}_label",
+                        "type": "text",
+                        "x": min(start_x, end_x) + abs(end_x - start_x) / 2 - 50,
+                        "y": min(start_y, end_y) + abs(end_y - start_y) / 2 - 14,
+                        "width": 100,
+                        "height": 20,
+                        "text": label_text,
+                        "originalText": label_text,
+                        "fontSize": 9,
+                        "fontFamily": 1,
+                        "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "lineHeight": 1.15,
+                        "baseline": 9,
+                        "autoResize": False,
+                        "strokeColor": "#425248",
+                        "backgroundColor": "#ffffff",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "roughness": 0,
+                        "opacity": 90,
+                        "angle": 0,
+                        "groupIds": [],
+                        "isDeleted": False,
+                        "customData": {"visual": {"type": "freeform_visual_connector_label", "visualization_id": vid}},
+                    })
 
         self.validate_scene(elements)
         return elements
