@@ -63,7 +63,7 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
             </span>
           </h1>
           <p className="mt-1 text-sm text-text-muted max-w-2xl leading-relaxed">
-            One infinite living visual workspace. Real-time conversations and verified decisions are continually mapped into architectural notes and diagrams.
+            One infinite workspace. Each project owns a free-form visual canvas; Synora chooses the notes, sketches, diagrams, or other representations that fit its current context.
           </p>
         </div>
 
@@ -71,7 +71,7 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-xl border border-border text-xs text-text-muted">
             <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            <span className="text-text-main font-medium">Memory Synchronized</span>
+            <span className="text-text-main font-medium">Project canvases synchronized</span>
           </div>
 
           <div className="flex items-center gap-1.5 bg-surface px-3 py-1.5 rounded-xl border border-border text-xs text-text-muted font-mono">
@@ -106,8 +106,8 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
         {/* Canvas Toolbar Top Bar */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border/80 bg-surface-soft text-xs">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-text-main">Living Spatial Canvas</span>
-            <span className="text-[11px] text-text-muted font-mono">• Excalidraw Engine</span>
+            <span className="font-semibold text-text-main">Project Canvases</span>
+            <span className="text-[11px] text-text-muted font-mono">• Excalidraw Engine • free-form per project</span>
           </div>
 
           <div className="flex items-center gap-3 text-text-muted text-[11px]">
@@ -144,22 +144,13 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
         </div>
       </section>
 
-      {/* Intelligence Pipeline Flow Legend */}
-      <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
-        {[
-          ["1. Sources", "Google Meet audio + WhatsApp chat streams"],
-          ["2. Evidence", "Verbatim citations with speaker attribution"],
-          ["3. State", "Authoritative decisions & requirements"],
-          ["4. Atlas", "Living architecture & spatial visual notes"],
-        ].map(([label, flow], index) => (
-          <div key={label} className="rounded-xl border border-border bg-surface p-3 space-y-1">
-            <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.14em] text-primary">
-              <span>{label}</span>
-              {index < 3 && <ArrowRight className="h-3 w-3 text-text-muted" />}
-            </div>
-            <div className="text-[11px] text-text-muted leading-tight">{flow}</div>
-          </div>
-        ))}
+      <div className="rounded-xl border border-border bg-surface p-4 text-xs text-text-muted">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="font-semibold text-text-main">Synora canvas rule</span>
+          <span>Content format is open-ended.</span>
+          <span>Project columns are the only workspace boundary.</span>
+          <span>Human-authored Excalidraw content remains preserved.</span>
+        </div>
       </div>
 
       {/* Unknown Context Inbox Panel */}
