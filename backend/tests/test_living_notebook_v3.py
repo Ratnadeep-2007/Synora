@@ -143,3 +143,48 @@ def test_visual_primitive_position_is_compiler_owned():
     assert first["y"] != 99999
     assert first["x"] >= 80
     assert first["y"] >= 80
+
+
+def test_visuals_do_not_cross_into_notes_column():
+    from app.schemas.visual_plan import NoteSection
+
+    plan = VisualPlan(
+        title="Separated Canvas",
+        notes_document=NotesDocument(
+            title="Notes",
+            sections=[
+                NoteSection(
+                    id="summary",
+                    title="Summary",
+                    blocks=[NoteBlock(id="b", block_type="paragraph", text="Written project context.")],
+                )
+            ],
+        ),
+        visualizations=[
+            VisualVisualization(
+                id="custom",
+                kind="custom-matrix",
+                title="Custom Matrix",
+                elements=[
+                    {
+                        "id": "a",
+                        "primitive_type": "rectangle",
+                        "text": "A",
+                        "width": 320,
+                        "height": 120,
+                    }
+                ],
+            )
+        ],
+    )
+
+    scene = ExcalidrawCompiler().compile(plan)
+    page = next(
+        e for e in scene
+        if (e.get("customData") or {}).get("visual", {}).get("type") == "project_notes_page"
+    )
+    visual_frame = next(
+        e for e in scene
+        if (e.get("customData") or {}).get("visual", {}).get("type") == "freeform_visual_frame"
+    )
+    assert visual_frame["x"] + visual_frame["width"] < page["x"]
