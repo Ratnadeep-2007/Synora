@@ -400,6 +400,209 @@ class MeetingSessionIntelligenceService:
         db.refresh(meeting)
         return payload
 
+    # ------------------------------------------------------------------
+    # Free-form Meeting Canvas
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _meeting_canvas_key(meeting_id: str) -> str:
+        """Stable visual workspace key that is isolated from any project."""
+        return f"meeting_canvas:{meeting_id}"
+
+    def sync_meeting_canvas(
+        self,
+        meeting_id: str,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        actor_id: str = "meeting_canvas_agent",
+    ) -> Dict[str, Any]:
+        """Build the meeting-only Excalidraw canvas from the full discussion.
+
+        This canvas is deliberately independent of Project State and project
+        routing. The entire persisted meeting evidence set is the source, so
+        the agent can choose any natural note structure and any useful visual
+        composition. The stored canvas is a derived view; transcript/evidence
+        history remains untouched.
+        """
+        from app.services.excalidraw_service import ExcalidrawService
+        from app.services.excalidraw_compiler import ExcalidrawCompiler, ExcalidrawCompileError
+        from app.services.visual_plan_service import VisualPlanService
+        from app.services.visual_revision_service import VisualRevisionService
+
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            raise ValueError(f"Meeting '{meeting_id}' not found.")
+
+        evidence_records = (
+            db.query(Evidence)
+            .filter(Evidence.meeting_id == meeting_id)
+            .order_by(Evidence.occurred_at.asc())
+            .all()
+        )
+        transcript = (
+            db.query(Transcript)
+            .options(joinedload(Transcript.entries).joinedload(TranscriptEntry.participant))
+            .filter(Transcript.meeting_id == meeting_id)
+            .order_by(Transcript.created_at.desc())
+            .first()
+        )
+        entries = list(transcript.entries) if transcript else []
+        participant_names = self._unique(
+            [p.display_name or "Unknown Participant" for p in meeting.participants],
+            limit=50,
+        )
+
+        canvas_key = self._meeting_canvas_key(meeting_id)
+        excal = ExcalidrawService()
+        artifact = excal.get_or_create_artifact(
+            canvas_key,
+            db,
+            tenant_id=tenant_id,
+            name=f"Meeting Notes · {meeting.title or meeting_id}",
+        )
+        current_scene = self._json_list(artifact.elements_json)
+        current_nodes = []
+        for element in current_scene[:120]:
+            if not isinstance(element, dict):
+                continue
+            text_value = str(element.get("text") or "").strip()
+            if text_value:
+                current_nodes.append(text_value[:120])
+
+        evidence_snippets = [
+            {
+                "id": evidence.id,
+                "content": f"{evidence.actor_id or 'Speaker'}: {evidence.content}",
+                "source": evidence.source,
+            }
+            for evidence in evidence_records
+            if evidence.content and evidence.content.strip()
+        ]
+
+        state_summary = {
+            "title": meeting.title or "Meeting Notes",
+            "vision": "Free-form working notes for this meeting only.",
+            "participants": participant_names,
+            "meeting_id": meeting_id,
+            "transcript_entry_count": len(entries),
+            "requirements": [],
+            "architecture": [],
+            "decisions": [],
+            "constraints": [],
+            "assumptions": [],
+            "open_questions": [],
+        }
+        focus = (
+            "MEETING CANVAS MODE. Capture only the substance of this meeting. "
+            "There are NO required sections, categories, note formats, or diagram types. "
+            "Choose the most natural way to record the discussion. Keep notes grounded in the "
+            "meeting evidence. Create a visualization only when it genuinely communicates the "
+            "discussion better than words. Do not import project-wide status, Project State, "
+            "or information from other meetings. The workspace outside this canvas handles project routing."
+        )
+
+        plan, ai_status = VisualPlanService().build_plan(
+            state_summary=state_summary,
+            current_nodes=current_nodes,
+            evidence_snippets=evidence_snippets,
+            focus_prompt=focus,
+            constraints=None,
+        )
+
+        try:
+            compiled = ExcalidrawCompiler().compile(
+                plan,
+                enforce_grounding=False,
+            )
+        except ExcalidrawCompileError as exc:
+            logger.warning("meeting_canvas_compile_failed: meeting=%s error=%s", meeting_id, exc)
+            return {
+                "meeting_id": meeting_id,
+                "artifact": excal.format_artifact_read(artifact).model_dump(),
+                "synced": False,
+                "reason": f"compile_failed: {exc}"[:300],
+                "ai_status": ai_status,
+            }
+
+        plan_dump = plan.model_dump(mode="json")
+        plan_fingerprint = hashlib.sha256(
+            json.dumps(plan_dump, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        scene_fingerprint = hashlib.sha256(
+            json.dumps(compiled or [], sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        current_fingerprint = hashlib.sha256(
+            json.dumps(current_scene or [], sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+        if scene_fingerprint == current_fingerprint:
+            return {
+                "meeting_id": meeting_id,
+                "artifact": excal.format_artifact_read(artifact).model_dump(),
+                "synced": False,
+                "reason": "no_change",
+                "ai_status": ai_status,
+                "plan_fingerprint": plan_fingerprint,
+            }
+
+        revision = VisualRevisionService().commit_revision(
+            project_id=canvas_key,
+            scene=compiled,
+            db=db,
+            tenant_id=tenant_id,
+            app_state={
+                "theme": "light",
+                "viewBackgroundColor": "#ffffff",
+                "meeting_canvas": {
+                    "meeting_id": meeting_id,
+                    "ai_status": ai_status,
+                    "plan_fingerprint": plan_fingerprint,
+                    "evidence_ids": [e.id for e in evidence_records],
+                    "transcript_entry_count": len(entries),
+                },
+            },
+            operations=[
+                {
+                    "op_type": "meeting_canvas_reconcile",
+                    "target_element_id": "meeting_canvas",
+                    "payload": {
+                        "mode": "free_form_meeting_notes",
+                        "representation": plan.canvas_strategy,
+                        "diagram_created": bool(plan.nodes or plan.relationships or plan.visualizations),
+                        "ai_status": ai_status,
+                    },
+                    "source_evidence_ids": [e.id for e in evidence_records],
+                }
+            ],
+            evidence_ids=[e.id for e in evidence_records],
+            actor_id=actor_id,
+            reason="Meeting discussion canvas synchronized from persisted evidence",
+            workspace_name=f"Meeting Canvas · {meeting.title or meeting_id}",
+        )
+        artifact = excal.get_or_create_artifact(
+            canvas_key,
+            db,
+            tenant_id=tenant_id,
+            name=f"Meeting Notes · {meeting.title or meeting_id}",
+        )
+        return {
+            "meeting_id": meeting_id,
+            "artifact": excal.format_artifact_read(artifact).model_dump(),
+            "synced": True,
+            "revision_number": revision.revision_number,
+            "ai_status": ai_status,
+            "plan_fingerprint": plan_fingerprint,
+            "evidence_count": len(evidence_records),
+            "transcript_entry_count": len(entries),
+        }
+
+    @staticmethod
+    def _json_list(raw: Optional[str]) -> List[Any]:
+        try:
+            value = json.loads(raw or "[]")
+            return value if isinstance(value, list) else []
+        except Exception:
+            return []
+
     def get_or_build(
         self,
         meeting_id: str,
