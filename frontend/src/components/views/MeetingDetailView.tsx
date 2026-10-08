@@ -152,9 +152,10 @@ export function MeetingDetailView({
       </div>
 
       {meetingSurface === "canvas" && (
-      {/* Independent free-form Meeting Canvas. This is the meeting's working surface,
-          not a projection of Project State and not constrained to fixed note types. */}
-      <section className="rounded-2xl border border-border bg-surface shadow-sm overflow-hidden">
+        <>
+          {/* Independent free-form Meeting Canvas. This is the meeting's working surface,
+              not a projection of Project State and not constrained to fixed note types. */}
+          <section className="rounded-2xl border border-border bg-surface shadow-sm overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3 bg-surface-soft">
           <div>
             <div className="flex items-center gap-2">
@@ -190,7 +191,8 @@ export function MeetingDetailView({
             </div>
           )}
         </div>
-      </section>
+          </section>
+        </>
       )}
 
       {meetingSurface === "intelligence" && (
