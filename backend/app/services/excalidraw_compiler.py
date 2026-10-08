@@ -827,17 +827,13 @@ class ExcalidrawCompiler:
         def _safe_style(style: Any) -> Dict[str, Any]:
             if not isinstance(style, dict):
                 return {}
-            allowed = {
-                "strokeColor", "backgroundColor", "fillStyle", "strokeWidth",
-                "strokeStyle", "roughness", "opacity", "fontSize", "fontFamily",
-                "textAlign", "verticalAlign", "roundness",
-            }
-            return {k: v for k, v in style.items() if k in allowed and k not in {"x", "y"}}
+            blocked = {"x", "y", "position", "id", "type", "isDeleted"}
+            return {k: v for k, v in style.items() if k not in blocked}
 
         visual_base_y = max(
             [y + NODE_HEIGHT for _, y in positions.values()] or [BASE_Y + 20]
         ) + 100
-        for v_index, visualization in enumerate(visualizations[:12]):
+        for v_index, visualization in enumerate(visualizations):
             v = visualization.model_dump(mode="json") if hasattr(visualization, "model_dump") else dict(visualization)
             vid = str(v.get("id") or f"visual_{v_index}")
             kind = str(v.get("kind") or "custom")
