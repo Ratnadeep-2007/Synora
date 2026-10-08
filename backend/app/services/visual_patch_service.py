@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import json
 import logging
+import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -112,11 +113,15 @@ class VisualPatchService:
     ) -> Tuple[List[VisualPatchOperation], PatchSafetyClassification, str]:
         """Create semantic visual updates while preserving the authored canvas.
 
-        The first pass remains deterministic for safety, but it now creates
-        richer visual relationships and text-backed context notes instead of
-        isolated keyword nodes.
+        Deliberately domain-neutral: operations are derived from the incoming
+        evidence text itself, never from hardcoded per-domain templates.
+        Domain templates once drew a restaurant ordering flow ("Table QR
+        Ordering", "POS Integration") onto an unrelated hospital project,
+        because the evidence mentioned a QR code and the words "live
+        position" contain the substring "pos". Verified live 2026-10-08.
+        The LLM planner path remains the route for rich domain modelling;
+        this deterministic path records what was said, nothing more.
         """
-        lower_text = text.lower()
         ops: List[VisualPatchOperation] = []
 
         def add_note(note_key: str, category: VisualNoteCategory, content: str) -> None:
@@ -129,71 +134,13 @@ class VisualPatchService:
                 )
             )
 
-        # DineIn-domain signals become an understandable visual flow.
-        if "qr" in lower_text or "table ordering" in lower_text:
-            qr_node_id = make_stable_semantic_id("node", "Table QR Ordering")
-            web_id = make_stable_semantic_id("node", "Ordering Web App")
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NODE,
-                    target_id=qr_node_id,
-                    label="Table QR Ordering",
-                    node_type="client",
-                    emphasis="primary",
-                )
-            )
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_EDGE,
-                    target_id=f"edge_{qr_node_id}_{web_id}",
-                    source=qr_node_id,
-                    target=web_id,
-                    label="order request",
-                    style="solid",
-                )
-            )
-            add_note(
-                "table_qr_ordering",
-                VisualNoteCategory.REQUIREMENT,
-                "Customers initiate an order from the table QR flow; the web ordering surface receives the request and continues the order journey.",
-            )
-
-        if "kds" in lower_text or "kitchen" in lower_text:
-            kds_node_id = make_stable_semantic_id("node", "Kitchen Display System")
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NODE,
-                    target_id=kds_node_id,
-                    label="Kitchen Display System",
-                    node_type="service",
-                    emphasis="primary",
-                )
-            )
-            add_note(
-                "realtime_kds",
-                VisualNoteCategory.DECISION,
-                "Kitchen tickets should reach KDS in realtime so preparation state reflects the live order lifecycle.",
-            )
-
-        if "pos" in lower_text or "billing" in lower_text:
-            pos_node_id = make_stable_semantic_id("node", "POS Integration Service")
-            ops.append(
-                VisualPatchOperation(
-                    op_type=VisualPatchOpType.ADD_NODE,
-                    target_id=pos_node_id,
-                    label="POS Integration",
-                    node_type="service",
-                    emphasis="normal",
-                )
-            )
-            add_note(
-                "pos_settlement",
-                VisualNoteCategory.CONSTRAINT,
-                "Billing or settlement must stay consistent with the operational order state; the integration boundary should be explicit.",
-            )
-
-        if not ops:
-            clean_title = " ".join(text.split())[:42].strip()
+        sentences = [
+            s.strip()
+            for s in re.split(r"[.!?]+", text or "")
+            if len(s.strip()) >= 15
+        ]
+        for sentence in sentences[:3]:
+            clean_title = " ".join(sentence.split())[:42].strip()
             node_id = make_stable_semantic_id("node", clean_title or "Context Update")
             ops.append(
                 VisualPatchOperation(
@@ -204,11 +151,24 @@ class VisualPatchService:
                     emphasis="normal",
                 )
             )
-            add_note(
-                clean_title or "context_update",
-                VisualNoteCategory.ACTION,
-                f"Incoming project evidence: {text[:150]}",
+
+        if not ops:
+            clean_title = " ".join((text or "").split())[:42].strip()
+            node_id = make_stable_semantic_id("node", clean_title or "Context Update")
+            ops.append(
+                VisualPatchOperation(
+                    op_type=VisualPatchOpType.ADD_NODE,
+                    target_id=node_id,
+                    label=clean_title or "Context Update",
+                    node_type="service",
+                    emphasis="normal",
+                )
             )
+        add_note(
+            "evidence_context",
+            VisualNoteCategory.ACTION,
+            f"Incoming project evidence: {(text or '')[:150]}",
+        )
 
         has_remove = any(
             op.op_type in (VisualPatchOpType.REMOVE_NODE, VisualPatchOpType.REMOVE_GROUP)

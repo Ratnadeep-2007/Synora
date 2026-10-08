@@ -156,7 +156,29 @@ class ProjectStateService:
         """
         Creates an explicit proposed StateChange from extracted CandidateKnowledge.
         Authoritative Project State remains completely untouched!
+
+        Idempotent: a candidate with an already-open proposal reuses it.
+        Reprocessing a meeting must not stack duplicate proposals for the
+        same candidate. Verified live 2026-10-08: two pipeline re-runs
+        doubled MediQueue's proposals (8 -> 16) before this guard.
         """
+        existing = (
+            db.query(StateChange)
+            .filter(
+                StateChange.candidate_id == candidate.id,
+                StateChange.approval_status == ApprovalStatus.PROPOSED.value,
+            )
+            .order_by(StateChange.created_at.desc())
+            .first()
+        )
+        if existing:
+            logger.info(
+                "proposal_reused_open: candidate=%s change=%s",
+                candidate.id,
+                existing.id,
+            )
+            return existing
+
         state = self.get_or_create_state(candidate.project_id, db)
 
         # Map candidate category to target section
