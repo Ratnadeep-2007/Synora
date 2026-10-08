@@ -94,17 +94,21 @@ def test_free_prompt_has_no_boilerplate_ban():
     prompt = svc._build_prompt(
         {"title": "Demo"}, ["Existing"], ["snippet"], None, None, free=True
     )
-    assert "complete freedom" in prompt.lower()
-    assert "NEVER emit" not in prompt
-    assert "MANDATORY" not in prompt
+    assert "DESIGN FREEDOM" in prompt
+    assert "no fixed taxonomy for visual form" in prompt
+    assert "NEVER provide x, y, position" in prompt
 
 
-def test_grounded_prompt_unchanged():
+def test_grounded_prompt_unchanged(monkeypatch):
+    from app.core.config import settings as cfg
+
+    monkeypatch.setattr(cfg, "VISUAL_DESIGN_MODE", "grounded")
     svc = VisualPlanService()
     prompt = svc._build_prompt(
         {"title": "Demo"}, ["Existing"], ["snippet"], None, None, free=False
     )
-    assert "GROUNDING IS MANDATORY" in prompt
+    assert "GROUNDING: cite evidence_ids" in prompt
+    assert "CONTENT AND REPRESENTATION ARE OPEN-ENDED" in prompt
 
 
 def test_compiler_free_mode_keeps_ungrounded_nodes():

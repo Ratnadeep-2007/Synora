@@ -109,7 +109,10 @@ def test_visual_plan_deterministic_fallback_is_labelled():
     )
     assert ai_status == "deterministic"
     assert plan.model == "deterministic"
-    assert any(n.label == "Synora Agent" for n in plan.nodes)
+    # Free-mode deterministic fallback is a text notebook, not a fixed
+    # diagram: no fabricated nodes, content preserved as notes.
+    assert plan.canvas_strategy == "text"
+    assert plan.notes_document is not None
 
 
 def test_visual_plan_uses_injected_client_and_labels_ai():

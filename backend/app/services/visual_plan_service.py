@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import settings
-from app.schemas.visual_plan import VisualNode, VisualPlan, VisualRelationship
+from app.schemas.visual_plan import NoteBlock, NoteSection, NotesDocument, VisualNode, VisualPlan, VisualRelationship
 
 logger = logging.getLogger(__name__)
 
@@ -228,115 +228,90 @@ class VisualPlanService:
         free: bool = False,
     ) -> str:
         project_title = state_summary.get("title") or "Project"
-        is_synora_project = project_title.strip().lower() in ("synora", "synesis")
-
-        # In free design mode the agent has complete freedom per project: no
-        # boilerplate ban, no mandatory grounding. Evidence is still shown so
-        # the model can cite it, and citations are still recorded - they are
-        # simply not enforced.
-        if free:
-            schema = (
-                '{"title": str, "layout_direction": "horizontal|vertical", '
-                '"grouping_intent": [str], '
-                '"nodes": [{"id": str, "label": str, "node_type": '
-                '"client|service|datastore|actor|decision|requirement|group|note", '
-                '"group": str|null, "emphasis": "normal|primary|muted", "annotations": [str], '
-                '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
-                '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed", '
-                '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
-                '"preserve": [str], "add": [str], "change": [str], "remove": [str], '
-                '"notes": [{"text": str, "kind": "decision|requirement|directive|action|risk|assumption|note", '
-                '"order": int, "evidence_ids": [str]}]}'
-            )
-            lines = [
-                f"You are the visual architecture designer for the project: '{project_title}'.",
-                "Design this project's canvas with complete freedom. Choose the nodes, relationships,",
-                "grouping and layout that best express what this project is and where it is going.",
-                "Cite evidence ids where the evidence supports a node; where you design beyond the",
-                "evidence, mark support_type inferred. Never return Excalidraw JSON, only the plan schema.",
-                "",
-                f"Respond with ONLY JSON matching: {schema}",
-                "",
-                "--- CURRENT PROJECT STATE ---",
-                json.dumps(state_summary, default=str)[:4000],
-                "",
-                f"--- CURRENT CANVAS NODES --- {json.dumps(current_nodes)[:800]}",
-            ]
-            if evidence_snippets:
-                lines += ["", "--- RELEVANT EVIDENCE ---"] + [
-                    f"- [EVIDENCE: {_evidence_id_of(s)}] {_snippet_text(s)[:200]}"
-                    for s in evidence_snippets[:8]
-                ]
-            if constraints:
-                lines += ["", "--- VISUAL DESIGN CONSTRAINTS ---"] + [f"- {c}" for c in constraints]
-            if focus_prompt:
-                lines += ["", f"--- REQUESTED CHANGE --- {focus_prompt}"]
-            return "\n".join(lines)
-
-        # Disallow generic platform meta-scaffolding from leaking into domain architectures
-        disallowed_meta = {
-            "user", "evidence", "synora agent", "project state", "living workspace",
-            "ba", "project", "functional", "tech", "frappe"
-        }
-        if not is_synora_project:
-            clean_current_nodes = [n for n in current_nodes if n.lower().strip() not in disallowed_meta]
-        else:
-            clean_current_nodes = current_nodes
 
         schema = (
-            '{"title": str, "layout_direction": "horizontal|vertical", '
+            '{"title": str, '
+            '"canvas_strategy": "text|mixed|diagram", '
+            '"layout_direction": "horizontal|vertical", '
             '"grouping_intent": [str], '
-            '"nodes": [{"id": str, "label": str, "node_type": '
-            '"client|service|datastore|actor|decision|requirement|group|note", '
-            '"group": str|null, "emphasis": "normal|primary|muted", "annotations": [str], '
+            '"nodes": [{"id": str, "label": str, "node_type": str, "group": str|null, '
+            '"emphasis": str|null, "annotations": [str], "evidence_ids": [str], "support_type": "explicit|inferred"}], '
+            '"relationships": [{"source": str, "target": str, "label": str|null, "style": str|null, '
             '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
-            '"relationships": [{"source": str, "target": str, "label": str|null, "style": "solid|dashed", '
+            '"notes_document": {"title": str, "subtitle": str|null, '
+            '"sections": [{"id": str, "title": str, "order": int, '
+            '"blocks": [{"id": str, "block_type": str, "text": str, "items": [str], "rows": [[str]], '
+            '"title": str|null, "level": int, "tone": str|null, "evidence_ids": [str], "support_type": "explicit|inferred"}], '
             '"evidence_ids": [str], "support_type": "explicit|inferred"}], '
-            '"preserve": [str], "add": [str], "change": [str], "remove": [str], '
-            '"notes": [{"text": str, "kind": "decision|requirement|directive|action|risk|assumption|note", '
-            '"order": int, "evidence_ids": [str]}]}'
+            '"updated_label": str|null}, '
+            '"visualizations": [{"id": str, "kind": str, "title": str|null, "purpose": str|null, '
+            '"elements": [{"id": str, "primitive_type": str, "text": str|null, "title": str|null, '
+            '"source": str|null, "target": str|null, "group": str|null, "width": number|null, "height": number|null, '
+            '"style": object, "metadata": object, "evidence_ids": [str], "support_type": "explicit|inferred"}], '
+            '"content": object, "evidence_ids": [str], "support_type": "explicit|inferred"}], '
+            '"preserve": [str], "add": [str], "change": [str], "remove": [str]}'
         )
-        lines = [
-            f"You are the Synora visual architecture planner for the project: '{project_title}'.",
-            "Produce a STRUCTURED, PRODUCTION-GRADE VISUAL PLAN (pure JSON, never Excalidraw JSON).",
+
+        free_mode = bool(free or settings.visual_design_free)
+        prompt_lines = [
+            f"You are the visual canvas designer for '{project_title}'.",
+            "Your output is the living visual workspace for ONE project or ONE scoped conversation.",
             "",
-            "CRITICAL ARCHITECTURAL DIRECTIVES:",
-            f"1. DOMAIN FOCUS: Model the concrete domain architecture of '{project_title}' (e.g. client apps, core services, autonomous agents, datastores, message queues, external APIs).",
-            "2. ZERO PLATFORM BOILERPLATE: NEVER emit internal Synora platform meta-nodes ('Synora Agent', 'Project State', 'Living Workspace', 'Evidence', or generic 'BA'/'Tech'/'Frappe' nodes). Every node must be a functional component of the target project.",
-            "3. GROUNDING IS MANDATORY: every node, relationship and note MUST carry "
-            '"evidence_ids" listing the EVIDENCE ids that justify it, taken verbatim from the '
-            "--- RELEVANT EVIDENCE --- block below. A node you cannot cite will be discarded "
-            "before rendering. Do NOT invent a component just because a real system of this "
-            "kind would normally have one. Fewer, grounded nodes beat many speculative ones.",
-            '4. SUPPORT TYPE: use "support_type": "explicit" when the evidence states that the '
-            'component exists, and "inferred" when you reasoned it out. Never claim "explicit" '
-            "for something the evidence only implies.",
-            "5. VISUAL-FIRST ARCHITECTURE: organize grounded components into logical layers such as Experience, Core Logic, Data, Integrations when the evidence supports them.",
-            "6. NODE LABELS: Keep node labels short, crisp, and professional (2-4 words).",
-            "7. RELATIONSHIPS: Connect components with directional data flow and a short edge label describing what actually moves.",
-            "8. SUPPORTING NOTES: use them only for decisions, constraints, assumptions, risks, or open questions. Each note must cite evidence_ids.",
-            "9. HUMAN READABILITY: A reviewer should be able to answer what enters the system, what transforms it, where state is stored, and what external systems participate.",
+            "CONTENT AND REPRESENTATION ARE OPEN-ENDED.",
+            "There is NO required note-taking structure, no mandatory sections, no fixed note categories, no fixed diagram type, and no minimum number of diagrams.",
+            "Choose the representation that best communicates the information: prose, headings, bullets, tables, callouts, sketches, timelines, flows, hierarchies, matrices, or a custom composition.",
+            "Do not force unrelated information into categories merely because a schema offers them.",
+            "For project work, keep useful context understandable as a maintained working canvas and evolve obsolete material instead of blindly accumulating duplicates.",
+            "For meeting work, capture only the meeting discussion and do not import project-wide facts from elsewhere.",
             "",
-            f"Respond with ONLY JSON matching: {schema}",
+            "VISUAL MODELING.",
+            "Use diagrams or visual compositions when they add meaning; omit them when text is clearer.",
+            "You may invent any semantic visualization form. There is no fixed visualization vocabulary.",
+            "You may choose semantic primitive types, labels, dimensions, grouping, connectors, typography, shapes, emphasis, and visual semantics.",
+            "NEVER provide x, y, position, canvas coordinates, or absolute placement. The renderer/compiler handles geometry and collision avoidance.",
+            "Never emit raw Excalidraw JSON.",
             "",
-            "--- CURRENT PROJECT STATE ---",
-            json.dumps(state_summary, default=str)[:4000],
-            "",
-            f"--- CURRENT CANVAS NODES --- {json.dumps(clean_current_nodes)[:800]}",
+            "CURRENT CANVAS.",
+            "Treat the current canvas as an existing working document. Preserve useful content, update stale representations, and avoid pointless duplication.",
         ]
-        if evidence_snippets:
-            # IDs are shown so the planner can cite them. Without the id the
-            # model has no way to satisfy the grounding rule and every node
-            # would be discarded.
-            lines += ["", "--- RELEVANT EVIDENCE ---"] + [
-                f"- [EVIDENCE: {_evidence_id_of(s)}] {_snippet_text(s)[:200]}"
-                for s in evidence_snippets[:8]
+
+        if free_mode:
+            prompt_lines += [
+                "",
+                "DESIGN FREEDOM: use your strongest judgment. There is no requirement to create a diagram or visualization, and no fixed taxonomy for visual form.",
+                "The only layout restriction is that you must not choose coordinates; all placement is handled after you return the semantic plan.",
             ]
+        else:
+            prompt_lines += [
+                "",
+                "GROUNDING: cite evidence_ids whenever a claim is directly supported by the supplied evidence. Mark reasoning as inferred rather than pretending it was stated.",
+                "Do not invent project-specific facts. Prefer a smaller accurate visual model over a larger speculative one.",
+            ]
+
+        prompt_lines += [
+            "",
+            f"Return ONLY JSON matching this schema: {schema}",
+            "",
+            "--- CURRENT PROJECT MEMORY ---",
+            json.dumps(state_summary, default=str)[:7000],
+            "",
+            "--- CURRENT CANVAS SUMMARY ---",
+            json.dumps(current_nodes, default=str)[:2500],
+        ]
+
+        if evidence_snippets:
+            prompt_lines += ["", "--- RECENT PROJECT EVIDENCE ---"]
+            prompt_lines += [
+                f"- [EVIDENCE: {_evidence_id_of(s)}] {_snippet_text(s)[:700]}"
+                for s in evidence_snippets[:16]
+            ]
+
         if constraints:
-            lines += ["", "--- VISUAL DESIGN CONSTRAINTS ---"] + [f"- {c}" for c in constraints]
+            prompt_lines += ["", "--- SYSTEM CANVAS CONSTRAINTS ---"] + [f"- {c}" for c in constraints]
         if focus_prompt:
-            lines += ["", f"--- REQUESTED CHANGE --- {focus_prompt}"]
-        return "\n".join(lines)
+            prompt_lines += ["", f"--- REQUESTED FOCUS --- {focus_prompt}"]
+
+        return "\n".join(prompt_lines)
 
     def _parse(self, content: str, model: str) -> Optional[VisualPlan]:
         try:
@@ -352,34 +327,136 @@ class VisualPlanService:
     def _ensure_efficient_notes(
         self, plan: Optional[VisualPlan], state: Dict[str, Any], focus: Optional[str]
     ) -> Optional[VisualPlan]:
-        """Ensures the plan always carries concise, high-signal notes even if the model omitted them."""
+        """Guarantee a coherent document notebook even when an LLM omits one."""
         if not plan:
             return None
-        if not plan.notes:
-            auto_notes = []
+
+        if plan.notes_document is None:
+            raw_sections: List[Dict[str, Any]] = []
+
+            def _value(item: Any, *keys: str) -> str:
+                if isinstance(item, dict):
+                    for key in keys:
+                        value = item.get(key)
+                        if value:
+                            return str(value).strip()
+                    return ""
+                return str(item).strip() if item is not None else ""
+
+            vision = str(state.get("vision") or state.get("description") or "").strip()
+            if vision:
+                raw_sections.append({
+                    "id": "project_overview",
+                    "title": "Overview",
+                    "order": 0,
+                    "blocks": [{
+                        "id": "overview_summary",
+                        "block_type": "paragraph",
+                        "text": vision[:1800],
+                        "evidence_ids": [],
+                        "support_type": "inferred",
+                    }],
+                })
+
+            for order, (state_key, section_id, section_title) in enumerate([
+                ("goals", "goals", "Goals"),
+                ("requirements", "requirements", "Requirements"),
+                ("architecture", "architecture", "Current Architecture"),
+                ("decisions", "key_decisions", "Key Decisions"),
+                ("constraints", "constraints", "Constraints"),
+                ("risks", "risks", "Risks"),
+                ("open_questions", "open_questions", "Open Questions"),
+                ("actions", "actions", "Actions"),
+                ("milestones", "milestones", "Milestones"),
+            ], start=1):
+                entries = state.get(state_key) or []
+                blocks: List[Dict[str, Any]] = []
+                for index, item in enumerate(entries[:10]):
+                    value = _value(item, "title", "text", "content", "detail", "description", "component", "name")
+                    if not value:
+                        continue
+                    block_type = "bullets"
+                    if isinstance(item, dict) and item.get("type") in ("checklist", "numbered", "paragraph", "callout"):
+                        block_type = str(item["type"])
+                    blocks.append({
+                        "id": f"{section_id}_item_{index}",
+                        "block_type": block_type,
+                        "items": [value] if block_type in ("bullets", "numbered", "checklist") else [],
+                        "text": value if block_type not in ("bullets", "numbered", "checklist") else "",
+                        "evidence_ids": list(item.get("evidence_ids") or [])[:4] if isinstance(item, dict) else [],
+                        "support_type": "explicit" if isinstance(item, dict) and item.get("evidence_ids") else "inferred",
+                    })
+                if blocks:
+                    raw_sections.append({
+                        "id": section_id,
+                        "title": section_title,
+                        "order": order,
+                        "blocks": blocks,
+                    })
+
+            if not raw_sections and plan.notes:
+                blocks = []
+                for index, item in enumerate(plan.notes[:12]):
+                    text_value = _value(item, "text", "content")
+                    if text_value:
+                        blocks.append({
+                            "id": f"legacy_note_{index}",
+                            "block_type": "paragraph",
+                            "text": text_value[:500],
+                            "evidence_ids": list(item.get("evidence_ids") or [])[:4] if isinstance(item, dict) else [],
+                            "support_type": "explicit" if isinstance(item, dict) and item.get("evidence_ids") else "inferred",
+                        })
+                if blocks:
+                    raw_sections.append({
+                        "id": "recent_context",
+                        "title": "Recent Context",
+                        "order": 20,
+                        "blocks": blocks,
+                    })
+
             if focus:
-                clean_f = focus.replace("Update the living visual project memory from this WhatsApp batch.", "").strip()
-                clean_f = clean_f.replace("Extract only meaningful project knowledge and represent it as concise visual notes, decisions, requirements, actions, questions, risks, and architecture relationships. Preserve useful current content and do not dump the transcript. Batch content:", "").strip()
-                if clean_f:
-                    first_line = clean_f.splitlines()[0].strip()
-                    auto_notes.append(f"⚡ Directive: {first_line[:90]}")
-            if state.get("vision"):
-                auto_notes.append(f"💡 Scope: {str(state['vision'])[:90]}")
-            reqs = state.get("requirements") or []
-            if reqs:
-                req = reqs[0]
-                req_title = req.get("title") if isinstance(req, dict) else str(req)
-                auto_notes.append(f"📋 Requirement: {str(req_title)[:90]}")
-            decs = state.get("decisions") or []
-            if decs:
-                dec = decs[0]
-                dec_title = dec.get("title") or dec.get("text") if isinstance(dec, dict) else str(dec)
-                auto_notes.append(f"💡 Decision: {str(dec_title)[:90]}")
-            plan.notes = auto_notes or ["Domain architecture components and operational directives."]
+                raw_sections.append({
+                    "id": "latest_context",
+                    "title": "Latest Context",
+                    "order": 30,
+                    "blocks": [{
+                        "id": "latest_context_text",
+                        "block_type": "paragraph",
+                        "text": str(focus).strip()[:1500],
+                        "evidence_ids": [],
+                        "support_type": "inferred",
+                    }],
+                })
+
+            if not raw_sections:
+                raw_sections = [{
+                    "id": "project_notes",
+                    "title": "Project Notes",
+                    "order": 0,
+                    "blocks": [{
+                        "id": "project_identity",
+                        "block_type": "paragraph",
+                        "text": str(state.get("title") or "Project").strip(),
+                        "evidence_ids": [],
+                        "support_type": "inferred",
+                    }],
+                }]
+
+            plan.notes_document = NotesDocument(
+                title=str(state.get("title") or "PROJECT NOTES").strip(),
+                subtitle="Living project notebook maintained from project memory",
+                sections=[NoteSection.model_validate(section) for section in raw_sections],
+                updated_label="Maintained automatically from project memory",
+            )
+
+        # Keep the older notes_sections API populated for existing callers.
+        if not plan.notes_sections:
+            plan.notes_sections = list(plan.notes_document.sections)
+
         return plan
 
     def _call_client(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
-        prompt = self._build_prompt(state, nodes, evidence, focus, constraints)
+        prompt = self._build_prompt(state, nodes, evidence, focus, constraints, free=settings.visual_design_free)
         try:
             content = self.client.generate_visual_plan(prompt)
         except Exception as exc:
@@ -388,14 +465,14 @@ class VisualPlanService:
         if not content:
             return None
         plan = self._parse(content, model=getattr(self.client, "model_name", "client"))
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     def _call_gemini(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
         if not settings.is_gemini_configured:
             return None
         import httpx
 
-        prompt = self._build_prompt(state, nodes, evidence, focus, constraints)
+        prompt = self._build_prompt(state, nodes, evidence, focus, constraints, free=settings.visual_design_free)
         project_title = state.get("title") or "Project"
         system_instruction = (
             f"You are the Synora visual architecture planner for project '{project_title}'. "
@@ -441,7 +518,7 @@ class VisualPlanService:
             logger.warning("visual_plan_gemini_failed: %s", exc)
             return None
         plan = self._parse(content, model=f"gemini/{settings.GEMINI_MODEL}")
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     def _call_meta(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
         """Design authority path: Meta Muse Spark with complete per-project freedom."""
@@ -527,7 +604,7 @@ class VisualPlanService:
             logger.warning("visual_plan_nim_failed: %s", exc)
             return None
         plan = self._parse(content, model=f"nvidia-nim/{settings.NVIDIA_MODEL}")
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     def _call_groq(self, state, nodes, evidence, focus, constraints) -> Optional[VisualPlan]:
         import httpx
@@ -570,7 +647,7 @@ class VisualPlanService:
             logger.warning("visual_plan_groq_failed: %s", exc)
             return None
         plan = self._parse(content, model=f"groq/{settings.GROQ_MODEL}")
-        return self._ensure_efficient_notes(plan, state, focus)
+        return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)
 
     # ------------------------------------------------------------------
     # Deterministic fallback (explicitly NOT AI)
@@ -582,6 +659,46 @@ class VisualPlanService:
         focus_prompt: Optional[str] = None,
         evidence_snippets: Optional[List[Any]] = None,
     ) -> VisualPlan:
+        # In free design mode, an unavailable model must not silently fall back to
+        # the old fixed architecture template. Preserve the user's content as a
+        # plain derived notebook entry instead of fabricating a diagram.
+        if settings.visual_design_free:
+            project_title = str(state_summary.get("title") or "Project Notes")
+            source_text = " ".join(
+                _snippet_text(item) for item in (evidence_snippets or []) if _snippet_text(item).strip()
+            ).strip()
+            source_text = source_text or str(
+                focus_prompt or state_summary.get("vision") or state_summary.get("description") or ""
+            ).strip()
+            source_text = " ".join(source_text.split())[:5000]
+            return VisualPlan(
+                title=project_title,
+                canvas_strategy="text",
+                model="deterministic",
+                prompt_version="visual-plan-text-deterministic-v2",
+                notes_document=NotesDocument(
+                    title=project_title,
+                    subtitle="Deterministic fallback — semantic design provider unavailable",
+                    sections=[
+                        NoteSection(
+                            id="notes",
+                            title="Notes",
+                            order=0,
+                            blocks=[
+                                NoteBlock(
+                                    id="notes_content",
+                                    block_type="paragraph",
+                                    text=source_text or "No source content available yet.",
+                                    evidence_ids=[_evidence_id_of(item) for item in (evidence_snippets or []) if _evidence_id_of(item)][:8],
+                                    support_type="explicit" if evidence_snippets else "inferred",
+                                )
+                            ],
+                        )
+                    ],
+                    updated_label="Deterministic fallback",
+                ),
+            )
+
         nodes: List[VisualNode] = []
         relationships: List[VisualRelationship] = []
         notes_list: List[Any] = []

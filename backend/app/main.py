@@ -70,43 +70,16 @@ async def lifespan(app: FastAPI):
 
     worker_task = asyncio.create_task(_batch_worker())
 
-    # Memory-to-canvas reconciliation. Project memory advances through many
-    # paths (meetings, WhatsApp, manual approvals) while the canvas only
-    # moves when something draws it. This loop checks every
-    # VISUAL_SYNC_INTERVAL_SECONDS whether approved memory has outrun the
-    # visual workspace and, if so, draws the delta through the same
-    # evidence-linked, safety-gated patch path the ingestion pipelines use.
-    async def _visual_sync_worker():
-        from app.core.database import SessionLocal
-        from app.services.visual_sync_service import VisualSyncService
-        service = VisualSyncService()
-        while not stop_event.is_set():
-            try:
-                await asyncio.sleep(settings.VISUAL_SYNC_INTERVAL_SECONDS or 30)
-                db = SessionLocal()
-                try:
-                    service.sync_all(db=db)
-                finally:
-                    db.close()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.error(f"Visual sync background worker error: {exc}")
-
-    visual_sync_task = asyncio.create_task(_visual_sync_worker())
+    # Visual memory reconciliation runs in the dedicated
+    # visual_sync_worker process so API worker count cannot multiply it.
 
     yield
 
     logger.info("Shutting down Synesis Backend...")
     stop_event.set()
     worker_task.cancel()
-    visual_sync_task.cancel()
     try:
         await worker_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await visual_sync_task
     except asyncio.CancelledError:
         pass
 

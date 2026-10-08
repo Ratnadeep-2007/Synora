@@ -1,51 +1,244 @@
+
 @import "@xyflow/react/dist/style.css";
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   Synora visual system
+   Light / editorial / intelligent:
+   warm paper canvas, white work surfaces, ink typography,
+   one restrained emerald signal color.
+   ============================================================ */
 :root {
-  --background: #F6F7F5;
-  --foreground: #171A17;
+  --background: #f5f6f3;
+  --foreground: #171a18;
+  --canvas: #f5f6f3;
+  --surface: #ffffff;
+  --surface-soft: #f7f8f5;
+  --surface-muted: #eef0eb;
+  --border: #e1e5df;
+  --border-subtle: #edf0eb;
+  --border-active: #cfd6ce;
+  --text-main: #171a18;
+  --text-muted: #657068;
+  --text-dim: #9aa49d;
+  --primary: #11785b;
+  --primary-hover: #0d624a;
+  --primary-soft: rgba(17, 120, 91, 0.08);
+  --primary-glow: rgba(17, 120, 91, 0.18);
+  --success: #11785b;
+  --warning: #a86516;
+  --danger: #c83b38;
+  --info: #1677a7;
+  --scrim: rgba(18, 23, 20, 0.32);
+  --shadow-color: rgba(22, 30, 25, 0.07);
+}
+
+html {
+  background: var(--canvas);
+  scroll-behavior: smooth;
 }
 
 body {
-  color: #171A17;
-  background-color: #F6F7F5;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text-main);
+  background:
+    radial-gradient(circle at 15% 0%, rgba(17, 120, 91, 0.035), transparent 24rem),
+    radial-gradient(circle at 90% 12%, rgba(15, 23, 20, 0.022), transparent 28rem),
+    var(--canvas);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
 
-/* Glassmorphism utility */
+::selection {
+  background: rgba(17, 120, 91, 0.18);
+  color: var(--text-main);
+}
+
+button,
+a,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ---------- surfaces ---------- */
 .glass-panel {
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid #E7EAE5;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(225, 229, 223, 0.86);
 }
 
-/* Precision neumorphism subtle control */
+.glass-surface {
+  background: rgba(255, 255, 255, 0.74);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(237, 240, 235, 0.95);
+}
+
 .neu-control {
-  background: #FFFFFF;
-  border: 1px solid #E7EAE5;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 1px 2px rgba(23, 26, 23, 0.05);
+  background: #ffffff;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px var(--shadow-color);
+  transition:
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms ease,
+    background-color 180ms ease;
 }
 
 .neu-control:hover {
-  background: #FBFCFA;
-  border-color: #D8DDD6;
+  transform: translateY(-1px);
+  background: #fcfdfb;
+  border-color: var(--border-active);
+  box-shadow: 0 5px 16px var(--shadow-color);
 }
 
 .neu-control:active {
-  box-shadow: inset 0 1px 2px rgba(23, 26, 23, 0.08);
+  transform: translateY(0);
 }
 
-/* Editorial subtle animations */
+/* ---------- shell ---------- */
+.synora-shell {
+  isolation: isolate;
+}
+
+.synora-rail {
+  box-shadow: 12px 0 35px rgba(29, 39, 32, 0.025);
+}
+
+.synora-topbar {
+  box-shadow: 0 8px 30px rgba(29, 39, 32, 0.035);
+}
+
+.agent-beacon {
+  position: relative;
+  overflow: hidden;
+}
+
+.agent-beacon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(120deg, transparent 0%, rgba(17, 120, 91, 0.06) 45%, transparent 72%);
+  transform: translateX(-120%);
+  animation: beaconSweep 4.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.agent-status-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.agent-status-button::after {
+  content: "";
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  bottom: -4px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(17, 120, 91, 0.12);
+  filter: blur(10px);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.agent-status-button:hover::after {
+  opacity: 1;
+}
+
+/* ---------- motion language ---------- */
+@keyframes intelligencePulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.86;
+    box-shadow: 0 0 0 0 rgba(17, 120, 91, 0.28);
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+    box-shadow: 0 0 0 5px rgba(17, 120, 91, 0);
+  }
+}
+
+.animate-pulse-live {
+  animation: intelligencePulse 2.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulseRing {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  72%,
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+
+.pulse-ring {
+  animation: pulseRing 2.4s ease-out infinite;
+}
+
+@keyframes beaconSweep {
+  0%,
+  55%,
+  100% {
+    transform: translateX(-120%);
+  }
+  72% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes viewEnter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.view-enter {
+  animation: viewEnter 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes revealUp {
+  from {
+    opacity: 0;
+    transform: translateY(11px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  animation: revealUp 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--reveal-delay, 0ms);
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(3px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -55,15 +248,40 @@ body {
 
 @keyframes slideInFromRight {
   from {
-    transform: translateX(100%);
+    opacity: 0;
+    transform: translateX(18px);
   }
   to {
+    opacity: 1;
     transform: translateX(0);
   }
 }
 
+@keyframes slideInFromBottom {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes orbit {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.035);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
 .animate-in {
-  animation-duration: 200ms;
+  animation-duration: 220ms;
   animation-fill-mode: both;
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -76,14 +294,136 @@ body {
   animation-name: slideInFromRight;
 }
 
-.duration-200 {
-  animation-duration: 200ms;
+.animate-in.slide-in-from-bottom {
+  animation-name: slideInFromBottom;
 }
 
-/* Restrained minimalist scrollbars */
+.progress-line {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-line::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, var(--primary-glow), transparent);
+  animation: progressFlow 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes progressFlow {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-soft) 25%,
+    var(--surface-muted) 50%,
+    var(--surface-soft) 75%
+  );
+  background-size: 800px 100%;
+  animation: skeletonShimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes skeletonShimmer {
+  from {
+    background-position: -400px 0;
+  }
+  to {
+    background-position: 400px 0;
+  }
+}
+
+.state-fade {
+  transition:
+    opacity 300ms ease,
+    color 300ms ease,
+    background-color 300ms ease,
+    border-color 300ms ease;
+}
+
+/* ---------- Project Pulse ---------- */
+.pulse-hero {
+  box-shadow: 0 16px 48px rgba(36, 52, 43, 0.055);
+}
+
+.pulse-grid {
+  background-image:
+    linear-gradient(rgba(17, 120, 91, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(17, 120, 91, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.75), transparent 78%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.75), transparent 78%);
+}
+
+.pulse-orbit {
+  animation: orbit 18s linear infinite;
+}
+
+.pulse-orbit-delay {
+  animation-duration: 24s;
+  animation-direction: reverse;
+}
+
+.pipeline-line {
+  position: relative;
+}
+
+.pipeline-line::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  top: 11px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(17, 120, 91, 0.18), rgba(17, 120, 91, 0.04));
+  z-index: 0;
+}
+
+.pipeline-arrow {
+  position: absolute;
+  right: -5px;
+  top: -2px;
+  color: var(--text-dim);
+}
+
+/* Progressive enhancement: native scroll-reactive reveal in Chromium/WebKit.
+   The fallback is simply the regular visible block. */
+.scroll-story {
+  opacity: 1;
+  transform: none;
+}
+
+@supports (animation-timeline: view()) {
+  .scroll-story {
+    animation: scrollReveal both linear;
+    animation-timeline: view();
+    animation-range: entry 0% cover 28%;
+  }
+
+  @keyframes scrollReveal {
+    from {
+      opacity: 0;
+      transform: translateY(24px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}
+
+/* ---------- scrollbars / accessibility ---------- */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -91,58 +431,32 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #D8DDD6;
+  background: #cfd6ce;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #B6C0B4;
+  background: #b8c1b9;
 }
 
-/* High-contrast accessible focus outlines */
 :focus-visible {
-  outline: 2px solid #173F35;
-  outline-offset: 1px;
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
-/* React Flow theme integration */
-.react-flow__controls {
-  box-shadow: 0 1px 3px rgba(23, 26, 23, 0.08) !important;
-  border-radius: 6px !important;
-  border: 1px solid #E7EAE5 !important;
-  overflow: hidden !important;
-}
-
-.react-flow__controls-button {
-  background: #FFFFFF !important;
-  border-bottom: 1px solid #E7EAE5 !important;
-  color: #68706A !important;
-  fill: #68706A !important;
-}
-
-.react-flow__controls-button:hover {
-  background: #FBFCFA !important;
-  color: #171A17 !important;
-  fill: #171A17 !important;
-}
-
-/* Reduced motion accessibility support (design.md Section 37) */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  ::before,
-  ::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+@media (max-width: 767px) {
+  .synora-rail {
+    box-shadow: 18px 0 42px rgba(29, 39, 32, 0.08);
   }
 }
 
-/* Excalidraw Layout Containment & Icon Safety */
+/* ---------- Excalidraw isolation ---------- */
 .excalidraw-wrapper {
   position: relative;
   width: 100%;
   overflow: hidden;
+  overscroll-behavior: none !important;
+  touch-action: none !important;
 }
 
 .excalidraw-wrapper .excalidraw {
@@ -151,14 +465,18 @@ body {
   width: 100% !important;
   height: 100% !important;
   overflow: hidden !important;
+  overscroll-behavior: none !important;
 }
 
-/* Hide shape creation toolbar on read-only / preview canvases so clicking and dragging pans naturally */
+.excalidraw-wrapper canvas {
+  touch-action: none !important;
+  overscroll-behavior: none !important;
+}
+
 .atlas-readonly-canvas .App-toolbar-container {
   display: none !important;
 }
 
-/* Ensure Excalidraw toolbar SVGs never blow out to full screen */
 .excalidraw .ToolIcon__icon svg,
 .excalidraw .unlocked-icon svg,
 .excalidraw .ToolIcon svg,
@@ -169,3 +487,17 @@ body {
   max-height: 24px !important;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}

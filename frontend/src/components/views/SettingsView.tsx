@@ -31,7 +31,7 @@ export function SettingsView({ workspaceName = "Workspace", onSaveWorkspace }: S
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 view-enter">
       <header className="space-y-2">
         <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-surface px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
           <ShieldCheck className="h-3.5 w-3.5 text-primary" />

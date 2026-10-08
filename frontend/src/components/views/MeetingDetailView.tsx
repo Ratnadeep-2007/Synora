@@ -10,6 +10,7 @@ import {
   Users,
 } from "lucide-react";
 import { CandidateKnowledgeItem } from "@/lib/types";
+import { ExcalidrawCanvas } from "@/components/canvas/ExcalidrawCanvas";
 
 /**
  * Canonical intelligence categories.
@@ -72,6 +73,7 @@ const INTELLIGENCE_FILTERS: { key: string; label: string }[] = [
 interface MeetingDetailViewProps {
   meetingId: string;
   meetingData: any;
+  meetingCanvas?: any;
   candidates: CandidateKnowledgeItem[];
   onBack: () => void;
   onOpenEvidence: (title: string, contextType: string, evidenceIds: string[]) => void;
@@ -80,6 +82,7 @@ interface MeetingDetailViewProps {
 export function MeetingDetailView({
   meetingId,
   meetingData,
+  meetingCanvas,
   candidates,
   onBack,
   onOpenEvidence,
@@ -95,7 +98,7 @@ export function MeetingDetailView({
   });
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
+    <div className="space-y-6 view-enter">
       {/* Top back navigation */}
       <div>
         <button
@@ -118,6 +121,46 @@ export function MeetingDetailView({
           </h1>
         </div>
       </div>
+
+      {/* Independent free-form Meeting Canvas. This is the meeting's working surface,
+          not a projection of Project State and not constrained to fixed note types. */}
+      <section className="rounded-2xl border border-border bg-surface shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3 bg-surface-soft">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-text-main">Meeting Canvas</h3>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-primary-soft text-primary border border-primary/20">FREE FORM</span>
+            </div>
+            <p className="text-[11px] text-text-muted mt-1">
+              Synora records this meeting in whatever visual or written form best fits the discussion. No fixed sections or diagram types.
+            </p>
+          </div>
+          <span className="text-[10px] font-mono text-text-muted">
+            {meetingCanvas?.artifact?.version ? `Canvas v${meetingCanvas.artifact.version}` : "Preparing…"}
+          </span>
+        </div>
+        <div className="p-2 bg-canvas">
+          {meetingCanvas?.artifact ? (
+            <ExcalidrawCanvas
+              key={meetingCanvas.artifact.id}
+              projectId={meetingCanvas.artifact.project_id}
+              projectName={meeting.title || "Meeting Notes"}
+              version={meetingCanvas.artifact.version || 1}
+              initialElements={meetingCanvas.artifact.elements || []}
+              initialAppState={{
+                ...(meetingCanvas.artifact.app_state || {}),
+                theme: "light",
+                viewBackgroundColor: "#ffffff",
+              }}
+              readOnly
+            />
+          ) : (
+            <div className="min-h-[620px] flex items-center justify-center rounded-xl border border-border bg-surface text-xs text-text-muted">
+              Building the meeting canvas from the persisted discussion…
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* Meet-only session intelligence: a projection over the same shared evidence/memory. */}
       {meetingData?.session_intelligence && (
