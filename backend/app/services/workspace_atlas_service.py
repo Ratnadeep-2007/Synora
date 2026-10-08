@@ -426,7 +426,12 @@ class WorkspaceAtlasService:
         tenant_id: str,
         origin_x: float,
     ) -> List[Dict[str, Any]]:
-        state = db.query(ProjectState).filter(ProjectState.project_id == project.id).first()
+        """Render the project's own free-form canvas inside its Atlas column.
+
+        The Atlas provides only the project-column boundary. It does not impose
+        an architecture area, note categories, card layout, or diagram type.
+        The project's Excalidraw artifact is the source for the content shown here.
+        """
         artifact = (
             db.query(ExcalidrawArtifact)
             .filter(
@@ -435,266 +440,150 @@ class WorkspaceAtlasService:
             )
             .first()
         )
-        recent_knowledge = (
-            db.query(CandidateKnowledge)
-            .filter(CandidateKnowledge.project_id == project.id)
-            .order_by(CandidateKnowledge.created_at.desc())
-            .limit(20)
-            .all()
-        )
         state = db.query(ProjectState).filter(ProjectState.project_id == project.id).first()
-        artifact = (
-            db.query(ExcalidrawArtifact)
-            .filter(
-                ExcalidrawArtifact.project_id == project.id,
-                ExcalidrawArtifact.tenant_id == tenant_id,
-            )
-            .first()
-        )
 
-        scene: List[Dict[str, Any]] = []
-        frame_id = self._id(project.id, "frame")
-        header_id = self._id(project.id, "header")
+        header_h = 138
+        content_x = origin_x + 34
+        content_y = ATLAS_PADDING_Y + header_h + 28
+        content_w = COLUMN_WIDTH - 68
 
-        scene.append(
+        scene: List[Dict[str, Any]] = [
             self._rect(
-                header_id,
+                self._id(project.id, "header"),
                 origin_x + 22,
                 ATLAS_PADDING_Y + 22,
                 COLUMN_WIDTH - 44,
-                HEADER_H - 28,
+                header_h - 22,
                 STYLE["header"],
                 opacity=100,
                 roundness=3,
-            )
-        )
-        scene.append(
+            ),
             self._text(
                 self._id(project.id, "title"),
                 origin_x + 46,
                 ATLAS_PADDING_Y + 42,
                 COLUMN_WIDTH - 92,
                 34,
-                project.name.upper(),
-                25,
+                project.name,
+                24,
                 "#1f3a24",
                 bold=True,
                 custom_data={"atlas": {"type": "project_header", "project_id": project.id}},
-            )
-        )
-
-        domain = self._project_domain(project, db, tenant_id)
-        if domain:
-            scene.append(
-                self._text(
-                    self._id(project.id, "domain"),
-                    origin_x + 46,
-                    ATLAS_PADDING_Y + 84,
-                    COLUMN_WIDTH - 92,
-                    22,
-                    domain,
-                    13,
-                    "#506353",
-                    custom_data={"atlas": {"type": "project_domain", "project_id": project.id}},
-                )
-            )
-
-        state_version = state.current_version if state else 0
-        reqs = self._json_list(state.requirements_json if state else "[]")
-        decs = self._json_list(state.decisions_json if state else "[]")
-        questions = self._json_list(state.open_questions_json if state else "[]")
-        constraints = self._json_list(state.constraints_json if state else "[]")
-        assumptions = self._json_list(state.assumptions_json if state else "[]")
-
-        memory_counts = {
-            "knowledge": len(recent_knowledge),
-            "requirements": len(reqs),
-            "decisions": len(decs),
-            "architecture": len(self._json_list(state.architecture_json if state else "[]")),
-            "constraints": len(constraints),
-            "assumptions": len(assumptions),
-            "open_questions": len(questions),
-            "updated_at": state.updated_at.isoformat() if state and state.updated_at else None,
-        }
-
-        intent = self._project_intent(state)
-        if intent:
-            scene.append(
-                self._text(
-                    self._id(project.id, "intent"),
-                    origin_x + 46,
-                    ATLAS_PADDING_Y + 108,
-                    COLUMN_WIDTH - 92,
-                    34,
-                    f"INTENT  •  {intent}",
-                    10,
-                    "#506353",
-                    bold=False,
-                    custom_data={"atlas": {"type": "project_intent", "project_id": project.id}},
-                )
-            )
-
-        scene.append(
+            ),
             self._text(
-                self._id(project.id, "metrics"),
+                self._id(project.id, "mode"),
                 origin_x + 46,
-                ATLAS_PADDING_Y + 151,
+                ATLAS_PADDING_Y + 80,
+                COLUMN_WIDTH - 92,
+                20,
+                "FREE-FORM PROJECT CANVAS",
+                9,
+                "#506353",
+                bold=True,
+                custom_data={"atlas": {"type": "project_canvas_mode", "project_id": project.id}},
+            ),
+            self._text(
+                self._id(project.id, "version"),
+                origin_x + 46,
+                ATLAS_PADDING_Y + 104,
                 COLUMN_WIDTH - 92,
                 18,
-                f"MEMORY v{state_version}   •   {len(reqs)} requirements   •   {len(decs)} decisions   •   {len(questions)} questions   •   {len(constraints)} constraints   •   {len(assumptions)} assumptions",
+                f"Project state v{state.current_version if state else 0}  •  canvas v{artifact.version if artifact else 0}",
                 10,
                 "#66736a",
-                custom_data={"atlas": {"type": "project_metrics", "project_id": project.id}},
-            )
-        )
+                custom_data={"atlas": {"type": "project_canvas_version", "project_id": project.id}},
+            ),
+        ]
 
-        # --------------------------------------------------------------
-        # Dynamic Architecture Placement
-        # --------------------------------------------------------------
-        arch_y = ATLAS_PADDING_Y + HEADER_H + 22
-        arch_w = COLUMN_WIDTH - (ARCH_X_PAD * 2)
-        scene.append(
-            self._section_label(
-                self._id(project.id, "architecture_label"),
-                origin_x + ARCH_X_PAD,
-                arch_y - 18,
-                arch_w,
-                "ARCHITECTURE  •  VISUAL SYSTEM MAP",
-            )
-        )
-        scene.extend(
-            self._architecture_legend(
-                project.id,
-                origin_x + ARCH_X_PAD,
-                arch_y + 6,
-                arch_w,
-            )
-        )
+        raw_scene = self._json_list(artifact.elements_json if artifact else "[]")
+        live = [dict(el) for el in raw_scene if isinstance(el, dict) and not el.get("isDeleted")]
 
-        architecture_elements = self._architecture_from_artifact(artifact)
-        if not architecture_elements:
-            architecture_elements = self._fallback_architecture(state)
-
-        if architecture_elements:
-            bbox = self._bbox(architecture_elements)
-            min_x, min_y, max_x, max_y = bbox
+        if live:
+            min_x = min(float(el.get("x") or 0) for el in live)
+            min_y = min(float(el.get("y") or 0) for el in live)
+            max_x = max(float(el.get("x") or 0) + max(0.0, float(el.get("width") or 0)) for el in live)
+            max_y = max(float(el.get("y") or 0) + max(0.0, float(el.get("height") or 0)) for el in live)
             raw_w = max(1.0, max_x - min_x)
             raw_h = max(1.0, max_y - min_y)
-            # Scale horizontally to fit architecture width; keep height proportional
-            scale = min(arch_w / raw_w, 1.0)
-            scaled_h = raw_h * scale
-            arch_h = max(300.0, scaled_h)
+            scale = min(content_w / raw_w, 1.0)
 
-            scene.append(
-                self._rect(
-                    self._id(project.id, "architecture_surface"),
-                    origin_x + ARCH_X_PAD,
-                    arch_y + 58,
-                    arch_w,
-                    arch_h + 44,
-                    {"stroke": "#dfe7e1", "background": "#fbfcfb"},
-                    opacity=100,
-                    roundness=3,
-                    custom_data={"atlas": {"type": "architecture_surface", "project_id": project.id}},
-                )
-            )
-            scene.append(
-                self._text(
-                    self._id(project.id, "architecture_flow_hint"),
-                    origin_x + ARCH_X_PAD + 18,
-                    arch_y + 69,
-                    arch_w - 36,
-                    16,
-                    "FLOW  •  follow arrows from entry → processing → state → external outcomes",
-                    8,
-                    "#7a877c",
-                    bold=True,
-                    custom_data={"atlas": {"type": "architecture_flow_hint", "project_id": project.id}},
-                )
-            )
-            scene.extend(
-                self._place_architecture(
-                    architecture_elements,
-                    origin_x + ARCH_X_PAD,
-                    arch_y + 94,
-                    arch_w,
-                    arch_h,
-                    project.id,
-                )
-            )
-            arch_bottom = arch_y + 94 + arch_h
-        else:
-            arch_bottom = arch_y + 40
+            id_map: Dict[str, str] = {}
+            for el in live:
+                old_id = str(el.get("id") or "")
+                if old_id:
+                    id_map[old_id] = self._id(project.id, f"canvas:{old_id}")
 
-        # --------------------------------------------------------------
-        # Dynamic Context & Knowledge Cards (Infinite Vertical Growth)
-        # --------------------------------------------------------------
-        notes_y = arch_bottom + 50
-        scene.append(
-            self._text(
-                self._id(project.id, "notes_header"),
-                origin_x + ARCH_X_PAD,
-                notes_y,
-                COLUMN_WIDTH - (ARCH_X_PAD * 2),
-                26,
-                "CONTEXT & KNOWLEDGE",
-                14,
-                "#3b4a3f",
-                bold=True,
-                custom_data={"atlas": {"type": "knowledge_header", "project_id": project.id}},
-            )
-        )
-        scene.append(
-            self._line(
-                self._id(project.id, "notes_divider"),
-                origin_x + ARCH_X_PAD,
-                notes_y + 34,
-                origin_x + COLUMN_WIDTH - ARCH_X_PAD,
-                notes_y + 34,
-            )
-        )
+            for index, original in enumerate(live):
+                el = dict(original)
+                old_id = str(el.get("id") or f"element_{index}")
+                el["id"] = id_map.get(old_id, self._id(project.id, f"canvas:{old_id}"))
+                el["x"] = content_x + (float(original.get("x") or 0) - min_x) * scale
+                el["y"] = content_y + (float(original.get("y") or 0) - min_y) * scale
+                if "width" in original:
+                    el["width"] = max(1.0, float(original.get("width") or 0) * scale)
+                if "height" in original:
+                    el["height"] = max(1.0, float(original.get("height") or 0) * scale)
+                if "fontSize" in original:
+                    el["fontSize"] = max(7.0, float(original.get("fontSize") or 12) * scale)
+                if "baseline" in original:
+                    el["baseline"] = max(7, int(float(original.get("baseline") or 12) * scale))
+                if isinstance(original.get("points"), list):
+                    el["points"] = [
+                        [
+                            float(point[0]) * scale,
+                            float(point[1]) * scale,
+                        ]
+                        for point in original["points"]
+                        if isinstance(point, list) and len(point) >= 2
+                    ]
+                if isinstance(original.get("startBinding"), dict):
+                    binding = dict(original["startBinding"])
+                    if binding.get("elementId"):
+                        binding["elementId"] = id_map.get(str(binding["elementId"]), binding["elementId"])
+                    el["startBinding"] = binding
+                if isinstance(original.get("endBinding"), dict):
+                    binding = dict(original["endBinding"])
+                    if binding.get("elementId"):
+                        binding["elementId"] = id_map.get(str(binding["elementId"]), binding["elementId"])
+                    el["endBinding"] = binding
+                if isinstance(original.get("boundElements"), list):
+                    el["boundElements"] = [
+                        {**bound, "id": id_map.get(str(bound.get("id")), bound.get("id"))}
+                        if isinstance(bound, dict) else bound
+                        for bound in original["boundElements"]
+                    ]
+                if isinstance(original.get("containerId"), str):
+                    el["containerId"] = id_map.get(original["containerId"], original["containerId"])
+                if isinstance(original.get("groupIds"), list):
+                    el["groupIds"] = [self._id(project.id, f"group:{gid}") for gid in original["groupIds"]]
+                custom = dict(el.get("customData") or {})
+                atlas_meta = dict(custom.get("atlas") or {}) if isinstance(custom.get("atlas"), dict) else {}
+                atlas_meta.update({"project_id": project.id, "type": "project_canvas_element"})
+                custom["atlas"] = atlas_meta
+                el["customData"] = custom
+                scene.append(el)
 
-        notes = self._knowledge_cards(
-            project.id,
-            reqs=reqs,
-            decs=decs,
-            questions=questions,
-            constraints=constraints,
-            assumptions=assumptions,
-        )
-
-        cards_start_y = notes_y + 52
-        if notes:
-            for i, note in enumerate(notes):
-                row = i // 2
-                col = i % 2
-                nx = origin_x + ARCH_X_PAD + col * (NOTE_W + NOTE_GAP)
-                ny = cards_start_y + row * (NOTE_H + NOTE_GAP)
-                scene.extend(self._note_card(project.id, note, nx, ny))
-            total_rows = (len(notes) + 1) // 2
-            content_bottom = cards_start_y + total_rows * (NOTE_H + NOTE_GAP)
+            content_bottom = content_y + raw_h * scale
         else:
             scene.append(
                 self._text(
-                    self._id(project.id, "notes_empty"),
-                    origin_x + ARCH_X_PAD,
-                    cards_start_y + 10,
-                    COLUMN_WIDTH - (ARCH_X_PAD * 2),
-                    30,
-                    "No context notes recorded yet.",
+                    self._id(project.id, "empty"),
+                    content_x,
+                    content_y + 24,
+                    content_w,
+                    60,
+                    "This project has no visual content yet. Synora will shape the canvas from project memory as relevant knowledge arrives.",
                     12,
                     "#738177",
-                    custom_data={"atlas": {"type": "knowledge_empty", "project_id": project.id}},
+                    custom_data={"atlas": {"type": "project_canvas_empty", "project_id": project.id}},
                 )
             )
-            content_bottom = cards_start_y + 50
+            content_bottom = content_y + 120
 
-        # Frame height expands dynamically with the full content of the column
-        column_bottom = content_bottom + 70
-        column_height = max(900, int(round(column_bottom - ATLAS_PADDING_Y)))
-
+        column_bottom = content_bottom + 56
+        column_height = max(520, int(round(column_bottom - ATLAS_PADDING_Y)))
         frame_rect = self._rect(
-            frame_id,
+            self._id(project.id, "frame"),
             origin_x,
             ATLAS_PADDING_Y,
             COLUMN_WIDTH,
@@ -703,7 +592,6 @@ class WorkspaceAtlasService:
             opacity=100,
             roundness=3,
         )
-
         return [frame_rect] + scene
 
     def _column_height(self, state: Optional[ProjectState]) -> int:
