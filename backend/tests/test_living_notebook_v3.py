@@ -81,10 +81,15 @@ def test_visualization_kind_is_not_limited_to_a_fixed_taxonomy():
                         "height": 100,
                     },
                     {
+                        "id": "low_impact",
+                        "primitive_type": "ellipse",
+                        "text": "Low impact",
+                    },
+                    {
                         "id": "connector",
                         "primitive_type": "arrow",
                         "source": "high_impact",
-                        "target": "high_impact",
+                        "target": "low_impact",
                         "style": {"strokeStyle": "dashed"},
                     },
                 ],
