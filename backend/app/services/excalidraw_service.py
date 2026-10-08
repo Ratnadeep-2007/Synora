@@ -371,6 +371,8 @@ class ExcalidrawService:
             "connections_before": connections_before,
             "connections_after": connections_after,
             "layout_direction": plan.layout_direction,
+            "notes_count": len(plan.notes or []),
+            "notes_document_present": bool(getattr(plan, "notes_document", None)),
             "critique_ok": critique.ok,
             "critique_issues": critique.issues,
             "ai_status": ai_status,

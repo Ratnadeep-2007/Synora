@@ -68,11 +68,11 @@ def test_lightweight_visualization_can_coexist_with_text_notes():
 
     assert any(
         (e.get("customData") or {}).get("visual", {}).get("type")
-        == "lightweight_visualization"
+        == "freeform_visual_frame"
         for e in scene
     )
     assert any(
-        e.get("type") == "text" and e.get("text") == "Stable"
+        e.get("type") == "text" and "Stable" in (e.get("text") or "")
         for e in scene
     )
 

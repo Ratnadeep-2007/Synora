@@ -578,6 +578,12 @@ class ExcalidrawCompiler:
                     })
                     cursor_y += 30
 
+                    # Section body container, inserted below once the section
+                    # height is known. Gives each section a visible body so
+                    # the document reads as grouped sections, not loose text.
+                    body_index = len(elements)
+                    body_top = cursor_y - 30
+
                     for block_index, block in enumerate(blocks):
                         kind = str(block.get("block_type") or "paragraph").lower()
                         block_id = str(block.get("id") or f"{sec_id}_block_{block_index}")
@@ -708,6 +714,34 @@ class ExcalidrawCompiler:
                             })
 
                         cursor_y += bh + 12
+
+                    body_height = max(40, cursor_y - body_top + 8)
+                    elements.insert(body_index, {
+                        "id": f"note_section_{sec_key}_body",
+                        "type": "rectangle",
+                        "x": notes_x + 12,
+                        "y": body_top - 4,
+                        "width": notes_w - 24,
+                        "height": body_height,
+                        "angle": 0,
+                        "strokeColor": "#e2e6e1",
+                        "backgroundColor": "#fbfdfb",
+                        "fillStyle": "solid",
+                        "strokeWidth": 1,
+                        "roughness": 0,
+                        "opacity": 100,
+                        "roundness": {"type": 3},
+                        "boundElements": [],
+                        "isDeleted": False,
+                        "customData": {
+                            "visual": {
+                                "type": "note_section_body",
+                                "section_id": sec_id,
+                                "evidence_ids": section_evidence,
+                                "support_type": section_support,
+                            }
+                        },
+                    })
 
                 if page_index == len(pages) - 1:
                     footer = str(document.get("updated_label") or "Maintained automatically from project memory")
@@ -861,6 +895,11 @@ class ExcalidrawCompiler:
                     value = content_dict.get("text") or content_dict.get("value")
                     if value:
                         text_parts.append(str(value))
+                # A top-level value is equally meaningful; dropping it would
+                # silently lose the visualization's headline datum.
+                top_value = v.get("value")
+                if top_value and str(top_value) not in text_parts:
+                    text_parts.append(str(top_value))
                 primitives = [{
                     "id": f"{vid}_summary",
                     "primitive_type": "rectangle",

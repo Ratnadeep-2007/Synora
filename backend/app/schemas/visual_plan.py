@@ -228,6 +228,7 @@ class VisualVisualization(BaseModel):
     kind: str = Field(default="custom", description="Free-form visual kind; do not constrain the agent to a fixed vocabulary.")
     title: Optional[str] = None
     purpose: Optional[str] = None
+    value: Optional[str] = Field(default=None, description="Headline datum; rendered when no richer content is supplied.")
     elements: List[VisualPrimitive] = []
     content: Dict[str, Any] = {}
     evidence_ids: List[str] = []
