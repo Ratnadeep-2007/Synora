@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useMemo } from "react";
@@ -7,14 +8,13 @@ import {
   ArrowRight,
   BrainCircuit,
   CheckCircle2,
-  Clock,
+  Clock3,
   Compass,
   FileText,
-  Layers,
-  MessageCircle,
+  Layers3,
+  MessageSquareText,
   PenTool,
   RefreshCw,
-  ShieldAlert,
   Sparkles,
   Video,
   Zap,
@@ -26,8 +26,6 @@ interface ProjectPulseViewProps {
   state: ProjectState | null;
   conflicts: Conflict[];
   evidence: EvidenceItem[];
-  // Accepted from the orchestrator; Pulse derives its own event stream from
-  // state, so these are optional context, not required inputs.
   candidates?: CandidateKnowledgeItem[];
   history?: Array<{ version_number: number; reason?: string; created_at?: string }>;
   connections?: unknown[];
@@ -41,6 +39,32 @@ interface ProjectPulseViewProps {
   onReviewConflict?: (conflict: Conflict) => void;
 }
 
+type PulseEvent = {
+  id: string;
+  kind: "conflict" | "decision" | "requirement" | "question" | "architecture" | "source";
+  label: string;
+  title: string;
+  detail: string;
+  meta: string;
+  evidenceIds: string[];
+  action?: () => void;
+  actionLabel?: string;
+};
+
+const ICONS: Record<PulseEvent["kind"], React.ComponentType<{ className?: string }>> = {
+  conflict: AlertTriangle,
+  decision: FileText,
+  requirement: CheckCircle2,
+  question: Compass,
+  architecture: PenTool,
+  source: MessageSquareText,
+};
+
+function itemText(item: any): string {
+  if (typeof item === "string") return item;
+  return item?.title || item?.content || item?.text || item?.question || "Project signal";
+}
+
 export function ProjectPulseView({
   project,
   state,
@@ -52,456 +76,433 @@ export function ProjectPulseView({
   onOpenEvidence,
   onSyncAtlas,
   onOpenAgentSheet,
+  onOpenStoryModal,
   onReviewConflict,
 }: ProjectPulseViewProps) {
-  const version = projectVersion ?? state?.current_version ?? 1;
-  const projectName = activeProjectName || project?.name || "Project Pulse";
-  const syncLabel = state?.updated_at
-    ? `Memory v${version} · updated ${new Date(state.updated_at).toLocaleString([], {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })}`
-    : `Memory v${version}`;
+  const version = projectVersion || state?.current_version || 1;
+  const projectName = activeProjectName || project?.name || "Your project";
   const requirements = state?.requirements || [];
   const decisions = state?.decisions || [];
-  const questions = state?.open_questions || [];
   const architecture = state?.architecture || [];
-  const openConflicts = conflicts.filter((c) => c.status === "open" || c.status === "under_review");
+  const questions = state?.open_questions || [];
+  const openConflicts = conflicts.filter(
+    (item) => item.status === "open" || item.status === "under_review"
+  );
+  const updatedLabel = state?.updated_at
+    ? new Date(state.updated_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "waiting for memory";
 
-  // Synthesize meaningful intelligence events (not raw DB rows)
-  const intelligenceEvents = useMemo(() => {
-    const list: Array<{
-      id: string;
-      category: "Architecture" | "Decision" | "Requirement" | "Conflict" | "Question" | "Source";
-      icon: React.ComponentType<{ className?: string }>;
-      title: string;
-      whatChanged: string;
-      whyItMatters: string;
-      provenance: string;
-      evidenceIds: string[];
-      affectedAreas: string[];
-      actionLabel?: string;
-      action?: () => void;
-      severity?: "high" | "medium" | "low";
-    }> = [];
+  const events = useMemo<PulseEvent[]>(() => {
+    const list: PulseEvent[] = [];
 
-    // 1. Conflicts (highest cognitive priority)
-    openConflicts.slice(0, 2).forEach((conf) => {
+    openConflicts.slice(0, 2).forEach((item) => {
       list.push({
-        id: `conf-${conf.id}`,
-        category: "Conflict",
-        icon: ShieldAlert,
-        title: conf.title,
-        whatChanged: `Semantic inconsistency detected: "${conf.title}" between proposed change and existing state.`,
-        whyItMatters:
-          conf.description ||
-          "Directly impacts project architecture integrity. Resolving this prevents downstream engineering misalignment.",
-        provenance: `Flagged by Synora Conflict Engine • Source: ${conf.source || "Conversation Stream"}`,
-        evidenceIds: conf.evidence_ids || [],
-        affectedAreas: ["Architecture", conf.type || "Scope"],
-        severity: (conf.severity as any) || "high",
-        actionLabel: "Resolve Conflict",
-        action: () => (onReviewConflict ? onReviewConflict(conf) : onNavigateToTab("state")),
+        id: "conflict-" + item.id,
+        kind: "conflict",
+        label: "Attention",
+        title: item.title,
+        detail: item.description || "A newer signal conflicts with the current project state.",
+        meta: "Needs review",
+        evidenceIds: item.evidence_ids || [],
+        action: () =>
+          onReviewConflict ? onReviewConflict(item) : onNavigateToTab("state"),
+        actionLabel: "Review",
       });
     });
 
-    // 2. Latest Decisions
-    decisions.slice(0, 3).forEach((dec, idx) => {
+    decisions.slice(0, 2).forEach((item, index) => {
       list.push({
-        id: `dec-${dec.id || idx}`,
-        category: "Decision",
-        icon: FileText,
-        title: dec.text,
-        whatChanged: `Authoritative decision ratified: "${dec.text}".`,
-        whyItMatters:
-          dec.detail ||
-          "Freezes direction for related requirements and constraints. All future proposals will be validated against this decision.",
-        provenance: `${dec.evidence_ids?.length || 1} supporting citations • Approved by ${
-          dec.approved_by || "Project Team"
-        }${dec.date ? ` on ${dec.date}` : ""}`,
-        evidenceIds: dec.evidence_ids || [],
-        affectedAreas: ["Decisions", "Governance"],
-        actionLabel: 'View "Why?"',
-        action: () => onOpenEvidence(dec.text, "Decision", dec.evidence_ids || []),
+        id: "decision-" + (item.id || index),
+        kind: "decision",
+        label: "Decision",
+        title: item.text,
+        detail: item.detail || "An authoritative direction was added to the project model.",
+        meta: (item.evidence_ids?.length || 0) + " evidence links",
+        evidenceIds: item.evidence_ids || [],
+        action: () => onOpenEvidence(item.text, "Decision", item.evidence_ids || []),
+        actionLabel: "Why?",
       });
     });
 
-    // 3. Latest Architecture evolutions
-    architecture.slice(0, 2).forEach((comp, idx) => {
+    requirements.slice(0, 2).forEach((item, index) => {
       list.push({
-        id: `arch-${comp.component}-${idx}`,
-        category: "Architecture",
-        icon: PenTool,
-        title: `${comp.component} (${comp.role})`,
-        whatChanged: `Topology component "${comp.component}" active in project model.`,
-        whyItMatters: comp.details || "Represents core architectural boundary in the Living Atlas.",
-        provenance: "AI-maintained vector diagram • Synced to Project State",
+        id: "requirement-" + (item.id || index),
+        kind: "requirement",
+        label: "Requirement",
+        title: item.title,
+        detail: item.content || "A verified requirement entered the project model.",
+        meta: (item.evidence_ids?.length || 0) + " evidence links",
+        evidenceIds: item.evidence_ids || [],
+        action: () => onOpenEvidence(item.title, "Requirement", item.evidence_ids || []),
+        actionLabel: "Inspect",
+      });
+    });
+
+    architecture.slice(0, 2).forEach((item, index) => {
+      list.push({
+        id: "architecture-" + item.component + "-" + index,
+        kind: "architecture",
+        label: "Atlas",
+        title: item.component,
+        detail: item.details || item.role || "Architecture boundary maintained in the Living Atlas.",
+        meta: "Synced to state",
         evidenceIds: [],
-        affectedAreas: ["Topology", "Living Atlas"],
-        actionLabel: "View in Atlas",
         action: () => onNavigateToTab("excalidraw"),
+        actionLabel: "Open Atlas",
       });
     });
 
-    // 4. Requirements
-    requirements.slice(0, 2).forEach((req, idx) => {
+    questions.slice(0, 2).forEach((item: any, index) => {
+      const title = itemText(item);
+      const evidenceIds = Array.isArray(item?.evidence_ids) ? item.evidence_ids : [];
       list.push({
-        id: `req-${req.id || idx}`,
-        category: "Requirement",
-        icon: CheckCircle2,
-        title: req.title,
-        whatChanged: `New verified requirement: "${req.title}".`,
-        whyItMatters: req.content || "Defines implementation constraint verified against source evidence.",
-        provenance: `${req.evidence_ids?.length || 1} transcript citations verified`,
-        evidenceIds: req.evidence_ids || [],
-        affectedAreas: ["Specifications"],
-        actionLabel: "Inspect Evidence",
-        action: () => onOpenEvidence(req.title, "Requirement", req.evidence_ids || []),
-      });
-    });
-
-    // 5. Open Questions. Memory stores these as objects
-    // {id, title, content, evidence_ids, ...}; older shapes were plain
-    // strings. Never render the raw item: an object child crashes React.
-    questions.slice(0, 1).forEach((q: any, idx) => {
-      const qTitle = typeof q === "string" ? q : q?.title || q?.content || "Open question";
-      const qEvidence: string[] = Array.isArray(q?.evidence_ids) ? q.evidence_ids : [];
-      list.push({
-        id: `q-${q?.id || idx}`,
-        category: "Question",
-        icon: Compass,
-        title: qTitle,
-        whatChanged: `Open ambiguity identified: "${qTitle}".`,
-        whyItMatters:
-          "Unresolved question discovered during conversation synthesis requiring stakeholder clarity.",
-        provenance:
-          qEvidence.length > 0
-            ? `${qEvidence.length} supporting citations • Synthesized by Synora Intelligence Layer`
-            : "Synthesized by Synora Intelligence Layer",
-        evidenceIds: qEvidence,
-        affectedAreas: ["Open Questions"],
-        actionLabel: "View in State",
+        id: "question-" + (item?.id || index),
+        kind: "question",
+        label: "Open question",
+        title,
+        detail: item?.content || "Synora has surfaced an ambiguity that may affect the next decision.",
+        meta: item?.urgency || "Needs clarity",
+        evidenceIds,
         action: () => onNavigateToTab("state"),
+        actionLabel: "Open state",
       });
     });
 
-    return list;
-  }, [openConflicts, decisions, architecture, requirements, questions, onReviewConflict, onNavigateToTab, onOpenEvidence]);
+    if (!list.length && evidence.length) {
+      evidence.slice(0, 3).forEach((item) => {
+        list.push({
+          id: "source-" + item.id,
+          kind: "source",
+          label: "Evidence",
+          title: item.content.slice(0, 96),
+          detail: "New source material is available for Synora to contextualize.",
+          meta: item.source || "Connected source",
+          evidenceIds: [item.id],
+          action: () => onOpenEvidence("Evidence", item.source || "Source", [item.id]),
+          actionLabel: "Open",
+        });
+      });
+    }
+
+    return list.slice(0, 7);
+  }, [
+    openConflicts,
+    decisions,
+    requirements,
+    architecture,
+    questions,
+    evidence,
+    onNavigateToTab,
+    onOpenEvidence,
+    onReviewConflict,
+  ]);
+
+  const headline = events[0];
 
   return (
-    <div className="space-y-8 view-enter">
-      {/* Hero Pulse Bar */}
-      <section className="reveal relative overflow-hidden rounded-2xl border border-border bg-surface p-6 sm:p-8 shadow-sm" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-3 max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 font-mono text-[11px] font-semibold text-primary border border-primary/20">
-                <span className="h-2 w-2 rounded-full bg-primary animate-pulse-live" />
-                LIVE INTELLIGENCE
+    <div className="view-enter space-y-8">
+      <section className="pulse-hero relative overflow-hidden rounded-[28px] border border-border bg-white shadow-sm">
+        <div className="pulse-grid absolute inset-0" aria-hidden />
+        <div className="relative grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.15fr_.85fr] lg:p-10">
+          <div className="max-w-3xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary-soft px-3 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.18em] text-primary">
+                <span className="relative h-1.5 w-1.5 rounded-full bg-primary">
+                  <span className="absolute inset-0 rounded-full bg-primary pulse-ring" />
+                </span>
+                Synora is watching
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-muted px-2.5 py-1 font-mono text-[11px] text-text-muted border border-border">
+              <span className="rounded-full border border-border bg-canvas px-3 py-1.5 font-mono text-[9px] font-semibold text-text-muted">
                 State v{version}
               </span>
-              <span className="text-[11px] text-text-dim flex items-center gap-1">
-                <Clock className="h-3 w-3" /> {syncLabel}
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-text-dim">
+                <Clock3 className="h-3 w-3" />
+                updated {updatedLabel}
               </span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-text-main">
-              {projectName}
-            </h1>
+            <div className="mt-7">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-text-dim">
+                Project pulse
+              </div>
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] text-text-main sm:text-4xl">
+                {projectName}
+              </h1>
+              <p className="mt-4 max-w-2xl text-sm leading-7 text-text-muted sm:text-[15px]">
+                {state?.vision ||
+                  "Synora turns conversations and source material into a continuously maintained project memory."}
+              </p>
+            </div>
 
-            <p className="text-sm leading-relaxed text-text-muted">
-              {state?.vision
-                ? state.vision
-                : "Synora continuously observes WhatsApp conversations & Google Meet transcripts, turning speech and context into an authoritative, living project intelligence model."}
-            </p>
+            <div className="mt-7 flex flex-wrap gap-2">
+              {onOpenAgentSheet && (
+                <button
+                  type="button"
+                  onClick={onOpenAgentSheet}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-all hover:-translate-y-px hover:bg-primary-hover"
+                >
+                  <BrainCircuit className="h-3.5 w-3.5" />
+                  Inspect Synora
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => onNavigateToTab("excalidraw")}
+                className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-4 py-2.5 text-xs font-semibold text-text-main shadow-xs transition-all hover:-translate-y-px hover:border-border-active hover:shadow-sm"
+              >
+                <PenTool className="h-3.5 w-3.5 text-primary" />
+                Open Atlas
+                <ArrowRight className="h-3.5 w-3.5 text-text-dim" />
+              </button>
+
+              {onSyncAtlas && (
+                <button
+                  type="button"
+                  onClick={onSyncAtlas}
+                  className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold text-text-muted transition-all hover:bg-surface-soft hover:text-text-main"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Sync now
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            {onSyncAtlas && (
-              <button
-                onClick={onSyncAtlas}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-semibold text-text-main hover:bg-surface-soft hover:border-primary/40 transition-colors shadow-xs"
-              >
-                <RefreshCw className="h-3.5 w-3.5 text-primary" />
-                <span>Sync Living Memory</span>
-              </button>
-            )}
+          <div className="relative flex min-h-[240px] items-end justify-end">
+            <div className="pulse-orbit absolute right-8 top-3 h-56 w-56 rounded-full border border-primary/10" aria-hidden />
+            <div className="pulse-orbit pulse-orbit-delay absolute right-0 top-12 h-44 w-44 rounded-full border border-primary/10" aria-hidden />
 
-            <button
-              onClick={() => onNavigateToTab("excalidraw")}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:bg-primary-hover shadow-sm transition-colors"
-            >
-              <span>Explore Living Atlas</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+            <div className="relative w-full max-w-sm rounded-2xl border border-border bg-white/90 p-4 shadow-md backdrop-blur">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+                <div>
+                  <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-text-dim">
+                    What matters now
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-text-main">
+                    {headline ? headline.label : "Listening"}
+                  </div>
+                </div>
+                <Sparkles className="h-4 w-4 text-primary" />
+              </div>
+
+              {headline ? (
+                <div className="pt-4">
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary">
+                      {React.createElement(ICONS[headline.kind], { className: "h-4 w-4" })}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold leading-5 text-text-main">{headline.title}</div>
+                      <p className="mt-2 text-[11px] leading-5 text-text-muted">{headline.detail}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between text-[9px] text-text-dim">
+                    <span>{headline.meta}</span>
+                    {headline.action && (
+                      <button type="button" onClick={headline.action} className="font-semibold text-primary hover:underline">
+                        {headline.actionLabel}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="pt-7 text-center">
+                  <div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-primary-soft text-primary">
+                    <Activity className="h-5 w-5" />
+                  </div>
+                  <div className="mt-3 text-sm font-semibold">Synora is listening</div>
+                  <p className="mx-auto mt-1 max-w-[240px] text-[11px] leading-5 text-text-muted">
+                    New evidence will appear here as the project changes.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Intelligence Metric Pipeline Strip */}
-        <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 border-t border-border/60">
-          <div
-            onClick={() => onNavigateToTab("state")}
-            className="rounded-xl border border-border/80 bg-surface-soft/60 p-3.5 cursor-pointer hover:border-primary/40 transition-colors"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-muted">Ratified Decisions</span>
-              <FileText className="h-3.5 w-3.5 text-primary" />
+        <div className="relative border-t border-border-subtle bg-surface-soft/50 px-6 py-4 sm:px-8">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-[10px] font-semibold text-text-muted">
+              <span className="grid h-6 w-6 place-items-center rounded-lg bg-white text-primary shadow-xs">
+                <Layers3 className="h-3.5 w-3.5" />
+              </span>
+              Conversations become evidence, state and visual memory.
             </div>
-            <div className="mt-2 text-xl font-semibold text-text-main">
-              {String(decisions.length).padStart(2, "0")}
-            </div>
-            <div className="text-[10px] text-text-dim mt-0.5">Evidence provenance backed</div>
+            {onOpenStoryModal && (
+              <button type="button" onClick={onOpenStoryModal} className="hidden items-center gap-1.5 text-[10px] font-semibold text-primary sm:flex">
+                How Synora works
+                <ArrowRight className="h-3 w-3" />
+              </button>
+            )}
           </div>
 
-          <div
-            onClick={() => onNavigateToTab("state")}
-            className="rounded-xl border border-border/80 bg-surface-soft/60 p-3.5 cursor-pointer hover:border-primary/40 transition-colors"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-muted">Verified Requirements</span>
-              <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-            </div>
-            <div className="mt-2 text-xl font-semibold text-text-main">
-              {String(requirements.length).padStart(2, "0")}
-            </div>
-            <div className="text-[10px] text-text-dim mt-0.5">Active constraints & specs</div>
-          </div>
-
-          <div
-            onClick={() => onNavigateToTab("excalidraw")}
-            className="rounded-xl border border-border/80 bg-surface-soft/60 p-3.5 cursor-pointer hover:border-primary/40 transition-colors"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-muted">Living Atlas Nodes</span>
-              <PenTool className="h-3.5 w-3.5 text-primary" />
-            </div>
-            <div className="mt-2 text-xl font-semibold text-text-main">
-              {String(architecture.length).padStart(2, "0")}
-            </div>
-            <div className="text-[10px] text-text-dim mt-0.5">AI vector architecture</div>
-          </div>
-
-          <div
-            onClick={() => (openConflicts.length ? onNavigateToTab("state") : undefined)}
-            className={`rounded-xl border p-3.5 transition-colors ${
-              openConflicts.length > 0
-                ? "border-danger/40 bg-danger/5 cursor-pointer"
-                : "border-border/80 bg-surface-soft/60"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-muted">Conflicts & Risks</span>
-              <AlertTriangle
-                className={`h-3.5 w-3.5 ${openConflicts.length > 0 ? "text-danger" : "text-text-dim"}`}
-              />
-            </div>
-            <div
-              className={`mt-2 text-xl font-semibold ${
-                openConflicts.length > 0 ? "text-danger" : "text-text-main"
-              }`}
-            >
-              {String(openConflicts.length).padStart(2, "0")}
-            </div>
-            <div className="text-[10px] text-text-dim mt-0.5">
-              {openConflicts.length > 0 ? "Requires review" : "Zero semantic conflicts"}
-            </div>
+          <div className="pipeline-line mt-4 grid grid-cols-4 gap-2">
+            {[
+              ["Sources", Video],
+              ["Evidence", MessageSquareText],
+              ["State", Layers3],
+              ["Atlas", PenTool],
+            ].map(([label, Icon], index) => (
+              <div key={String(label)} className="relative">
+                <div className="flex items-center gap-2">
+                  {React.createElement(Icon as React.ComponentType<{ className?: string }>, {
+                    className: "h-3.5 w-3.5 text-primary",
+                  })}
+                  <span className="text-[10px] font-medium text-text-main">{label}</span>
+                </div>
+                {index < 3 && <span className="pipeline-arrow hidden sm:block">→</span>}
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Critical Conflict Triage Banner if present */}
-      {openConflicts.length > 0 && (
-        <section className="rounded-2xl border border-danger/30 bg-danger/5 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-danger/10 text-danger border border-danger/25">
-              <AlertTriangle className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-text-main">
-                  {openConflicts.length} Architectural Conflict{openConflicts.length > 1 ? "s" : ""}{" "}
-                  Detected
-                </h3>
-                <span className="rounded bg-danger/20 px-2 py-0.5 text-[10px] font-mono font-semibold text-danger">
-                  ACTION REQUIRED
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-text-muted">
-                {openConflicts[0].title} — &quot;{openConflicts[0].description || "Proposed change conflicts with existing state constraints."}&quot;
-              </p>
-            </div>
-          </div>
-
+      <section className="scroll-story grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          ["Decisions", decisions.length, "Authoritative direction", FileText, "state"],
+          ["Requirements", requirements.length, "Verified specifications", CheckCircle2, "state"],
+          ["Architecture", architecture.length, "Mapped in the Atlas", PenTool, "excalidraw"],
+          ["Attention", openConflicts.length, openConflicts.length ? "Needs review" : "No conflicts open", AlertTriangle, "state"],
+        ].map(([label, value, hint, Icon, target]) => (
           <button
-            onClick={() => (onReviewConflict ? onReviewConflict(openConflicts[0]) : onNavigateToTab("state"))}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-danger px-3.5 py-2 text-xs font-semibold text-white hover:bg-danger/90 transition-colors shadow-xs"
+            key={String(label)}
+            type="button"
+            onClick={() => onNavigateToTab(target)}
+            className="group rounded-2xl border border-border bg-white p-4 text-left shadow-xs transition-all hover:-translate-y-0.5 hover:border-border-active hover:shadow-sm"
           >
-            <span>Review Conflict</span>
-            <ArrowRight className="h-3.5 w-3.5" />
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-text-dim">{label}</span>
+              {React.createElement(Icon as React.ComponentType<{ className?: string }>, {
+                className: "h-4 w-4 " + (label === "Attention" && openConflicts.length ? "text-danger" : "text-primary"),
+              })}
+            </div>
+            <div className="mt-3 text-2xl font-semibold tracking-tight text-text-main">{String(value).padStart(2, "0")}</div>
+            <p className="mt-1 text-[10px] leading-4 text-text-muted">{hint}</p>
           </button>
+        ))}
+      </section>
+
+      {openConflicts.length > 0 && (
+        <section className="overflow-hidden rounded-2xl border border-danger/15 bg-white shadow-xs">
+          <div className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-danger/5 text-danger">
+                <AlertTriangle className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-text-main">
+                  {openConflicts.length} item{openConflicts.length > 1 ? "s" : ""} need attention
+                </div>
+                <p className="mt-1 text-[11px] text-text-muted">{openConflicts[0].title}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => (onReviewConflict ? onReviewConflict(openConflicts[0]) : onNavigateToTab("state"))}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-danger/15 bg-danger/5 px-3 py-2 text-[10px] font-semibold text-danger hover:bg-danger/10"
+            >
+              Review
+              <ArrowRight className="h-3 w-3" />
+            </button>
+          </div>
         </section>
       )}
 
-      {/* Meaningful Intelligence Events (The Pulse) */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold tracking-tight text-text-main">
-              Meaningful Intelligence Events
-            </h2>
+      <section className="scroll-story space-y-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-primary" />
+              <h2 className="text-sm font-semibold tracking-tight text-text-main">Intelligence stream</h2>
+            </div>
+            <p className="mt-1 text-[11px] text-text-muted">Only the project changes worth your attention.</p>
           </div>
-          <span className="text-[11px] text-text-dim">
-            Curated changes synthesized from conversation streams
+          <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-text-dim">
+            {events.length ? events.length + " signals" : "waiting for signals"}
           </span>
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
-          {intelligenceEvents.length === 0 ? (
-            <div className="p-12 text-center rounded-2xl border border-dashed border-border bg-surface-soft/40 text-xs text-text-muted">
-              Synora is listening. When meetings or WhatsApp discussions occur, synthesized intelligence
-              events will appear here.
-            </div>
-          ) : (
-            intelligenceEvents.map((event) => {
-              const EventIcon = event.icon;
+        {events.length ? (
+          <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-xs">
+            {events.map((event, index) => {
+              const Icon = ICONS[event.kind];
               return (
                 <div
                   key={event.id}
-                  className={`rounded-2xl border p-5 transition-all bg-surface hover:border-border-active shadow-xs ${
-                    event.category === "Conflict"
-                      ? "border-danger/30 bg-danger/[0.02]"
-                      : "border-border"
-                  }`}
+                  className={
+                    "group grid gap-4 px-5 py-4 transition-colors hover:bg-surface-soft/60 sm:grid-cols-[38px_minmax(0,1fr)_auto] " +
+                    (index ? "border-t border-border-subtle" : "")
+                  }
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                    <div className="flex items-start gap-3.5 min-w-0">
-                      <div
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-                          event.category === "Conflict"
-                            ? "bg-danger/10 text-danger border border-danger/20"
-                            : event.category === "Decision"
-                            ? "bg-primary-soft text-primary border border-primary/20"
-                            : "bg-surface-muted text-text-muted border border-border"
-                        }`}
-                      >
-                        <EventIcon className="h-4 w-4" />
-                      </div>
-
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[10px] font-mono uppercase tracking-wider font-semibold text-primary">
-                            {event.category}
-                          </span>
-                          <span className="text-xs font-semibold text-text-main truncate">
-                            {event.title}
-                          </span>
-                        </div>
-
-                        <p className="text-xs leading-relaxed text-text-main/90 font-sans">
-                          {event.whatChanged}
-                        </p>
-
-                        <p className="text-[11px] leading-relaxed text-text-muted">
-                          <strong className="text-text-main font-medium">Why it matters:</strong>{" "}
-                          {event.whyItMatters}
-                        </p>
-
-                        <div className="flex flex-wrap items-center gap-3 pt-2 text-[10px] text-text-dim">
-                          <span className="flex items-center gap-1 font-mono">
-                            <Sparkles className="h-3 w-3 text-primary" />
-                            {event.provenance}
-                          </span>
-                          {event.affectedAreas.length > 0 && (
-                            <span className="flex items-center gap-1">
-                              • Affects: {event.affectedAreas.join(", ")}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-canvas text-text-muted">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-primary">{event.label}</span>
+                      <span className="truncate text-xs font-semibold text-text-main">{event.title}</span>
                     </div>
-
-                    {event.actionLabel && event.action && (
-                      <div className="shrink-0 self-end sm:self-center">
-                        <button
-                          onClick={event.action}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-soft px-3 py-1.5 text-xs font-semibold text-text-main hover:bg-surface-muted hover:border-primary/40 transition-colors shadow-xs"
-                        >
-                          <span>{event.actionLabel}</span>
-                          <ArrowRight className="h-3 w-3 text-primary" />
-                        </button>
-                      </div>
+                    <p className="mt-1 text-[11px] leading-5 text-text-muted">{event.detail}</p>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-text-dim">
+                      <span>{event.meta}</span>
+                      {event.evidenceIds.length > 0 && <span>{event.evidenceIds.length} citations</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center sm:self-center">
+                    {event.action && (
+                      <button
+                        type="button"
+                        onClick={event.action}
+                        className="rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-semibold text-text-muted transition-all group-hover:border-border group-hover:bg-white group-hover:text-text-main"
+                      >
+                        {event.actionLabel}
+                      </button>
                     )}
                   </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-border bg-white p-10 text-center">
+            <div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-primary-soft text-primary">
+              <Zap className="h-5 w-5" />
+            </div>
+            <h3 className="mt-3 text-sm font-semibold text-text-main">Nothing needs your attention yet</h3>
+            <p className="mx-auto mt-1 max-w-md text-[11px] leading-5 text-text-muted">
+              When a meeting, message or source changes the project, Synora will surface the meaningful part here.
+            </p>
+          </div>
+        )}
       </section>
 
-      {/* Autonomous Pipeline Footprint */}
-      <section className="rounded-2xl border border-border bg-surface p-5 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-4">
-          <div className="flex items-center gap-2.5">
-            <BrainCircuit className="h-4 w-4 text-primary" />
+      <section className="scroll-story rounded-2xl border border-border bg-white p-5 shadow-xs sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary-soft text-primary">
+              <Sparkles className="h-4 w-4" />
+            </div>
             <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-text-main">
-                Autonomous Intelligence Layer
-              </h3>
-              <p className="text-[11px] text-text-muted">
-                Persistent observation engine maintaining project continuity
+              <h2 className="text-xs font-semibold text-text-main">The project stays in motion.</h2>
+              <p className="mt-1 max-w-2xl text-[11px] leading-5 text-text-muted">
+                Synora keeps evidence, authoritative state and the visual Atlas aligned so the team can work from one current project memory.
               </p>
             </div>
           </div>
 
-          {onOpenAgentSheet && (
-            <button
-              onClick={onOpenAgentSheet}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary-soft px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary-soft/80 transition-colors"
-            >
-              <span>Inspect Agent Focus</span>
-              <ArrowRight className="h-3 w-3" />
-            </button>
-          )}
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-xl border border-border bg-surface-soft p-3.5">
-            <div className="flex items-center gap-2 text-xs font-semibold text-text-main">
-              <Video className="h-3.5 w-3.5 text-primary" />
-              <span>Google Meet Ingestion</span>
-            </div>
-            <p className="mt-1 text-[11px] text-text-muted leading-relaxed">
-              Vexa & Sarvam transcription pipelines listen to discussions and generate candidate
-              proposals automatically.
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-border bg-surface-soft p-3.5">
-            <div className="flex items-center gap-2 text-xs font-semibold text-text-main">
-              <MessageCircle className="h-3.5 w-3.5 text-primary" />
-              <span>WhatsApp Baileys Sockets</span>
-            </div>
-            <p className="mt-1 text-[11px] text-text-muted leading-relaxed">
-              Monitors dedicated project group chats, extracting decisions without manual developer
-              ticket logging.
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-border bg-surface-soft p-3.5">
-            <div className="flex items-center gap-2 text-xs font-semibold text-text-main">
-              <PenTool className="h-3.5 w-3.5 text-primary" />
-              <span>Living Project Atlas</span>
-            </div>
-            <p className="mt-1 text-[11px] text-text-muted leading-relaxed">
-              PostgreSQL-backed infinite Excalidraw canvas continuously updated as requirements and
-              components evolve.
-            </p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              ["conversations", Video],
+              ["evidence", MessageSquareText],
+              ["state", Layers3],
+              ["atlas", PenTool],
+            ].map(([label, Icon]) => (
+              <span key={String(label)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-canvas px-2.5 py-1.5 text-[9px] font-medium text-text-muted">
+                {React.createElement(Icon as React.ComponentType<{ className?: string }>, { className: "h-3 w-3" })}
+                {label}
+              </span>
+            ))}
           </div>
         </div>
       </section>
