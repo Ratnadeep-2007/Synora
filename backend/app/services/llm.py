@@ -580,11 +580,11 @@ class MetaLLMClient(LLMClient):
 
     Assumed OpenAI-compatible chat/completions transport, the same shape as
     the Groq client: Bearer auth, model field, json_object response format.
-    The endpoint details are NOT yet confirmed - until META_BASE_URL and
-    META_API_KEY are supplied this client is never constructed (see
+    Meta documents this at dev.meta.ai (Model API, Chat Completions).
+    Until META_API_KEY is supplied this client is never constructed (see
     is_meta_configured) and selection falls through to the next provider.
-    If Meta's actual API differs, only this class changes; every call site
-    keeps working through the LLMClient interface.
+    If Meta's API shape ever changes, only this class changes; every call
+    site keeps working through the LLMClient interface.
     """
 
     def __init__(
