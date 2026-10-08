@@ -738,7 +738,7 @@ class ExcalidrawCompiler:
         # inspect the historical semantic IDs without creating visible sticky
         # notes on the new canvas.
         if plan.notes:
-            compat_index = 0
+            legacy_items: List[Dict[str, Any]] = []
             for raw in plan.notes:
                 if isinstance(raw, dict):
                     legacy_text = str(raw.get("text") or raw.get("content") or "").strip()
@@ -748,13 +748,32 @@ class ExcalidrawCompiler:
                     legacy_kind = str(raw.get("kind") or "note").strip().lower()
                     legacy_ids = [str(e) for e in (legacy_ev or [])][:4]
                     legacy_support = "explicit" if legacy_ids else "inferred"
+                    legacy_order = int(raw.get("order", 0) or 0)
                 else:
                     legacy_text = str(raw or "").strip()
                     legacy_kind = "note"
                     legacy_ids = []
                     legacy_support = "inferred"
-                if not legacy_text:
-                    continue
+                    legacy_order = 0
+                if legacy_text:
+                    legacy_items.append({
+                        "text": legacy_text,
+                        "kind": legacy_kind,
+                        "evidence_ids": legacy_ids,
+                        "support_type": legacy_support,
+                        "order": legacy_order,
+                    })
+
+            legacy_items.sort(
+                key=lambda item: (
+                    {"decision": 0, "requirement": 1, "directive": 2, "action": 3,
+                     "risk": 4, "assumption": 5, "note": 6}.get(item["kind"], 9),
+                    item["order"],
+                    item["text"],
+                )
+            )
+
+            for compat_index, item in enumerate(legacy_items):
                 elements.append({
                     "id": f"sticky_text_{compat_index}",
                     "type": "text",
@@ -762,8 +781,8 @@ class ExcalidrawCompiler:
                     "y": notes_y + 90 + compat_index * 22,
                     "width": notes_w - 48,
                     "height": 20,
-                    "text": legacy_text,
-                    "originalText": legacy_text,
+                    "text": item["text"],
+                    "originalText": item["text"],
                     "fontSize": 1,
                     "fontFamily": 1,
                     "textAlign": "left",
@@ -783,13 +802,13 @@ class ExcalidrawCompiler:
                     "customData": {
                         "visual": {
                             "type": "architectural_note",
-                            "kind": legacy_kind,
-                            "evidence_ids": legacy_ids,
-                            "support_type": legacy_support,
+                            "kind": item["kind"],
+                            "evidence_ids": item["evidence_ids"],
+                            "support_type": item["support_type"],
                         }
                     },
                 })
-                compat_index += 1
+
 
         # ------------------------------------------------------------------
         # Open visual modeling layer
