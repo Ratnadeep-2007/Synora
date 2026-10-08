@@ -840,7 +840,10 @@ class ExcalidrawCompiler:
             primitives = v.get("elements") or []
             vx = BASE_X
             vy = visual_base_y + v_index * 260
-            vw = 720
+            # Stay entirely inside the visual side of the canvas. The notes
+            # boundary is computed above, so custom visuals can be any shape
+            # without crossing into the written notebook.
+            vw = max(320, min(900, notes_x - BASE_X - 60))
             vh = 220
 
             if not primitives:
