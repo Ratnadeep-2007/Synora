@@ -90,7 +90,12 @@ export function MeetingDetailView({
   const [intelligenceFilter, setIntelligenceFilter] = useState<string>("all");
 
   const meeting = meetingData?.meeting || meetingData || {};
-  const entries = meetingData?.transcript_entries || [];
+  // Entries arrive nested under transcripts[].entries; flatten them in
+  // time order. The previous binding read a flat transcript_entries key
+  // the API never returns, so the transcript always rendered empty.
+  const entries = ((meetingData?.transcripts || meeting?.transcripts || []) as any[]).flatMap(
+    (t: any) => t?.entries || []
+  ).sort((a: any, b: any) => String(a?.start_time || "").localeCompare(String(b?.start_time || "")));
 
   const filteredCandidates = candidates.filter((c) => {
     if (intelligenceFilter === "all") return true;
@@ -315,7 +320,7 @@ export function MeetingDetailView({
                   <div className="flex items-center justify-between text-xs text-text-muted">
                     <div className="flex items-center gap-1.5 font-medium text-text-main">
                       <User className="w-3.5 h-3.5 text-primary" />
-                      <span>{entry.participant_name || entry.speaker || "Participant"}</span>
+                      <span>{entry.participant_display_name || entry.participant_name || entry.speaker || "Participant"}</span>
                     </div>
                     <div className="flex items-center gap-1 font-mono text-[11px]">
                       <Clock className="w-3 h-3" />
