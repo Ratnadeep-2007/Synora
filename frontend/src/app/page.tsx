@@ -228,15 +228,24 @@ export default function Home() {
       setMeetingCanvas(null);
       return;
     }
-    Promise.allSettled([
-      api.getMeetingDetail(selectedMeetingId),
-      api.getMeetingCanvas(selectedMeetingId),
-    ]).then(([detailResult, canvasResult]) => {
+    let cancelled = false;
+    const loadMeeting = async () => {
+      const [detailResult, canvasResult] = await Promise.allSettled([
+        api.getMeetingDetail(selectedMeetingId),
+        api.getMeetingCanvas(selectedMeetingId),
+      ]);
+      if (cancelled) return;
       if (detailResult.status === "fulfilled") setMeetingDetail(detailResult.value);
       else console.error("Failed to fetch meeting detail:", detailResult.reason);
       if (canvasResult.status === "fulfilled") setMeetingCanvas(canvasResult.value);
       else console.error("Failed to fetch meeting canvas:", canvasResult.reason);
-    });
+    };
+    loadMeeting();
+    const interval = window.setInterval(loadMeeting, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [selectedMeetingId]);
 
   // Handlers
