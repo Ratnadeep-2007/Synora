@@ -166,6 +166,10 @@ class NoteSection(BaseModel):
         return data
 
 
+# Backward-compatible name used by earlier tests/callers.
+VisualNoteSection = NoteSection
+
+
 class NotesDocument(BaseModel):
     """The complete project notebook. Structure is chosen by the agent, not hard-coded."""
 
