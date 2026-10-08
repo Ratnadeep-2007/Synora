@@ -46,7 +46,13 @@ class ExcalidrawCompiler:
     """
 
     def compile(self, plan: VisualPlan, enforce_grounding: bool = True) -> List[Dict[str, Any]]:
-        if not plan.nodes and not plan.notes_sections and not plan.notes and not plan.visualizations:
+        if (
+            not plan.nodes
+            and not plan.notes_document
+            and not plan.notes_sections
+            and not plan.notes
+            and not plan.visualizations
+        ):
             raise ExcalidrawCompileError("VisualPlan contains no canvas content to compile.")
 
         # Ground the plan before it becomes geometry. A node that cites no
