@@ -24,6 +24,7 @@ from app.core.exceptions import (
     GoogleMeetTransientError,
 )
 from app.models.meeting import Meeting, Participant, Transcript, TranscriptEntry
+from app.models.evidence import Evidence
 from app.models.user import User
 from app.schemas.meeting import (
     MeetingEvidenceRouteRequest,
@@ -195,6 +196,75 @@ async def get_meeting_intelligence(
         return service.get_or_build(meeting_id=meeting_id, db=db, persist=True)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get(
+    "/{meeting_id}/canvas",
+    summary="Get or synchronize the free-form Meeting Canvas",
+    description=(
+        "Returns the independent Excalidraw canvas for one meeting. The canvas is "
+        "derived only from that meeting's persisted transcript/evidence and has no "
+        "fixed note or diagram format."
+    ),
+)
+async def get_meeting_canvas(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(Meeting.id == meeting_id, Meeting.user_id == current_user.id)
+        .first()
+    )
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting '{meeting_id}' not found.",
+        )
+
+    from app.services.excalidraw_service import ExcalidrawService
+
+    canvas_project_id = f"meeting_canvas:{meeting_id}"
+    excal = ExcalidrawService()
+    artifact = excal.get_or_create_artifact(
+        canvas_project_id,
+        db,
+        tenant_id="default_tenant",
+        name=f"Meeting Notes · {meeting.title or meeting_id}",
+    )
+    evidence_ids = [
+        row.id
+        for row in db.query(Evidence)
+        .filter(Evidence.meeting_id == meeting_id)
+        .order_by(Evidence.occurred_at.asc())
+        .all()
+    ]
+    try:
+        app_state = json.loads(artifact.app_state_json or "{}")
+    except (TypeError, ValueError):
+        app_state = {}
+    canvas_meta = app_state.get("meeting_canvas") or {}
+    stored_ids = list(canvas_meta.get("evidence_ids") or [])
+
+    if stored_ids != evidence_ids:
+        try:
+            service = MeetingSessionIntelligenceService()
+            return service.sync_meeting_canvas(
+                meeting_id=meeting_id,
+                db=db,
+                tenant_id="default_tenant",
+                actor_id=current_user.id,
+            )
+        except Exception as exc:
+            logger.warning("meeting_canvas_sync_on_read_failed: meeting=%s error=%s", meeting_id, exc)
+
+    return {
+        "meeting_id": meeting_id,
+        "synced": False,
+        "reason": "cached" if stored_ids == evidence_ids else "sync_failed_using_last_canvas",
+        "artifact": excal.format_artifact_read(artifact).model_dump(),
+    }
 
 
 @router.get(
