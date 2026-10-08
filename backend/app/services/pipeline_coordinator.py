@@ -239,6 +239,15 @@ class PipelineCoordinator:
                 memory_results=memory_results,
                 persist=True,
             )
+            # Each meeting owns an independent free-form canvas built only from
+            # its persisted discussion/evidence. Project routing happens separately.
+            meeting_canvas = self.meeting_session_service.sync_meeting_canvas(
+                meeting_id=meeting_id,
+                db=db,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+            )
+            meeting_intelligence["meeting_canvas"] = meeting_canvas
         except Exception as exc:
             logger.warning(
                 "meet_session_intelligence_deferred: meeting_id=%s error=%s",
