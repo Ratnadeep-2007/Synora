@@ -116,16 +116,11 @@ class VisualSyncService:
         ]
 
         current_canvas = _canvas_summary(base_scene)
-        constraints = [
-            "Use a text-first project notebook.",
-            "Keep readable notes in a document-like page on the right side of the canvas.",
-            "Use the left side for diagrams or lightweight visuals only when they improve comprehension.",
-            "Create a proper diagram only when at least two concrete concepts have a meaningful relationship such as a flow, architecture, hierarchy, dependency, or sequence.",
-            "When a diagram is not justified, leave nodes and relationships empty and put the information in notes_sections instead.",
-            "Use lightweight visualizations only when a status, metric, timeline, or compact callout adds information that prose does not communicate as well.",
-            "Never create sticky-note boards for ordinary project notes.",
-            "Preserve all user-authored Excalidraw elements that are not marked as agent-managed.",
-        ]
+        # The agent chooses the project's note structure and visual form.
+        # There is no fixed notebook layout, diagram taxonomy, or note format.
+        # Project scoping is the only product-level boundary: this canvas belongs
+        # to one project, while the compiler owns only geometry and persistence.
+        constraints = None
 
         try:
             plan, ai_status = VisualPlanService().build_plan(
