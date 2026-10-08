@@ -487,7 +487,7 @@ class ExcalidrawService:
             current_nodes=nodes_before,
             evidence_snippets=evidence_snippets,
             focus_prompt=focus_prompt,
-            constraints=["light theme", "minimum text", "short labels", "preserve good layout"],
+            constraints=None,
         )
 
         compiler = ExcalidrawCompiler()
