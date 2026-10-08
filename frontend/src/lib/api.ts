@@ -59,6 +59,16 @@ export function getFrontendUserId(): string {
   return getSessionUserId();
 }
 
+// Restore an identity from another browser (Settings UI). The meetings,
+// projects and memory visible in the app are scoped to this id, so moving
+// it is what makes a second browser see the same workspace.
+export function setFrontendUserId(id: string): boolean {
+  const clean = (id || "").trim();
+  if (typeof window === "undefined" || !clean) return false;
+  window.localStorage.setItem(USER_ID_KEY, clean);
+  return true;
+}
+
 // Public base URL of the backend (runtime-injected when deployed).
 // Used for full-page navigations such as the OAuth flow, where the api()
 // helper's relative-path fetch cannot go.

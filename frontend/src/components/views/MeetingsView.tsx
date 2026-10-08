@@ -244,6 +244,9 @@ export function MeetingsView({
             <p className="text-[11px] text-text-muted/60">
               Deploy Vexa to a live Google Meet or connect your Google Workspace account to begin automatic transcription.
             </p>
+            <p className="text-[11px] text-text-muted/60">
+              On a different browser than usual? Restore your session ID under Settings to see your existing meetings.
+            </p>
           </div>
         ) : (
           <div className="space-y-4 relative before:absolute before:inset-0 before:left-4 before:w-0.5 before:bg-border/60 before:-z-0">
