@@ -95,7 +95,7 @@ export function MeetingDetailView({
   });
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
+    <div className="space-y-6 view-enter">
       {/* Top back navigation */}
       <div>
         <button

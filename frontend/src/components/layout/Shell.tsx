@@ -2,14 +2,13 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  LayoutDashboard,
+  Activity,
   Layers,
   PenTool,
   Video,
   Plug,
   Settings as SettingsIcon,
   Bell,
-  HelpCircle,
   ChevronDown,
   Plus,
   Check,
@@ -19,6 +18,9 @@ import {
   Trash2,
   AlertTriangle,
   User as UserIcon,
+  Search,
+  Command,
+  Zap,
 } from "lucide-react";
 import { Project } from "@/lib/types";
 
@@ -58,20 +60,24 @@ interface ShellProps {
   onSelectProject?: (projectId: string) => void;
   onCreateProject?: (name: string, description?: string, sources?: string[]) => Promise<void>;
   onDeleteProject?: (projectId: string) => Promise<void>;
+  onOpenAgentSheet?: () => void;
+  onOpenCommandPalette?: () => void;
+  onOpenStoryModal?: () => void;
   children: React.ReactNode;
 }
 
-const NAV_ITEMS: Array<{
+const PRIMARY_NAV_ITEMS: Array<{
   id: NavTab;
   label: string;
+  shortLabel: string;
+  shortcut: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "state", label: "Project State", icon: Layers },
-  { id: "excalidraw", label: "Project Atlas", icon: PenTool },
-  { id: "meetings", label: "Meetings", icon: Video },
-  { id: "sources", label: "Sources", icon: Plug },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+  { id: "overview", label: "Project Pulse", shortLabel: "Pulse", shortcut: "1", icon: Activity },
+  { id: "state", label: "Project State", shortLabel: "State", shortcut: "2", icon: Layers },
+  { id: "excalidraw", label: "Project Atlas", shortLabel: "Atlas", shortcut: "3", icon: PenTool },
+  { id: "meetings", label: "Meetings", shortLabel: "Meetings", shortcut: "4", icon: Video },
+  { id: "sources", label: "Sources", shortLabel: "Sources", shortcut: "5", icon: Plug },
 ];
 
 export function Shell({
@@ -90,6 +96,9 @@ export function Shell({
   onSelectProject,
   onCreateProject,
   onDeleteProject,
+  onOpenAgentSheet,
+  onOpenCommandPalette,
+  onOpenStoryModal,
   children,
 }: ShellProps) {
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
@@ -120,7 +129,7 @@ export function Shell({
     );
   }, [projects, projectSearch]);
 
-  const recentProjects = useMemo(() => projects.slice(0, 3), [projects]);
+  const recentProjects = useMemo(() => projects.slice(0, 4), [projects]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -188,142 +197,206 @@ export function Shell({
   };
 
   return (
-    <div className="flex min-h-screen bg-canvas text-text-main font-sans">
-      {/* Sidebar Rail (240px) */}
-      <aside className="w-60 bg-surface border-r border-border flex flex-col shrink-0 fixed top-0 bottom-0 left-0 z-30">
-        {/* Brand */}
-        <div className="h-16 px-6 flex items-center gap-3 border-b border-border">
-          <div className="w-7 h-7 rounded-md bg-primary text-white flex items-center justify-center font-bold text-sm tracking-wider">
-            S
-          </div>
-          <div>
-            <span className="font-semibold text-base tracking-tight text-text-main">
-              Synora
-            </span>
-            <span className="ml-1 text-[10px] text-text-muted font-mono uppercase tracking-widest block -mt-0.5">
-              Intel OS
-            </span>
+    <div className="flex min-h-screen bg-canvas text-text-main font-sans selection:bg-primary/20 selection:text-text-main">
+      {/* Intelligent Navigation Rail (Minimal 64px on mobile/desktop, clean and calm) */}
+      <aside className="w-16 md:w-56 bg-surface border-r border-border flex flex-col shrink-0 fixed top-0 bottom-0 left-0 z-30 transition-all duration-300">
+        {/* Brand / Intelligence Logo */}
+        <div className="h-16 px-4 md:px-5 flex items-center justify-between border-b border-border/80">
+          <div className="flex items-center gap-3">
+            <div className="relative w-8 h-8 rounded-lg bg-surface-soft border border-primary/30 flex items-center justify-center font-bold text-sm tracking-wider text-primary shadow-[0_0_12px_rgba(16,185,129,0.15)]">
+              <span>S</span>
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-primary animate-pulse" />
+            </div>
+            <div className="hidden md:block">
+              <span className="font-semibold text-sm tracking-tight text-text-main flex items-center gap-1.5">
+                Synora
+                <span className="text-[9px] font-mono uppercase tracking-widest px-1.5 py-0.2 rounded bg-primary/10 text-primary border border-primary/20">
+                  OS
+                </span>
+              </span>
+              <span className="text-[10px] text-text-muted font-mono tracking-tight block">
+                Project Intelligence
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Primary navigation */}
-        <nav className="p-3 flex-1 overflow-y-auto" aria-label="Primary">
-          <div className="space-y-1">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const isActive = currentTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onTabChange(item.id)}
-                  aria-current={isActive ? "page" : undefined}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-md text-sm font-medium transition-all relative ${
-                    isActive
-                      ? "bg-primary-soft text-primary font-semibold"
-                      : "text-text-muted hover:text-text-main hover:bg-canvas"
-                  }`}
-                >
-                  {isActive && (
-                    <div className="absolute left-0 top-1.5 bottom-1.5 w-[3px] bg-primary rounded-r" />
-                  )}
-                  <div className="flex items-center gap-3">
-                    <Icon className={`w-4 h-4 ${isActive ? "text-primary" : "text-text-muted"}`} />
-                    <span>{item.label}</span>
-                  </div>
+        {/* Primary Navigation Rail */}
+        <nav className="p-2 md:p-3 flex-1 overflow-y-auto space-y-1" aria-label="Primary">
+          <div className="hidden md:block px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-text-muted/70">
+            Intelligence Views
+          </div>
+
+          {PRIMARY_NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onTabChange(item.id)}
+                aria-current={isActive ? "page" : undefined}
+                title={`${item.label} (${item.shortcut})`}
+                className={`w-full flex items-center justify-between px-2.5 md:px-3 py-2.5 rounded-lg text-xs font-medium transition-all group relative ${
+                  isActive
+                    ? "bg-primary/10 text-text-main font-semibold border border-primary/25 shadow-[0_0_15px_rgba(16,185,129,0.08)]"
+                    : "text-text-muted hover:text-text-main hover:bg-surface-soft border border-transparent"
+                }`}
+              >
+                {isActive && (
+                  <div className="absolute left-0 top-2 bottom-2 w-0.5 bg-primary rounded-r" />
+                )}
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Icon
+                    className={`w-4 h-4 shrink-0 transition-colors ${
+                      isActive ? "text-primary" : "text-text-muted group-hover:text-text-main"
+                    }`}
+                  />
+                  <span className="hidden md:inline truncate">{item.label}</span>
+                </div>
+
+                <div className="hidden md:flex items-center gap-1.5">
                   {item.id === "state" && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-canvas text-text-muted border border-border">
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-canvas text-primary border border-border">
                       v{projectVersion}
                     </span>
                   )}
+                  {item.id === "overview" && openConflictsCount > 0 && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-danger animate-pulse" />
+                  )}
                   {item.id === "excalidraw" && unknownContextCount > 0 && (
-                    <span className="min-w-[18px] rounded-full bg-warning px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
-                      {unknownContextCount > 99 ? "99+" : unknownContextCount}
+                    <span className="text-[9px] font-mono px-1 rounded bg-warning/20 text-warning border border-warning/30">
+                      {unknownContextCount}
                     </span>
                   )}
-                </button>
-              );
-            })}
-          </div>
+                  <kbd className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-mono text-text-muted bg-canvas px-1 rounded border border-border">
+                    {item.shortcut}
+                  </kbd>
+                </div>
+              </button>
+            );
+          })}
         </nav>
 
-        {/* Footer info */}
-        <div className="p-4 border-t border-border bg-surface-soft">
-          {selectedProject && (
-            <div className="mb-3 rounded-xl border border-border bg-surface p-3 shadow-xs">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Active project</span>
-                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success">
-                  <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                  Live
-                </span>
+        {/* Bottom Rail: Storytelling, Settings & Agent status */}
+        <div className="p-2 md:p-3 border-t border-border/80 space-y-1">
+          {/* Intelligence Pipeline Story Walkthrough */}
+          {onOpenStoryModal && (
+            <button
+              onClick={onOpenStoryModal}
+              title="How Synora Understands Projects"
+              className="w-full flex items-center justify-between px-2.5 md:px-3 py-2 rounded-lg text-xs text-text-muted hover:text-primary hover:bg-primary/5 transition-all border border-transparent hover:border-primary/20 group"
+            >
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-4 h-4 text-primary shrink-0 group-hover:rotate-12 transition-transform" />
+                <span className="hidden md:inline text-[11px] font-medium">How Synora Works</span>
               </div>
-              <div className="mt-2 text-xs font-semibold text-text-main truncate">{selectedProject.name}</div>
-              <div className="mt-0.5 text-[10px] text-text-muted font-mono truncate">{selectedProject.id}</div>
-            </div>
+              <span className="hidden md:inline text-[9px] font-mono text-text-muted">Story</span>
+            </button>
           )}
-          <div className="text-[11px] text-text-muted">
-            <span className="font-medium text-text-main">Authoritative Engine</span>
-            <div className="font-mono text-[10px] mt-0.5">PostgreSQL • v{projectVersion}</div>
-          </div>
+
+          {/* Settings */}
+          <button
+            onClick={() => onTabChange("settings")}
+            title="Settings"
+            className={`w-full flex items-center justify-between px-2.5 md:px-3 py-2 rounded-lg text-xs transition-colors ${
+              currentTab === "settings"
+                ? "bg-surface-soft text-text-main font-medium border border-border"
+                : "text-text-muted hover:text-text-main hover:bg-surface-soft border border-transparent"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <SettingsIcon className="w-4 h-4 shrink-0 text-text-muted" />
+              <span className="hidden md:inline text-[11px]">Settings</span>
+            </div>
+          </button>
+
+          {/* Agent Persistent Status Pill in Sidebar */}
+          {onOpenAgentSheet && (
+            <button
+              onClick={onOpenAgentSheet}
+              className="w-full mt-2 p-2 rounded-lg bg-canvas border border-border hover:border-primary/30 transition-all text-left group"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                  <span className="hidden md:inline text-[10px] font-semibold tracking-wider uppercase text-text-muted group-hover:text-primary transition-colors">
+                    Synora Agent
+                  </span>
+                </div>
+                <Zap className="hidden md:block w-3 h-3 text-primary opacity-60 group-hover:opacity-100" />
+              </div>
+              <div className="hidden md:block text-[10px] text-text-muted/80 font-mono mt-0.5 truncate">
+                Continuous Cognition
+              </div>
+            </button>
+          )}
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col ml-60 min-h-screen">
-        {/* Top Bar (64px, restrained glass) */}
-        <header
-          className="h-16 sticky top-0 z-20 px-8 flex items-center justify-between"
-          style={{
-            background: "rgba(255,255,255,0.78)",
-            backdropFilter: "blur(14px)",
-            WebkitBackdropFilter: "blur(14px)",
-            borderBottom: "1px solid #E7EAE5",
-          }}
-        >
-          {/* Left: Synesis mark + Project selector */}
-          <div className="relative flex items-center gap-3">
-            <div className="w-7 h-7 rounded-md bg-primary text-white hidden items-center justify-center font-bold text-xs">
-              S
-            </div>
+      {/* Main Content Viewport */}
+      <div className="flex-1 flex flex-col ml-16 md:ml-56 min-h-screen">
+        {/* Editorial Top Bar (Obsidian Glass) */}
+        <header className="h-16 sticky top-0 z-20 px-4 md:px-8 flex items-center justify-between bg-surface/85 backdrop-blur-md border-b border-border">
+          {/* Left: Project Selector Pill */}
+          <div className="relative flex items-center gap-2 md:gap-3">
             <button
               onClick={() => setIsProjectDropdownOpen(!isProjectDropdownOpen)}
-              className="flex items-center gap-2 py-1.5 px-3 rounded-md hover:bg-canvas transition-colors border border-border bg-surface"
-              title="Switch project or create a new project"
+              className="flex items-center gap-2 py-1.5 px-3 rounded-lg hover:bg-surface-soft transition-all border border-border bg-canvas/80 group"
+              title="Switch or create projects"
               aria-haspopup="listbox"
               aria-expanded={isProjectDropdownOpen}
             >
-              <div className="w-2.5 h-2.5 rounded-full bg-success" aria-hidden />
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
               <div className="text-left">
-                <span className="text-sm font-semibold text-text-main block leading-tight">
-                  {selectedProject ? `Project: ${selectedProject.name}` : "Select a project"}
-                </span>
-                <span className="text-[11px] text-text-muted font-mono block leading-tight">
-                  {selectedProject ? `${workspaceName} • ${selectedProject.id}` : "No project selected"}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs md:text-sm font-semibold text-text-main group-hover:text-primary transition-colors truncate max-w-[140px] md:max-w-[200px]">
+                    {selectedProject ? selectedProject.name : "Select Project"}
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface border border-border text-primary font-bold">
+                    v{projectVersion}
+                  </span>
+                </div>
               </div>
-              <ChevronDown className="w-3.5 h-3.5 text-text-muted ml-1" />
+              <ChevronDown className="w-3.5 h-3.5 text-text-muted group-hover:text-text-main transition-colors ml-0.5" />
             </button>
 
-            {/* Project selector dropdown */}
+            {/* Quick Command Palette Button */}
+            {onOpenCommandPalette && (
+              <button
+                onClick={onOpenCommandPalette}
+                className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border text-text-muted hover:text-text-main hover:border-primary/40 transition-all text-xs"
+                title="Open Command Palette (⌘K)"
+              >
+                <Search className="w-3.5 h-3.5 text-primary" />
+                <span className="text-text-muted text-[11px]">Command Palette</span>
+                <kbd className="text-[9px] font-mono px-1 py-0.5 rounded bg-canvas border border-border text-text-muted">
+                  ⌘K
+                </kbd>
+              </button>
+            )}
+
+            {/* Project dropdown modal */}
             {isProjectDropdownOpen && (
-              <div className="absolute top-12 left-0 w-80 rounded-xl bg-surface border border-border shadow-lg p-2 z-50 space-y-1">
-                <div className="px-1 pb-1">
+              <div className="absolute top-12 left-0 w-84 rounded-xl bg-surface border border-border shadow-2xl p-2.5 z-50 space-y-2 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-1">
                   <input
                     type="text"
                     value={projectSearch}
                     onChange={(e) => setProjectSearch(e.target.value)}
-                    placeholder="Search projects"
+                    placeholder="Search projects..."
                     aria-label="Search projects"
-                    className="w-full px-3 py-1.5 text-xs rounded-md bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/50 text-text-main placeholder:text-text-muted"
+                    autoFocus
+                    className="w-full px-3 py-1.5 text-xs rounded-lg bg-canvas border border-border focus:outline-none focus:border-primary text-text-main placeholder:text-text-muted"
                   />
                 </div>
-                <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted border-b border-border/60 flex items-center justify-between">
-                  <span>Recent projects</span>
-                  <span className="font-mono">{filteredProjects.length || 0} available</span>
+
+                <div className="px-2 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-text-muted border-b border-border/60 flex items-center justify-between">
+                  <span>Available Projects</span>
+                  <span className="font-mono">{filteredProjects.length}</span>
                 </div>
 
-                <div className="max-h-56 overflow-y-auto space-y-0.5" role="listbox">
-                  {(projectSearch ? filteredProjects : recentProjects.length > 0 ? recentProjects : filteredProjects).map((p) => {
+                <div className="max-h-56 overflow-y-auto space-y-1" role="listbox">
+                  {(projectSearch ? filteredProjects : recentProjects).map((p) => {
                     const isSelected = p.id === currentProjectId;
                     return (
                       <button
@@ -334,9 +407,9 @@ export function Shell({
                           if (onSelectProject) onSelectProject(p.id);
                           setIsProjectDropdownOpen(false);
                         }}
-                        className={`w-full text-left px-3 py-2 rounded-md text-xs flex items-center justify-between transition-colors ${
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors ${
                           isSelected
-                            ? "bg-primary-soft text-primary font-semibold"
+                            ? "bg-primary/10 text-text-main font-semibold border border-primary/20"
                             : "hover:bg-canvas text-text-main"
                         }`}
                       >
@@ -350,42 +423,6 @@ export function Shell({
                       </button>
                     );
                   })}
-                  {projectSearch && filteredProjects.length > 3 && (
-                    <div className="px-3 py-1 text-[10px] text-text-muted">
-                      Showing all {filteredProjects.length} matches
-                    </div>
-                  )}
-                  {!projectSearch && filteredProjects.length > 3 && (
-                    <div className="px-1">
-                      {filteredProjects.slice(3).map((p) => {
-                        const isSelected = p.id === currentProjectId;
-                        return (
-                          <button
-                            key={p.id}
-                            role="option"
-                            aria-selected={isSelected}
-                            onClick={() => {
-                              if (onSelectProject) onSelectProject(p.id);
-                              setIsProjectDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-2 rounded-md text-xs flex items-center justify-between transition-colors ${
-                              isSelected
-                                ? "bg-primary-soft text-primary font-semibold"
-                                : "hover:bg-canvas text-text-main"
-                            }`}
-                          >
-                            <div className="truncate">
-                              <div className="font-medium truncate">{p.name}</div>
-                              <span className="text-[10px] font-mono text-text-muted block">
-                                {p.id}
-                              </span>
-                            </div>
-                            {isSelected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
                 </div>
 
                 <div className="pt-2 border-t border-border/60 space-y-1">
@@ -395,22 +432,10 @@ export function Shell({
                       setCreateStep(1);
                       setIsNewProjectModalOpen(true);
                     }}
-                    className="w-full py-2 px-3 rounded-md text-xs font-semibold bg-primary hover:bg-primary-hover text-white flex items-center justify-center gap-1.5 transition-colors"
+                    className="w-full py-2 px-3 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-hover text-white flex items-center justify-center gap-1.5 transition-all shadow-[0_0_12px_rgba(16,185,129,0.2)]"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>Create project</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (onSelectProject && filteredProjects.length > 0) {
-                        const next = filteredProjects.find((p) => p.id !== currentProjectId);
-                        if (next) onSelectProject(next.id);
-                      }
-                      setIsProjectDropdownOpen(false);
-                    }}
-                    className="w-full py-1.5 px-3 rounded-md text-xs font-medium text-text-muted hover:text-text-main hover:bg-canvas transition-colors"
-                  >
-                    Switch project
+                    <span>Create new project</span>
                   </button>
 
                   {selectedProject && onDeleteProject && (
@@ -420,64 +445,84 @@ export function Shell({
                         setDeleteProjectConfirmation("");
                         setIsDeleteProjectModalOpen(true);
                       }}
-                      className="w-full py-1.5 px-3 rounded-md text-xs font-medium text-danger hover:bg-danger/10 border border-transparent hover:border-danger/20 transition-colors flex items-center justify-center gap-1.5"
+                      className="w-full py-1.5 px-3 rounded-lg text-xs font-medium text-danger hover:bg-danger/10 border border-transparent hover:border-danger/20 transition-colors flex items-center justify-center gap-1.5"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      Delete current project
+                      <span>Delete project</span>
                     </button>
                   )}
                 </div>
               </div>
             )}
-
-            <div className="h-4 w-[1px] bg-border mx-1" />
-
-            <div className="text-xs font-mono px-2 py-0.5 rounded bg-surface border border-border text-text-muted">
-              State: <strong className="text-primary font-semibold">v{projectVersion}</strong>
-            </div>
           </div>
 
-          <div className="flex-1" />
+          {/* Right: Persistent Synora Intelligence Pill & Controls */}
+          <div className="flex items-center gap-2 md:gap-3">
+            {/* Synora Persistent Agent HUD Pill */}
+            {onOpenAgentSheet && (
+              <button
+                onClick={onOpenAgentSheet}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/25 bg-primary/10 hover:bg-primary/20 text-text-main transition-all text-xs shadow-[0_0_14px_rgba(16,185,129,0.15)] group"
+                title="Inspect Synora Agent Cognition"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+                </span>
+                <span className="font-semibold text-[11px] text-text-main">
+                  Synora is watching
+                </span>
+                <span className="hidden sm:inline text-[9px] font-mono px-1.5 py-0.2 rounded bg-canvas/80 text-primary border border-primary/30">
+                  Inspect
+                </span>
+              </button>
+            )}
 
-          {/* Right: AI status, Activity, Help, User menu */}
-          <div className="flex items-center gap-2">
-            <div className="hidden lg:inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary-soft px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
-              <Sparkles className="h-3 w-3" />
-              AI Autopilot
-            </div>
+            {/* Unresolved Conflict Badge */}
+            {openConflictsCount > 0 && (
+              <button
+                onClick={() => onTabChange("overview")}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-danger/30 bg-danger/10 text-danger text-[11px] font-semibold animate-pulse"
+                title={`${openConflictsCount} unresolved conflicts detected`}
+              >
+                <AlertTriangle className="w-3 h-3" />
+                <span>{openConflictsCount} Conflict{openConflictsCount > 1 ? "s" : ""}</span>
+              </button>
+            )}
+
+            {/* Operational notifications */}
             <div className="relative">
               <button
                 onClick={() => {
                   setIsActivityOpen(!isActivityOpen);
                   setIsUserMenuOpen(false);
                 }}
-                className="p-2 rounded-md text-text-muted hover:text-text-main hover:bg-canvas transition-colors relative"
-                title="Activity"
-                aria-label="Activity"
+                className="p-2 rounded-lg text-text-muted hover:text-text-main hover:bg-surface-soft transition-colors relative"
+                title="Notifications"
+                aria-label="Notifications"
                 aria-expanded={isActivityOpen}
               >
                 <Bell className="w-4 h-4" />
                 {notifications.length > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-warning text-white text-[10px] font-bold flex items-center justify-center">
-                    {notifications.length}
-                  </span>
+                  <span className="absolute 1 top-1 right-1 w-2 h-2 rounded-full bg-warning" />
                 )}
               </button>
+
               {isActivityOpen && (
-                <div className="absolute right-0 top-11 w-80 rounded-xl bg-surface border border-border shadow-lg p-2 z-50 space-y-1">
+                <div className="absolute right-0 top-11 w-80 rounded-xl bg-surface border border-border shadow-2xl p-2.5 z-50 space-y-1">
                   <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted border-b border-border/60">
-                    Operational notifications
+                    System Telemetry
                   </div>
                   {notifications.length === 0 ? (
-                    <div className="px-3 py-4 text-xs text-text-muted text-center">
-                      No pending operational alerts.
+                    <div className="px-3 py-5 text-xs text-text-muted text-center">
+                      All intelligence pipelines operating normally.
                     </div>
                   ) : (
-                    <div className="max-h-64 overflow-y-auto space-y-0.5">
+                    <div className="max-h-64 overflow-y-auto space-y-1">
                       {notifications.map((n, idx) => (
-                        <div key={idx} className="px-3 py-2 rounded-md hover:bg-canvas text-xs">
+                        <div key={idx} className="px-3 py-2 rounded-lg bg-canvas border border-border text-xs">
                           <div className="font-semibold text-text-main">{n.title}</div>
-                          {n.detail && <div className="text-text-muted mt-0.5">{n.detail}</div>}
+                          {n.detail && <div className="text-text-muted mt-0.5 text-[11px]">{n.detail}</div>}
                         </div>
                       ))}
                     </div>
@@ -486,40 +531,31 @@ export function Shell({
               )}
             </div>
 
-            <button
-              className="p-2 rounded-md text-text-muted hover:text-text-main hover:bg-canvas transition-colors"
-              title="Help"
-              aria-label="Help"
-            >
-              <HelpCircle className="w-4 h-4" />
-            </button>
-
+            {/* User Avatar Menu */}
             <div className="relative">
               <button
                 onClick={() => {
                   setIsUserMenuOpen(!isUserMenuOpen);
                   setIsActivityOpen(false);
                 }}
-                className="flex items-center gap-2 pl-1 pr-2 py-1 border-l border-border rounded-md hover:bg-canvas transition-colors"
+                className="flex items-center gap-2 p-1 rounded-lg hover:bg-surface-soft transition-colors"
                 aria-haspopup="menu"
                 aria-expanded={isUserMenuOpen}
-                title="User menu"
+                title="User Menu"
               >
-                <div className="w-7 h-7 rounded-full bg-primary/10 text-primary border border-primary/20 flex items-center justify-center font-medium text-xs">
-                  {currentUserInitial || "•"}
+                <div className="w-7 h-7 rounded-full bg-primary/20 text-primary border border-primary/30 flex items-center justify-center font-semibold text-xs">
+                  {currentUserInitial || "U"}
                 </div>
-                {currentUserName && (
-                  <span className="text-xs font-medium text-text-main hidden sm:block">{currentUserName}</span>
-                )}
               </button>
+
               {isUserMenuOpen && (
-                <div className="absolute right-0 top-11 w-52 rounded-xl bg-surface border border-border shadow-lg p-2 z-50" role="menu">
+                <div className="absolute right-0 top-11 w-52 rounded-xl bg-surface border border-border shadow-2xl p-2 z-50" role="menu">
                   <div className="px-3 py-2 border-b border-border/60">
                     <div className="text-xs font-semibold text-text-main flex items-center gap-1.5">
-                      <UserIcon className="w-3.5 h-3.5 text-text-muted" />
-                      <span>{currentUserName || "Account"}</span>
+                      <UserIcon className="w-3.5 h-3.5 text-primary" />
+                      <span>{currentUserName || "Lead Architect"}</span>
                     </div>
-                    <div className="text-[11px] text-text-muted font-mono mt-0.5">Workspace member</div>
+                    <div className="text-[10px] text-text-muted font-mono mt-0.5">{workspaceName}</div>
                   </div>
                   <button
                     onClick={() => {
@@ -529,7 +565,7 @@ export function Shell({
                     className="w-full text-left px-3 py-2 rounded-md text-xs text-text-main hover:bg-canvas transition-colors"
                     role="menuitem"
                   >
-                    Workspace settings
+                    Workspace Settings
                   </button>
                   <button
                     onClick={() => {
@@ -539,7 +575,7 @@ export function Shell({
                     className="w-full text-left px-3 py-2 rounded-md text-xs text-text-main hover:bg-canvas transition-colors"
                     role="menuitem"
                   >
-                    Connected sources
+                    Stream Sources
                   </button>
                 </div>
               )}
@@ -547,57 +583,56 @@ export function Shell({
           </div>
         </header>
 
-        {/* Viewport Container (1440px max width) */}
-        <main className="flex-1 p-8 max-w-[1440px] w-full mx-auto">
+        {/* Viewport Container (1440px max width, calm whitespace) */}
+        <main className="flex-1 p-4 md:p-8 max-w-[1440px] w-full mx-auto">
           {children}
         </main>
       </div>
 
-      {/* Modal: Delete Project — explicit destructive confirmation */}
+      {/* Modal: Delete Project */}
       {isDeleteProjectModalOpen && selectedProject && (
-        <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl bg-surface border border-danger/20 shadow-2xl overflow-hidden">
-            <div className="p-6 space-y-5">
+        <div className="fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-surface border border-danger/30 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-6 space-y-4">
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-xl bg-danger/10 text-danger flex items-center justify-center shrink-0">
                   <AlertTriangle className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-text-main">Delete project</h3>
-                  <p className="text-xs text-text-muted mt-1">This permanently removes the project and its DB-backed project data.</p>
+                  <h3 className="text-base font-bold text-text-main">Permanently Delete Project</h3>
+                  <p className="text-xs text-text-muted mt-1">This operation cannot be undone.</p>
                 </div>
                 <button
                   onClick={resetDeleteModal}
                   disabled={isDeletingProject}
-                  className="ml-auto text-text-muted hover:text-text-main p-1 rounded-md disabled:opacity-50"
-                  aria-label="Close delete dialog"
+                  className="ml-auto text-text-muted hover:text-text-main p-1 rounded-md"
+                  aria-label="Close"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="rounded-xl border border-danger/20 bg-danger/5 p-4 space-y-2">
-                <div className="text-[10px] uppercase tracking-wider font-bold text-danger">Destructive action</div>
+              <div className="rounded-xl border border-danger/25 bg-danger/5 p-4 space-y-1.5 text-xs text-text-muted">
                 <div className="text-sm font-semibold text-text-main">{selectedProject.name}</div>
-                <div className="text-[11px] text-text-muted font-mono">{selectedProject.id}</div>
-                <p className="text-xs text-text-muted leading-relaxed">
-                  Project State, evidence, AI execution history, meetings, visual revisions, and Excalidraw data will be removed. The reserved Unknown Context area is preserved.
+                <div className="font-mono text-[11px] text-text-muted">{selectedProject.id}</div>
+                <p className="pt-1 text-[11px] leading-relaxed">
+                  Project State, evidence citations, AI memory shards, and Excalidraw visual artifacts will be permanently removed.
                 </p>
               </div>
 
               <form onSubmit={handleDeleteProjectSubmit} className="space-y-3">
-                <label htmlFor="delete-project-confirmation" className="text-xs font-semibold text-text-main block">
-                  Type <span className="font-mono text-danger">DELETE</span> to continue
+                <label htmlFor="delete-confirmation" className="text-xs font-semibold text-text-main block">
+                  Type <span className="font-mono text-danger font-bold">DELETE</span> to confirm:
                 </label>
                 <input
-                  id="delete-project-confirmation"
+                  id="delete-confirmation"
                   value={deleteProjectConfirmation}
                   onChange={(e) => setDeleteProjectConfirmation(e.target.value)}
                   placeholder="DELETE"
                   autoComplete="off"
                   autoFocus
                   disabled={isDeletingProject}
-                  className="w-full px-3 py-2.5 text-xs rounded-lg bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-danger/40 focus:border-danger text-text-main placeholder:text-text-muted"
+                  className="w-full px-3 py-2 text-xs rounded-lg bg-canvas border border-border focus:border-danger text-text-main"
                 />
 
                 <div className="flex items-center justify-end gap-2 pt-2">
@@ -605,7 +640,7 @@ export function Shell({
                     type="button"
                     onClick={resetDeleteModal}
                     disabled={isDeletingProject}
-                    className="px-3.5 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-lg hover:bg-canvas transition-colors disabled:opacity-50"
+                    className="px-3.5 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-lg hover:bg-canvas transition-colors"
                   >
                     Cancel
                   </button>
@@ -615,7 +650,7 @@ export function Shell({
                     className="px-4 py-2 text-xs font-semibold text-white bg-danger hover:bg-danger/90 rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    {isDeletingProject ? "Deleting…" : "Delete project"}
+                    {isDeletingProject ? "Deleting…" : "Delete Project"}
                   </button>
                 </div>
               </form>
@@ -624,19 +659,19 @@ export function Shell({
         </div>
       )}
 
-      {/* Modal: Create Project — focused 4-step flow */}
+      {/* Modal: Create Project (4-step Flow) */}
       {isNewProjectModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl bg-surface border border-border shadow-2xl p-6 space-y-5">
+        <div className="fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-surface border border-border shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary-soft text-primary flex items-center justify-center font-bold">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center font-bold">
                   <FolderPlus className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-text-main">Create project</h3>
+                  <h3 className="text-base font-bold text-text-main">Initialize New Project</h3>
                   <p className="text-xs text-text-muted">
-                    Step {createStep} of 4 · project setup
+                    Step {createStep} of 4 · Continuous intelligence setup
                   </p>
                 </div>
               </div>
@@ -654,7 +689,9 @@ export function Shell({
               {[1, 2, 3, 4].map((s) => (
                 <div
                   key={s}
-                  className={`h-1 flex-1 rounded-full ${s <= createStep ? "bg-primary" : "bg-border"}`}
+                  className={`h-1 flex-1 rounded-full transition-colors ${
+                    s <= createStep ? "bg-primary" : "bg-border"
+                  }`}
                 />
               ))}
             </div>
@@ -663,44 +700,47 @@ export function Shell({
               {createStep === 1 && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-text-main" htmlFor="new-project-name">
-                    1. Project name <span className="text-danger">*</span>
+                    1. Project Name <span className="text-danger">*</span>
                   </label>
                   <input
                     id="new-project-name"
                     type="text"
                     required
-                    placeholder="e.g. Claims Processing Platform"
+                    placeholder="e.g. Distributed Core Engine"
                     value={newProjectName}
                     onChange={(e) => setNewProjectName(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-md bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-text-main"
+                    autoFocus
+                    className="w-full px-3 py-2 text-xs rounded-lg bg-canvas border border-border focus:border-primary text-text-main"
                   />
                 </div>
               )}
 
               {createStep === 2 && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-text-main" htmlFor="new-project-use">
-                    2. What are you building?
-                  </label>
-                  <textarea
-                    id="new-project-use"
-                    rows={3}
-                    placeholder="Goals, target systems, or architecture scope..."
-                    value={newProjectUse}
-                    onChange={(e) => setNewProjectUse(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-md bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-text-main resize-none"
-                  />
-                  <div className="pt-2">
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-text-main" htmlFor="new-project-use">
+                      2. Scope & Target Vision
+                    </label>
+                    <textarea
+                      id="new-project-use"
+                      rows={3}
+                      placeholder="High-level mission, core systems, or key deliverable..."
+                      value={newProjectUse}
+                      onChange={(e) => setNewProjectUse(e.target.value)}
+                      className="w-full px-3 py-2 text-xs rounded-lg bg-canvas border border-border focus:border-primary text-text-main resize-none"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-text-main" htmlFor="new-project-context">
-                      Initial context <span className="font-normal text-text-muted">(optional)</span>
+                      Initial Context & Constraints <span className="text-text-muted font-normal">(optional)</span>
                     </label>
                     <textarea
                       id="new-project-context"
-                      rows={3}
-                      placeholder="Background, constraints, or key decisions…"
+                      rows={2}
+                      placeholder="Tech constraints, assumptions, or existing dependencies..."
                       value={newProjectContext}
                       onChange={(e) => setNewProjectContext(e.target.value)}
-                      className="w-full mt-1.5 px-3 py-2 text-xs rounded-md bg-canvas border border-border focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary text-text-main resize-none"
+                      className="w-full px-3 py-2 text-xs rounded-lg bg-canvas border border-border focus:border-primary text-text-main resize-none"
                     />
                   </div>
                 </div>
@@ -708,21 +748,21 @@ export function Shell({
 
               {createStep === 3 && (
                 <div className="space-y-2">
-                  <span className="text-xs font-semibold text-text-main block">3. Connect tools</span>
+                  <span className="text-xs font-semibold text-text-main block">3. Connect Sources</span>
                   {[
-                    { id: "google_meet", label: "Google Meet — meeting transcripts" },
-                    { id: "whatsapp", label: "WhatsApp — group chat via Baileys" },
-                    { id: "excalidraw", label: "Excalidraw — living visual workspace" },
+                    { id: "google_meet", label: "Google Meet — audio meeting transcripts" },
+                    { id: "whatsapp", label: "WhatsApp — real-time discussion bridge" },
+                    { id: "excalidraw", label: "Project Atlas — living Excalidraw canvas" },
                   ].map((tool) => (
                     <label
                       key={tool.id}
-                      className="flex items-center gap-2.5 p-2.5 rounded-md border border-border bg-canvas text-xs cursor-pointer hover:border-primary/40 transition-colors"
+                      className="flex items-center gap-2.5 p-2.5 rounded-lg border border-border bg-canvas text-xs cursor-pointer hover:border-primary/40 transition-colors"
                     >
                       <input
                         type="checkbox"
                         checked={newProjectTools.includes(tool.id)}
                         onChange={() => toggleTool(tool.id)}
-                        className="accent-[#173F35]"
+                        className="accent-primary"
                       />
                       <span className="text-text-main font-medium">{tool.label}</span>
                     </label>
@@ -732,14 +772,13 @@ export function Shell({
 
               {createStep === 4 && (
                 <div className="space-y-2 text-xs">
-                  <span className="text-xs font-semibold text-text-main block">4. Review & create</span>
-                  <div className="p-3 rounded-md bg-primary-soft/40 border border-primary/20 text-xs text-text-muted">
-                    Your project space will be created with the selected sources and a living visual workspace.
-                  </div>
-                  <div className="p-3 rounded-md bg-canvas border border-border space-y-1">
-                    <div><strong className="text-text-main">{newProjectName || "Untitled project"}</strong></div>
-                    {newProjectUse && <div className="text-text-muted">{newProjectUse}</div>}
-                    <div className="text-text-muted">Tools: {newProjectTools.join(", ") || "none"}</div>
+                  <span className="text-xs font-semibold text-text-main block">4. Confirmation</span>
+                  <div className="p-3 rounded-lg bg-canvas border border-border space-y-1">
+                    <div className="font-bold text-text-main">{newProjectName || "Untitled Project"}</div>
+                    {newProjectUse && <div className="text-text-muted text-[11px]">{newProjectUse}</div>}
+                    <div className="text-primary font-mono text-[10px] pt-1">
+                      Pipelines: {newProjectTools.join(", ")}
+                    </div>
                   </div>
                 </div>
               )}
@@ -748,7 +787,7 @@ export function Shell({
                 <button
                   type="button"
                   onClick={() => (createStep > 1 ? setCreateStep(createStep - 1) : resetCreateModal())}
-                  className="px-3.5 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-md hover:bg-canvas transition-colors"
+                  className="px-3.5 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-lg hover:bg-canvas transition-colors"
                 >
                   {createStep > 1 ? "Back" : "Cancel"}
                 </button>
@@ -760,7 +799,7 @@ export function Shell({
                       setCreateStep(createStep + 1);
                     }}
                     disabled={createStep === 1 && !newProjectName.trim()}
-                    className="px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-md transition-colors disabled:opacity-50"
+                    className="px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50"
                   >
                     Continue
                   </button>
@@ -768,16 +807,9 @@ export function Shell({
                   <button
                     type="submit"
                     disabled={isCreatingProject || !newProjectName.trim()}
-                    className="px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-md transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    className="px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
                   >
-                    {isCreatingProject ? (
-                      <span>Provisioning...</span>
-                    ) : (
-                      <>
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Create project</span>
-                      </>
-                    )}
+                    {isCreatingProject ? "Provisioning..." : "Initialize Project"}
                   </button>
                 )}
               </div>

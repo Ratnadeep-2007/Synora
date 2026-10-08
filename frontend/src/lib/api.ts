@@ -59,6 +59,20 @@ export function getFrontendUserId(): string {
   return getSessionUserId();
 }
 
+// Public base URL of the backend (runtime-injected when deployed).
+// Used for full-page navigations such as the OAuth flow, where the api()
+// helper's relative-path fetch cannot go.
+export function getBackendBaseUrl(): string {
+  return apiBaseUrl();
+}
+
+export function getFrontendBaseUrl(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  return "http://localhost:3000";
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${apiBaseUrl()}${path}`;
   const headers: Record<string, string> = {

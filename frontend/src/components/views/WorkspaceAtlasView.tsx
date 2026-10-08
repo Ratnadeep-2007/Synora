@@ -1,7 +1,17 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { ArrowRight, BrainCircuit, Layers3, Maximize2, PanelLeft, Sparkles } from "lucide-react";
+import {
+  BrainCircuit,
+  Layers3,
+  Sparkles,
+  PanelLeft,
+  Maximize2,
+  ArrowRight,
+  ShieldCheck,
+  RefreshCw,
+  Zap,
+} from "lucide-react";
 import { ExcalidrawCanvas } from "@/components/canvas/ExcalidrawCanvas";
 import { Project, WorkspaceAtlasData } from "@/lib/types";
 import { ContextInboxPanel } from "@/components/views/ContextInboxPanel";
@@ -15,17 +25,18 @@ interface WorkspaceAtlasViewProps {
 
 export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
   atlas,
-  projects,
+  projects = [],
   activeProjectId,
   onChanged,
 }: WorkspaceAtlasViewProps) {
-  const projectCount = atlas?.projects?.length || 0;
+  const projectCount = atlas?.projects?.length || projects.length || 0;
   const pending = atlas?.unknown_context?.pending || 0;
+  const atlasVersion = atlas?.artifact?.version || 1;
 
   const initialAppState = useMemo(
     () => ({
       ...(atlas?.artifact?.app_state || {}),
-      viewBackgroundColor: "#f7f8f5",
+      viewBackgroundColor: "#f6f5f1",
       theme: "light",
     }),
     [atlas?.artifact?.id]
@@ -37,56 +48,78 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
   );
 
   return (
-    <div className="space-y-5">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+    <div className="space-y-6 max-w-7xl mx-auto pb-12 view-enter">
+      {/* Ambient HUD Header */}
+      <header className="reveal border-b border-border pb-5 flex flex-col md:flex-row md:items-end justify-between gap-4" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary-soft px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+          <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
             <BrainCircuit className="h-3.5 w-3.5" />
-            One shared memory
+            External Visual Brain
           </div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-text-main">Project Atlas</h1>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-text-muted">
-            One infinite Excalidraw workspace. WhatsApp and completed meeting transcripts feed the same project-bounded memory, which Synora turns into visual notes automatically.
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-text-main flex items-center gap-3">
+            <span>Project Atlas</span>
+            <span className="font-mono text-sm px-2.5 py-0.5 rounded-lg bg-surface border border-border text-primary font-bold">
+              Canvas v{atlasVersion}
+            </span>
+          </h1>
+          <p className="mt-1 text-sm text-text-muted max-w-2xl leading-relaxed">
+            One infinite living visual workspace. Real-time conversations and verified decisions are continually mapped into architectural notes and diagrams.
           </p>
         </div>
 
+        {/* Ambient Status HUD */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text-muted">
-            <Layers3 className="h-3.5 w-3.5 text-primary" />
-            <span className="font-semibold text-text-main">{projectCount}</span> projects
+          <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-xl border border-border text-xs text-text-muted">
+            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            <span className="text-text-main font-medium">Memory Synchronized</span>
           </div>
-          <div className="inline-flex items-center gap-2 rounded-lg border border-success/20 bg-success/5 px-3 py-2 text-xs text-success">
-            <Sparkles className="h-3.5 w-3.5" />
-            <span className="font-semibold">AI auto-maintained</span>
+
+          <div className="flex items-center gap-1.5 bg-surface px-3 py-1.5 rounded-xl border border-border text-xs text-text-muted font-mono">
+            <Layers3 className="w-3.5 h-3.5 text-primary" />
+            <span>{projectCount} Projects Mapped</span>
           </div>
-          <div className={"inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs " + (pending ? "border-warning/20 bg-warning/5 text-warning" : "border-success/20 bg-success/5 text-success")}>
-            <PanelLeft className="h-3.5 w-3.5" />
-            {pending ? pending + " context item" + (pending === 1 ? "" : "s") + " need attention" : "No unresolved context"}
-          </div>
+
+          {pending > 0 && (
+            <div className="flex items-center gap-1.5 bg-warning/10 border border-warning/30 px-3 py-1.5 rounded-xl text-xs text-warning font-semibold">
+              <PanelLeft className="w-3.5 h-3.5" />
+              <span>{pending} Context Inquiries Pending</span>
+            </div>
+          )}
         </div>
       </header>
 
+      {/* Active Project Scope Pill */}
       {activeName && (
-        <div className="text-[11px] text-text-muted">
-          Active project: <span className="font-semibold text-text-main">{activeName}</span>
-          <span className="ml-1.5">• the atlas shows every project and never mixes their memory.</span>
+        <div className="flex items-center justify-between text-xs px-4 py-2 rounded-xl bg-surface border border-border text-text-muted">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+            <span>Active Focus: <strong className="text-text-main">{activeName}</strong></span>
+          </div>
+          <span className="text-[11px] font-mono text-text-muted">
+            Strict project boundaries preserved • No memory contamination
+          </span>
         </div>
       )}
 
-      <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-xs">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
-          <div>
-            <h2 className="text-sm font-semibold text-text-main">Infinite project canvas</h2>
-            <p className="mt-0.5 text-[11px] text-text-muted">
-              Sources → evidence → project memory → visual notes
-            </p>
+      {/* The Living Canvas Surface */}
+      <section className="reveal rounded-2xl border border-border bg-surface shadow-sm overflow-hidden relative" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
+        {/* Canvas Toolbar Top Bar */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/80 bg-surface-soft text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-text-main">Living Spatial Canvas</span>
+            <span className="text-[11px] text-text-muted font-mono">• Excalidraw Engine</span>
           </div>
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-[10px] font-semibold text-primary">
-            Project boundaries enforced
+
+          <div className="flex items-center gap-3 text-text-muted text-[11px]">
+            <span className="flex items-center gap-1">
+              <Maximize2 className="w-3.5 h-3.5 text-primary" />
+              <span>Pinch/Scroll to zoom • Drag to pan</span>
+            </span>
           </div>
         </div>
 
-        <div className="p-2">
+        {/* Excalidraw Canvas Mount (Isolated touch-action and overscroll-behavior) */}
+        <div className="p-2 bg-canvas overscroll-none touch-none select-none">
           {atlas ? (
             <ExcalidrawCanvas
               key={atlas.artifact.project_id || "workspace_atlas"}
@@ -101,35 +134,35 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
               readOnly
             />
           ) : (
-            <div className="flex min-h-[640px] items-center justify-center rounded-xl border border-border bg-canvas text-xs text-text-muted">
-              Preparing the Project Atlas…
+            <div className="flex min-h-[640px] items-center justify-center rounded-xl border border-border bg-canvas text-xs text-text-muted space-y-2">
+              <div className="text-center space-y-2">
+                <RefreshCw className="w-6 h-6 text-primary animate-spin mx-auto" />
+                <p>Synthesizing Project Atlas visual model...</p>
+              </div>
             </div>
           )}
         </div>
       </section>
 
-      <div className="grid gap-2 sm:grid-cols-4">
+      {/* Intelligence Pipeline Flow Legend */}
+      <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
         {[
-          ["Sources", "WhatsApp + completed meeting transcript"],
-          ["Memory", "One engine • one boundary per project"],
-          ["Notes", "Decision • requirement • constraint • question"],
-          ["Visual", "Architecture first • evidence-backed context"],
+          ["1. Sources", "Google Meet audio + WhatsApp chat streams"],
+          ["2. Evidence", "Verbatim citations with speaker attribution"],
+          ["3. State", "Authoritative decisions & requirements"],
+          ["4. Atlas", "Living architecture & spatial visual notes"],
         ].map(([label, flow], index) => (
-          <div key={label} className="rounded-lg border border-border bg-canvas px-3 py-2.5">
-            <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.14em] text-text-muted">
+          <div key={label} className="rounded-xl border border-border bg-surface p-3 space-y-1">
+            <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.14em] text-primary">
               <span>{label}</span>
-              {index < 3 && <ArrowRight className="h-3 w-3" />}
+              {index < 3 && <ArrowRight className="h-3 w-3 text-text-muted" />}
             </div>
-            <div className="mt-1 text-[10px] font-medium text-text-main">{flow}</div>
+            <div className="text-[11px] text-text-muted leading-tight">{flow}</div>
           </div>
         ))}
       </div>
 
-      <div className="flex items-center justify-center gap-2 text-[11px] text-text-muted">
-        <Maximize2 className="h-3.5 w-3.5" />
-        <span>Zoom out to see the whole workspace; zoom in to inspect one project column.</span>
-      </div>
-
+      {/* Unknown Context Inbox Panel */}
       <ContextInboxPanel
         projects={projects}
         pendingCount={pending}

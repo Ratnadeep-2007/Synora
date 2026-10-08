@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Shell, NavTab, NotificationItem } from "@/components/layout/Shell";
-import { OverviewView } from "@/components/views/OverviewView";
+import { ProjectPulseView } from "@/components/views/ProjectPulseView";
 import { ProjectStateView } from "@/components/views/ProjectStateView";
 import { MeetingsView } from "@/components/views/MeetingsView";
 import { MeetingDetailView } from "@/components/views/MeetingDetailView";
@@ -10,7 +10,10 @@ import { SourcesView } from "@/components/views/SourcesView";
 import { SettingsView } from "@/components/views/SettingsView";
 import { WorkspaceAtlasView } from "@/components/views/WorkspaceAtlasView";
 import { EvidenceDrawer } from "@/components/common/EvidenceDrawer";
-import { api, getFrontendUserId } from "@/lib/api";
+import { CommandPalette } from "@/components/common/CommandPalette";
+import { AgentIntelligenceSheet } from "@/components/common/AgentIntelligenceSheet";
+import { PipelineStorytellingModal } from "@/components/common/PipelineStorytellingModal";
+import { api, getFrontendUserId, getBackendBaseUrl, getFrontendBaseUrl } from "@/lib/api";
 import {
   AgentDefinition,
   AgentExecutionRecord,
@@ -33,6 +36,11 @@ export default function Home() {
   const [workspaceName, setWorkspaceName] = useState<string>("Workspace");
   const [currentTab, setCurrentTab] = useState<NavTab>("overview");
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+
+  // Surface and Modal States
+  const [isAgentSheetOpen, setIsAgentSheetOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isStoryModalOpen, setIsStoryModalOpen] = useState(false);
 
   // Core Data State
   const [state, setState] = useState<ProjectState | null>(null);
@@ -243,6 +251,59 @@ export default function Home() {
     setDrawerOpen(true);
   };
 
+  // Global hotkeys: Cmd+K (Command Palette), Cmd+P (Story Walkthrough), 1-5 (Nav Tabs)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        setIsStoryModalOpen((prev) => !prev);
+        return;
+      }
+
+      if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key === "1") {
+          setSelectedMeetingId(null);
+          setCurrentTab("overview");
+        } else if (e.key === "2") {
+          setSelectedMeetingId(null);
+          setCurrentTab("state");
+        } else if (e.key === "3") {
+          setSelectedMeetingId(null);
+          setCurrentTab("excalidraw");
+        } else if (e.key === "4") {
+          setSelectedMeetingId(null);
+          setCurrentTab("meetings");
+        } else if (e.key === "5") {
+          setSelectedMeetingId(null);
+          setCurrentTab("sources");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const handleDispatchAgentCapability = async (capabilityId: string, taskDesc?: string) => {
+    if (!currentProjectId) throw new Error("No active project");
+    const result = await api.dispatchProjectAgentCapability(currentProjectId, capabilityId, taskDesc);
+    await refreshAll();
+    return result;
+  };
+
   const handleAtlasChanged = useCallback(async () => {
     await api.syncWorkspaceAtlas().catch(() => null);
     await refreshAll();
@@ -427,7 +488,7 @@ export default function Home() {
         );
         if (confirmAuth) {
           const uid = getFrontendUserId();
-          window.location.href = `http://localhost:8000/auth/google?user_id=${encodeURIComponent(uid)}&return_to=http://localhost:3000`;
+          window.location.href = `${getBackendBaseUrl()}/auth/google?user_id=${encodeURIComponent(uid)}&return_to=${encodeURIComponent(getFrontendBaseUrl())}`;
         }
       } else {
         alert(`Google Meet reconciliation: ${msg}`);
@@ -605,14 +666,10 @@ export default function Home() {
     // Sort descending by timestamp
     rawEvents.sort((a, b) => b.timestamp - a.timestamp);
 
-    // If completely empty, provide canonical fallback activity
+    // No fallback fabrication: an empty project shows an empty feed, and the
+    // UI renders its designed empty state instead of invented activity.
     if (rawEvents.length === 0) {
-      return [
-        { time: "10:42 AM", text: "WhatsApp evidence processed" },
-        { time: "10:40 AM", text: "Requirement identified" },
-        { time: "10:38 AM", text: "Architecture proposal created" },
-        { time: "10:35 AM", text: "Project state updated" },
-      ];
+      return [];
     }
 
     return rawEvents.slice(0, 8).map((e) => ({ time: e.time, text: e.text }));
@@ -654,29 +711,35 @@ export default function Home() {
       }}
       onCreateProject={handleCreateProject}
       onDeleteProject={handleDeleteProject}
+      onOpenAgentSheet={() => setIsAgentSheetOpen(true)}
+      onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+      onOpenStoryModal={() => setIsStoryModalOpen(true)}
     >
-      {/* Overview Screen */}
+      {/* Project Pulse — What is happening right now */}
       {currentTab === "overview" && (
-        <OverviewView
+        <ProjectPulseView
           state={state}
-          excalidraw={
-            excalArtifact
-              ? {
-                  name: excalArtifact.name,
-                  version: excalArtifact.version,
-                  updatedAt: excalArtifact.updated_at,
-                  decisionsCount: state?.decisions?.length || 0,
-                  requirementsCount: state?.requirements?.length || 0,
-                  pendingCount: 0,
-                }
-              : null
+          conflicts={conflicts}
+          evidence={allEvidence}
+          candidates={candidates}
+          history={history}
+          connections={connections}
+          activeProjectName={activeProject?.name || "Synora Core"}
+          projectVersion={state?.current_version || 1}
+          onNavigateToTab={(tab: NavTab) => {
+            setSelectedMeetingId(null);
+            setCurrentTab(tab);
+          }}
+          onOpenEvidence={handleOpenEvidence}
+          onReviewConflict={(conf) =>
+            handleReviewConflict(conf.id, "mark_unresolved", "Flagged for human review from Project Pulse")
           }
-          activityItems={agentActivity}
-          onNavigateToTab={(tab: NavTab) => setCurrentTab(tab)}
+          onOpenAgentSheet={() => setIsAgentSheetOpen(true)}
+          onOpenStoryModal={() => setIsStoryModalOpen(true)}
         />
       )}
 
-      {/* Project State Screen */}
+      {/* Project State Screen — Authoritative brain & Change Replay */}
       {currentTab === "state" && (
         <ProjectStateView
           state={state}
@@ -728,7 +791,7 @@ export default function Home() {
           pendingMeetEvents={pendingMeetEvents.length}
           onConnectGoogle={() => {
             const uid = getFrontendUserId();
-            window.location.href = `http://localhost:8000/auth/google?user_id=${encodeURIComponent(uid)}&return_to=http://localhost:3000`;
+            window.location.href = `${getBackendBaseUrl()}/auth/google?user_id=${encodeURIComponent(uid)}&return_to=${encodeURIComponent(getFrontendBaseUrl())}`;
           }}
           onSyncGoogleMeet={handleSyncGoogleMeet}
           onNavigateToArchitecture={() => setCurrentTab("excalidraw")}
@@ -743,7 +806,6 @@ export default function Home() {
         />
       )}
 
-
       {/* Slide-over Evidence Drawer ("Why?") */}
       <EvidenceDrawer
         isOpen={drawerOpen}
@@ -753,6 +815,53 @@ export default function Home() {
         status={drawerData.status}
         evidenceItems={drawerData.evidenceItems}
         relatedChangeRef={drawerData.relatedChangeRef}
+      />
+
+      {/* Global Command Palette (⌘K) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigateToTab={(tab) => {
+          setSelectedMeetingId(null);
+          setCurrentTab(tab);
+        }}
+        currentTab={currentTab}
+        projects={projects}
+        currentProjectId={currentProjectId}
+        onSelectProject={(pId) => {
+          setSelectedMeetingId(null);
+          if (pId === currentProjectId) return;
+          setCurrentProjectId(pId);
+          setState(null);
+          setExcalArtifact(null);
+          setExcalProposals([]);
+          setCandidates([]);
+          setAllEvidence([]);
+          setHistory([]);
+          refreshAll(pId);
+        }}
+        onOpenAgentSheet={() => setIsAgentSheetOpen(true)}
+        onOpenStoryModal={() => setIsStoryModalOpen(true)}
+      />
+
+      {/* Persistent Synora Agent Intelligence Surface */}
+      <AgentIntelligenceSheet
+        isOpen={isAgentSheetOpen}
+        onClose={() => setIsAgentSheetOpen(false)}
+        projectId={currentProjectId}
+        projectVersion={state?.current_version || 1}
+        onDispatchCapability={handleDispatchAgentCapability}
+      />
+
+      {/* Interactive Intelligence Pipeline Storytelling */}
+      <PipelineStorytellingModal
+        isOpen={isStoryModalOpen}
+        onClose={() => setIsStoryModalOpen(false)}
+        onExploreAtlas={() => {
+          setIsStoryModalOpen(false);
+          setSelectedMeetingId(null);
+          setCurrentTab("excalidraw");
+        }}
       />
     </Shell>
   );

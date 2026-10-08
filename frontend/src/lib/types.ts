@@ -7,9 +7,36 @@ export interface ProjectState {
   architecture: Array<{ component: string; role: string; details: string }>;
   agent_workflow: string[];
   decisions: Array<{ id: string; text: string; date: string; evidence_ids?: string[]; approved_by?: string; detail?: string }>;
-  constraints: string[];
-  assumptions: string[];
-  open_questions: string[];
+  // Memory sections are stored as item objects
+  // {id, title?, text?, content?, evidence_ids?, ...}, never plain strings.
+  // They were typed string[] historically, which hid direct-object renders
+  // from the typechecker (see the ProjectPulseView question crash).
+  constraints: Array<{
+    id?: string;
+    title?: string;
+    text?: string;
+    content?: string;
+    description?: string;
+    evidence_ids?: string[];
+  }>;
+  assumptions: Array<{
+    id?: string;
+    title?: string;
+    text?: string;
+    content?: string;
+    description?: string;
+    evidence_ids?: string[];
+  }>;
+  open_questions: Array<{
+    id?: string;
+    title?: string;
+    text?: string;
+    content?: string;
+    question?: string;
+    urgency?: string;
+    owner?: string;
+    evidence_ids?: string[];
+  }>;
   updated_at: string | null;
 }
 
