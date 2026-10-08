@@ -479,14 +479,45 @@ class MeetEventWorker:
         db: Session,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> int:
-        """Idempotently emit a SourceEvent + Evidence row for one transcript entry."""
+        """Emit idempotent evidence while preserving revised transcript text.
+
+        Google Meet transcript entries are upserted by provider_entry_id. When
+        the provider revises the text of an existing entry, the original
+        evidence remains immutable and a content-hashed revision event/evidence
+        record is added. Re-running the same text is still fully idempotent.
+        """
+        import hashlib
+
         speaker_name = entry.participant.display_name if entry.participant else None
+        base_event_id = entry.provider_entry_id
+        event_id = base_event_id
+
+        existing_event = (
+            db.query(SourceEvent)
+            .filter(
+                SourceEvent.project_id == project_id,
+                SourceEvent.source == "google_meet",
+                SourceEvent.source_event_id == base_event_id,
+            )
+            .first()
+        )
+        if existing_event:
+            try:
+                existing_payload = json.loads(existing_event.payload_json or "{}")
+            except (TypeError, ValueError):
+                existing_payload = {}
+            existing_text = str(existing_payload.get("text") or "").strip()
+            current_text = str(entry.text or "").strip()
+            if existing_text != current_text:
+                digest = hashlib.sha1(current_text.encode("utf-8")).hexdigest()[:12]
+                event_id = f"{base_event_id}:rev:{digest}"
+
         event_in = SourceEventCreate(
             tenant_id="tenant_default",
             project_id=project_id,
             source="google_meet",
-            source_event_id=entry.provider_entry_id,
-            event_type="transcript_entry",
+            source_event_id=event_id,
+            event_type="transcript_entry" if event_id == base_event_id else "transcript_entry_revision",
             actor_id=speaker_name or "Unknown Speaker",
             occurred_at=entry.start_time,
             payload={
@@ -497,11 +528,12 @@ class MeetEventWorker:
                 "meeting_id": meeting.id,
                 "transcript_id": transcript.id,
                 "conference_id": meeting.provider_conference_id,
+                "revision_of": base_event_id if event_id != base_event_id else None,
             },
             status="received",
         )
         event = self.ingestion.ingest_event(event_in, db, commit=False)
-        db.flush()  # populate the generated event_id before linking evidence
+        db.flush()
         self.ingestion.create_evidence_from_event(
             event=event,
             db=db,
@@ -509,7 +541,11 @@ class MeetEventWorker:
             transcript_id=transcript.id,
             transcript_entry_id=entry.id,
             content=entry.text,
-            metadata={"speaker_display_name": speaker_name, **(metadata or {})},
+            metadata={
+                "speaker_display_name": speaker_name,
+                "transcript_revision": event_id != base_event_id,
+                **(metadata or {}),
+            },
             commit=False,
         )
         db.flush()
