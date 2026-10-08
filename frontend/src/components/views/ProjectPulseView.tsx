@@ -338,12 +338,14 @@ export function ProjectPulseView({
           </div>
 
           <div className="pipeline-line mt-4 grid grid-cols-4 gap-2">
-            {[
-              ["Sources", Video],
-              ["Evidence", MessageSquareText],
-              ["State", Layers3],
-              ["Atlas", PenTool],
-            ].map(([label, Icon], index) => (
+            {(
+              [
+                ["Sources", Video],
+                ["Evidence", MessageSquareText],
+                ["State", Layers3],
+                ["Atlas", PenTool],
+              ] as Array<[string, React.ComponentType<{ className?: string }>]>
+            ).map(([label, Icon], index) => (
               <div key={String(label)} className="relative">
                 <div className="flex items-center gap-2">
                   {React.createElement(Icon as React.ComponentType<{ className?: string }>, {
@@ -359,12 +361,14 @@ export function ProjectPulseView({
       </section>
 
       <section className="scroll-story grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          ["Decisions", decisions.length, "Authoritative direction", FileText, "state"],
-          ["Requirements", requirements.length, "Verified specifications", CheckCircle2, "state"],
-          ["Architecture", architecture.length, "Mapped in the Atlas", PenTool, "excalidraw"],
-          ["Attention", openConflicts.length, openConflicts.length ? "Needs review" : "No conflicts open", AlertTriangle, "state"],
-        ].map(([label, value, hint, Icon, target]) => (
+        {(
+          [
+            ["Decisions", decisions.length, "Authoritative direction", FileText, "state"],
+            ["Requirements", requirements.length, "Verified specifications", CheckCircle2, "state"],
+            ["Architecture", architecture.length, "Mapped in the Atlas", PenTool, "excalidraw"],
+            ["Attention", openConflicts.length, openConflicts.length ? "Needs review" : "No conflicts open", AlertTriangle, "state"],
+          ] as Array<[string, number, string, React.ComponentType<{ className?: string }>, any]>
+        ).map(([label, value, hint, Icon, target]) => (
           <button
             key={String(label)}
             type="button"
@@ -492,12 +496,14 @@ export function ProjectPulseView({
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {[
-              ["conversations", Video],
-              ["evidence", MessageSquareText],
-              ["state", Layers3],
-              ["atlas", PenTool],
-            ].map(([label, Icon]) => (
+            {(
+              [
+                ["conversations", Video],
+                ["evidence", MessageSquareText],
+                ["state", Layers3],
+                ["atlas", PenTool],
+              ] as Array<[string, React.ComponentType<{ className?: string }>]>
+            ).map(([label, Icon]) => (
               <span key={String(label)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-canvas px-2.5 py-1.5 text-[9px] font-medium text-text-muted">
                 {React.createElement(Icon as React.ComponentType<{ className?: string }>, { className: "h-3 w-3" })}
                 {label}
