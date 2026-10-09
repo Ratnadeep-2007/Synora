@@ -46,13 +46,25 @@ interface MeetingsViewProps {
   };
   onSelectMeeting: (meetingId: string) => void;
   vexaCaptureStatus?: VexaCaptureStatus | null;
+  // Server-driven list of captures still running. Rendered with their own
+  // Stop buttons so a reload can never strand a live bot without a control.
+  activeCaptures?: Array<{
+    meeting_id: string;
+    meeting_code?: string;
+    title?: string;
+    status?: string;
+    bot_status?: string;
+    bot_container_id?: string;
+    capture_started_at?: string;
+  }>;
   onStartVexaCapture?: (meetingUrl: string) => Promise<void>;
-  onStopVexaCapture?: () => Promise<void>;
+  onStopVexaCapture?: (meetingId?: string) => Promise<void>;
 }
 
 const STATUS_LABELS: Record<string, string> = {
   idle: "Idle",
   starting: "Starting capture...",
+  joining: "Bot joining the meeting...",
   waiting_for_recording: "In call · waiting for audio",
   recording_ready: "Recording",
   transcribing: "Transcribing",
@@ -70,6 +82,7 @@ export function MeetingsView({
   autoSyncStatus,
   onSelectMeeting,
   vexaCaptureStatus,
+  activeCaptures = [],
   onStartVexaCapture,
   onStopVexaCapture,
 }: MeetingsViewProps) {
@@ -81,6 +94,7 @@ export function MeetingsView({
   const captureStatus = vexaCaptureStatus?.status || "idle";
   const isRunning = [
     "starting",
+    "joining",
     "waiting_for_recording",
     "recording_ready",
     "transcribing",
@@ -209,6 +223,56 @@ export function MeetingsView({
                 Stop capture
               </button>
             )}
+          </div>
+        </section>
+      )}
+
+      {/* Active captures — server-driven, so Stop survives reloads. */}
+      {activeCaptures.length > 0 && (
+        <section className="reveal rounded-2xl border border-warning/30 bg-warning/[0.04] p-5 sm:p-6 shadow-xs space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-60" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-warning" />
+            </span>
+            <h2 className="text-sm font-semibold text-text-main">
+              Active captures ({activeCaptures.length})
+            </h2>
+          </div>
+          <div className="space-y-2">
+            {activeCaptures.map((cap) => (
+              <div
+                key={cap.meeting_id}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-text-main truncate">
+                    {cap.title || cap.meeting_code || cap.meeting_id}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-text-muted font-mono">
+                    {STATUS_LABELS[cap.status || ""] || cap.status || "running"}
+                    {cap.bot_status ? ` · bot: ${cap.bot_status}` : ""}
+                    {cap.bot_status === "awaiting_admission"
+                      ? " · open the Meet and admit the bot"
+                      : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => onSelectMeeting(cap.meeting_id)}
+                    className="px-3 py-2 rounded-xl border border-border text-xs font-semibold text-text-main hover:border-primary/40 transition-colors"
+                  >
+                    Open
+                  </button>
+                  <button
+                    onClick={() => onStopVexaCapture?.(cap.meeting_id)}
+                    className="px-3 py-2 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all"
+                  >
+                    Stop bot
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       )}

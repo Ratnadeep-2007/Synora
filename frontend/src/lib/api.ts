@@ -196,6 +196,11 @@ export const api = {
   stopVexaCapture: (meetingId: string): Promise<any> =>
     request<any>(`/vexa/meetings/${meetingId}/stop`, { method: "POST" }),
 
+  // Captures still running for this user. The Stop buttons are driven by
+  // this server state so a page reload can never hide a live bot.
+  getActiveVexaCaptures: (): Promise<{ ok: boolean; active: any[] }> =>
+    request<{ ok: boolean; active: any[] }>("/vexa/meetings/active"),
+
   processVexaCapture: (meetingId: string): Promise<any> =>
     request<any>(`/vexa/meetings/${meetingId}/process`, { method: "POST" }),
 

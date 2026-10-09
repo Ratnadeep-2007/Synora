@@ -537,12 +537,31 @@ export default function Home() {
     setVexaCaptureStatus(result);
   };
 
-  const handleStopVexaCapture = async () => {
-    if (!vexaCaptureMeetingId) return;
-    const result = await api.stopVexaCapture(vexaCaptureMeetingId);
+  const handleStopVexaCapture = async (meetingId?: string) => {
+    const target = meetingId || vexaCaptureMeetingId;
+    if (!target) return;
+    const result = await api.stopVexaCapture(target);
     setVexaCaptureStatus(result);
     await pollVexaCapture();
+    await pollActiveCaptures();
   };
+
+  const [activeCaptures, setActiveCaptures] = useState<any[]>([]);
+
+  const pollActiveCaptures = useCallback(async () => {
+    try {
+      const res = await api.getActiveVexaCaptures();
+      setActiveCaptures(res.active || []);
+    } catch {
+      // Non-blocking; an empty list simply hides the section.
+    }
+  }, []);
+
+  useEffect(() => {
+    pollActiveCaptures();
+    const id = setInterval(pollActiveCaptures, 5000);
+    return () => clearInterval(id);
+  }, [pollActiveCaptures]);
 
   const handleSyncLivingWorkspace = async () => {
     const projectId = requireProject();
@@ -783,6 +802,7 @@ export default function Home() {
             autoSyncStatus={autoSyncStatus}
             onSelectMeeting={(mId) => setSelectedMeetingId(mId)}
             vexaCaptureStatus={vexaCaptureStatus}
+            activeCaptures={activeCaptures}
             onStartVexaCapture={handleStartVexaCapture}
             onStopVexaCapture={handleStopVexaCapture}
           />
