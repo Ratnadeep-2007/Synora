@@ -149,6 +149,11 @@ class VexaSarvamService:
             "recording_enabled": True,
             "transcribe_enabled": False,
         }
+        logger.info(
+            "vexa_bot_spawn_requested: meeting=%s bot_name=%s",
+            meeting_code,
+            bot_name,
+        )
         async with httpx.AsyncClient(
             base_url=self.vexa_base_url,
             timeout=httpx.Timeout(settings.VEXA_HTTP_TIMEOUT_SECONDS),
@@ -160,7 +165,121 @@ class VexaSarvamService:
                 headers={**self._vexa_headers(), "Content-Type": "application/json"},
                 json=payload,
             )
-            return response.json()
+            data = response.json()
+            logger.info(
+                "vexa_bot_spawn_accepted: meeting=%s vexa_meeting_id=%s status=%s container=%s",
+                meeting_code,
+                data.get("id"),
+                data.get("status"),
+                data.get("bot_container_id"),
+            )
+            return data
+
+    async def get_bot_lifecycle(self, meeting_code: str) -> Dict[str, Any]:
+        """Read the bot's join lifecycle for one meeting from Vexa.
+
+        Returns the raw bot record (status, container, admission times) or an
+        empty dict when no bot is currently tracked for the code. Never
+        raises: callers treat absence as "not running".
+        """
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.vexa_base_url,
+                timeout=httpx.Timeout(settings.VEXA_HTTP_TIMEOUT_SECONDS),
+            ) as client:
+                response = await self._request(
+                    client,
+                    "GET",
+                    "bots/status",
+                    headers=self._vexa_headers(),
+                )
+                data = response.json()
+        except Exception as exc:
+            logger.warning(
+                "vexa_bot_status_unavailable: meeting=%s error=%s",
+                meeting_code,
+                exc,
+            )
+            return {}
+        for bot in (data.get("running") or []) + (data.get("running_bots") or []):
+            if not isinstance(bot, dict):
+                continue
+            if bot.get("native_meeting_id") == meeting_code:
+                return bot
+        return {}
+
+    async def wait_for_bot_active(
+        self,
+        meeting_code: str,
+        db,
+        meeting,
+        timeout_seconds: int = 600,
+    ) -> Dict[str, Any]:
+        """Block until the bot joins the meeting, tracking every transition.
+
+        Lifecycle: requested -> joining -> awaiting_admission -> active.
+        Each transition is logged and persisted to capture metadata as
+        bot_status, so the status endpoint and the backend log always show
+        where the join stands. A bot parked in awaiting_admission is waiting
+        for a human to admit it in Meet - that warning names the action.
+        """
+        poll = max(5, int(settings.VEXA_POLL_INTERVAL_SECONDS))
+        deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+        last_stage: Optional[str] = None
+        lobby_warned_at: Optional[datetime] = None
+
+        while datetime.now(timezone.utc) < deadline:
+            bot = await self.get_bot_lifecycle(meeting_code)
+            stage = str(bot.get("status") or "unknown")
+            if stage != last_stage:
+                logger.info(
+                    "vexa_bot_stage: meeting=%s stage=%s container=%s",
+                    meeting_code,
+                    stage,
+                    bot.get("bot_container_id"),
+                )
+                _set_capture_metadata(
+                    meeting,
+                    {
+                        "bot_status": stage,
+                        "bot_status_updated_at": datetime.now(timezone.utc).isoformat(),
+                        "bot_container_id": bot.get("bot_container_id"),
+                    },
+                )
+                db.commit()
+                last_stage = stage
+
+            if stage == "active":
+                logger.info(
+                    "vexa_bot_joined: meeting=%s container=%s admitted_at=%s",
+                    meeting_code,
+                    bot.get("bot_container_id"),
+                    bot.get("start_time"),
+                )
+                return bot
+            if stage in {"failed", "evicted"} or bot.get("failure_stage"):
+                raise VexaSarvamError(
+                    f"Vexa bot did not join meeting '{meeting_code}': "
+                    f"stage={stage} failure={bot.get('failure_stage')} "
+                    f"reason={bot.get('completion_reason')}."
+                )
+            if stage == "awaiting_admission":
+                now = datetime.now(timezone.utc)
+                if lobby_warned_at is None or (now - lobby_warned_at).total_seconds() >= 60:
+                    logger.warning(
+                        "vexa_bot_waiting_admission: meeting=%s container=%s "
+                        "action=open the Google Meet and admit the bot (%s) from the lobby",
+                        meeting_code,
+                        bot.get("bot_container_id"),
+                        bot.get("bot_container_id"),
+                    )
+                    lobby_warned_at = now
+            await asyncio.sleep(poll)
+
+        raise VexaSarvamError(
+            f"Vexa bot did not reach 'active' for meeting '{meeting_code}' "
+            f"within {timeout_seconds}s (last stage: {last_stage})."
+        )
 
     async def stop_capture(self, meeting_code: str) -> Dict[str, Any]:
         async with httpx.AsyncClient(
@@ -940,6 +1059,18 @@ class VexaSarvamService:
         )
 
         try:
+            # Join first, record second: the bot must reach 'active' before
+            # any recording can exist. Every stage transition is logged and
+            # persisted as bot_status for the status endpoint.
+            _set_capture_metadata(meeting, {"status": "joining"})
+            db.commit()
+            await self.wait_for_bot_active(
+                meeting_code,
+                db,
+                meeting,
+                timeout_seconds=600,
+            )
+
             _set_capture_metadata(meeting, {"status": "waiting_for_recording"})
             db.commit()
 

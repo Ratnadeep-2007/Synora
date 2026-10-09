@@ -166,6 +166,9 @@ async def get_vexa_capture_status(
         "transcription_fallback_reason": capture.get("transcription_fallback_reason"),
         "sarvam_job_id": capture.get("sarvam_job_id"),
         "whisper_job_id": capture.get("whisper_job_id"),
+        "bot_status": capture.get("bot_status"),
+        "bot_status_updated_at": capture.get("bot_status_updated_at"),
+        "bot_container_id": capture.get("bot_container_id"),
         "error": capture.get("error"),
     }
 
