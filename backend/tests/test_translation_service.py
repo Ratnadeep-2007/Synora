@@ -120,6 +120,33 @@ def test_translate_segments_mapping(monkeypatch):
         {"id": "s1", "text": "निर्णय हो गया है आज"},
         {"id": "s2", "text": "all good in english"},
     ]
-    mapping, status = ts.translate_segments(segments)
+    mapping, status, source = ts.translate_segments(segments, source_language="hi")
     assert mapping == {"s1": "TRANSLATED", "s2": "all good in english"}
     assert status == "translated"
+    assert source == "hi-IN"
+
+
+def test_roman_hinglish_skipped(monkeypatch):
+    """Pinned decision: Roman-script Hinglish is NOT translated.
+
+    It is indistinguishable from English to a script detector, and the
+    extraction LLMs already read it fluently — translating it would spend
+    quota for no gain. No HTTP call may be made for it.
+    """
+    monkeypatch.setattr("app.core.config.settings.SARVAM_API_KEY", "k")
+    monkeypatch.setattr(
+        "app.core.config.settings.SARVAM_TRANSLATE_ENABLED", True
+    )
+    monkeypatch.setattr("httpx.Client", _FakeClient)
+    _FakeClient.calls = []
+    out, status = ts.translate_texts(["kitchen display samay par hona chahiye"])
+    assert out == ["kitchen display samay par hona chahiye"]
+    assert status == "skipped"
+    assert _FakeClient.calls == []
+
+
+def test_source_resolution_prefers_stt_then_script():
+    assert ts.normalize_source_language("hi", "") == "hi-IN"
+    assert ts.normalize_source_language("unknown", "काम समय पर") == "hi-IN"
+    assert ts.normalize_source_language("", "வேலை நேரத்தில்") == "ta-IN"
+    assert ts.guess_source_language("plain english") == "hi-IN"

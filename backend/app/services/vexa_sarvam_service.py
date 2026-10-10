@@ -775,12 +775,12 @@ class VexaSarvamService:
         from app.services.translation_service import translate_segments
 
         try:
-            segment_translations, translation_status = translate_segments(
+            segment_translations, translation_status, translation_source = translate_segments(
                 segments, source_language=transcription_language_code
             )
         except Exception as exc:
             logger.warning("meeting_translation_failed: meeting=%s error=%s", meeting.id, exc)
-            segment_translations, translation_status = {}, "unavailable"
+            segment_translations, translation_status, translation_source = {}, "unavailable", ""
 
         def _english_text(entry_key: str, original: str) -> Optional[str]:
             translated = segment_translations.get(entry_key)
@@ -867,6 +867,7 @@ class VexaSarvamService:
                         "segment_end_seconds": segment["end_seconds"],
                         "text_en": text_en,
                         "translation_status": translation_status,
+                        "translation_source": translation_source,
                     }
                 ),
             )
@@ -901,6 +902,7 @@ class VexaSarvamService:
                             "text": segment["text"],
                             "text_en": text_en,
                             "translation_status": translation_status,
+                "translation_source": translation_source,
                             "speaker_name": speaker,
                             "start_time": start_time.isoformat(),
                             "end_time": end_time.isoformat(),
@@ -945,6 +947,7 @@ class VexaSarvamService:
                                 "speaker_id": speaker,
                                 "text_en": text_en,
                                 "translation_status": translation_status,
+                                "translation_source": translation_source,
                             }
                         ),
                     )
@@ -987,6 +990,7 @@ class VexaSarvamService:
                 "transcription_fallback_used": transcription_provider != "sarvam_saaras",
                 "transcription_fallback_reason": fallback_reason,
                 "translation_status": translation_status,
+                "translation_source": translation_source,
                 "sarvam_job_id": (
                     transcription_job_id
                     if transcription_provider == "sarvam_saaras"

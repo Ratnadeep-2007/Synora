@@ -55,9 +55,13 @@ def normalize_source_language(code: str, sample: str = "") -> str:
 def needs_translation(text: str) -> bool:
     """True when the text contains Indic-script characters.
 
-    Roman-script Hindi (codemix in Latin letters) is intentionally skipped:
-    the extraction LLMs read it fine, and translating it would burn quota
-    for no gain.
+    Roman-script Hindi (codemix in Latin letters) is a DELIBERATE skip,
+    pinned by test_roman_hinglish_skipped below. Rationale: it is
+    indistinguishable from English to a script detector, so translating
+    it would mean either LLM-detecting every segment (spends Groq TPM —
+    the system's scarcest resource) or translating everything (burns
+    Sarvam quota for near-zero gain, since the extraction LLMs already
+    read Roman Hindi fluently). Revisit only if quota pressure eases.
     """
     return bool(
         re.search(
@@ -177,15 +181,24 @@ def translate_texts(
 def translate_segments(
     segments: List[Dict[str, object]],
     source_language: str = "",
-) -> Tuple[Dict[str, str], str]:
-    """Translate transcript segments; returns ({segment_id: english}, status)."""
+) -> Tuple[Dict[str, str], str, str]:
+    """Translate transcript segments.
+
+    Returns ({segment_id: english}, status, translation_source) where
+    translation_source is the resolved BCP-47 code actually sent to the
+    API. Callers store it alongside the STT-detected language: when the
+    two disagree (e.g. STT 'unknown' vs script-detected 'hi-IN'), the
+    disagreement itself is provenance.
+    """
     from app.core.config import settings
 
     texts = [str(seg.get("text") or "") for seg in segments]
     ids = [str(seg.get("id") or f"seg_{i:06d}") for i, seg in enumerate(segments)]
+    first_pending = next((t for t in texts if needs_translation(t)), "")
+    source = normalize_source_language(source_language, first_pending)
     translated, status = translate_texts(
         texts,
         target_language=settings.SARVAM_TRANSLATE_TARGET,
         source_language=source_language,
     )
-    return dict(zip(ids, translated)), status
+    return dict(zip(ids, translated)), status, source
