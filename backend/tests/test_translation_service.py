@@ -150,3 +150,18 @@ def test_source_resolution_prefers_stt_then_script():
     assert ts.normalize_source_language("unknown", "काम समय पर") == "hi-IN"
     assert ts.normalize_source_language("", "வேலை நேரத்தில்") == "ta-IN"
     assert ts.guess_source_language("plain english") == "hi-IN"
+
+
+def test_preferred_text_uses_translation():
+    import json
+
+    meta = json.dumps({"text_en": "The work on time"})
+    assert ts.preferred_text("काम समय पर", meta) == "The work on time"
+
+
+def test_preferred_text_falls_back():
+    assert ts.preferred_text("hello", "") == "hello"
+    assert ts.preferred_text("hello", "not-json") == "hello"
+    import json
+
+    assert ts.preferred_text("same", json.dumps({"text_en": "same"})) == "same"

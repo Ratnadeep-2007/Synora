@@ -178,6 +178,30 @@ def translate_texts(
     return out, status
 
 
+def preferred_text(content: str, metadata_json: str = "") -> str:
+    """English-first text for intelligence consumers.
+
+    Returns the stored English translation when present, else the
+    original content. This is the formal 'prefer English' rule — but
+    note it is NOT yet wired into the eight ev.content consumers
+    (router, extractors, canvas planners). Reason: zero translated rows
+    exist today, so rewiring saves zero tokens while touching every LLM
+    prompt path. Wire it per-consumer once Hindi meetings land and TPM
+    is measured. The helper exists so that adoption is a one-line swap.
+    """
+    original = str(content or "")
+    try:
+        import json as _json
+
+        meta = _json.loads(metadata_json or "{}")
+        candidate = str((meta or {}).get("text_en") or "").strip()
+        if candidate and candidate != original.strip():
+            return candidate
+    except Exception:
+        pass
+    return original
+
+
 def translate_segments(
     segments: List[Dict[str, object]],
     source_language: str = "",
