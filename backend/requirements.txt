@@ -7,6 +7,10 @@ sqlalchemy>=2.0.0
 # local dev works without this, but any postgres:// DATABASE_URL fails at
 # engine creation without it.
 psycopg[binary]>=3.1.0
+# Pure-Python fallback for locked-down Windows hosts where Application
+# Control blocks psycopg's binary DLL; database.py prefers psycopg and
+# uses pg8000 only when the psycopg import fails.
+pg8000>=1.30.0
 cryptography>=42.0.0
 httpx>=0.27.0
 python-dotenv>=1.0.0
