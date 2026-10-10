@@ -75,7 +75,9 @@ export function ProjectPulseView({
   const version = projectVersion || state?.current_version || 1;
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 pb-16 pt-8">
+    <div className="relative mx-auto w-full max-w-6xl px-6 pb-16 pt-8">
+      {/* Page backdrop: soft top glow + faint dotted texture */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[480px] bg-[radial-gradient(60%_100%_at_50%_0%,rgb(0_0_0/0.05),transparent)]" />
       <style>{`
         @keyframes synora-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes synora-drift { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(30px,-18px) scale(1.08); } }
@@ -96,6 +98,20 @@ export function ProjectPulseView({
         .synora-float2 { animation: synora-float2 7s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
           .synora-rise, .synora-orb, .synora-ping, .synora-flow, .synora-node, .synora-float, .synora-float2 { animation: none; }
+        }
+        .synora-grid-bg {
+          background-image:
+            linear-gradient(to right, rgb(0 0 0 / 0.045) 1px, transparent 1px),
+            linear-gradient(to bottom, rgb(0 0 0 / 0.045) 1px, transparent 1px);
+          background-size: 34px 34px;
+          mask-image: radial-gradient(ellipse 90% 80% at 50% 20%, black 30%, transparent 75%);
+          -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 20%, black 30%, transparent 75%);
+        }
+        .synora-noise {
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+        }
+        .synora-ring {
+          background: radial-gradient(circle, transparent 58%, rgb(0 0 0 / 0.05) 59%, transparent 61%);
         }
       `}</style>
 
@@ -120,9 +136,12 @@ export function ProjectPulseView({
       </div>
 
       {/* Hero */}
-      <section className="relative overflow-hidden rounded-[2rem] border border-border bg-gradient-to-b from-white to-canvas px-8 py-14 sm:px-14">
+      <section className="synora-noise relative overflow-hidden rounded-[2rem] border border-border bg-gradient-to-b from-white to-canvas px-8 py-14 sm:px-14">
+        <div aria-hidden className="synora-grid-bg pointer-events-none absolute inset-0" />
         <div aria-hidden className="pointer-events-none absolute -top-24 -right-20 h-80 w-80 rounded-full bg-primary/10 blur-3xl synora-orb" />
         <div aria-hidden className="pointer-events-none absolute -bottom-28 -left-12 h-64 w-64 rounded-full bg-primary/5 blur-3xl synora-orb" />
+        <div aria-hidden className="synora-ring pointer-events-none absolute -right-32 top-1/2 h-[420px] w-[420px] -translate-y-1/2 rounded-full" />
+        <div aria-hidden className="synora-ring pointer-events-none absolute -left-40 -top-24 h-[300px] w-[300px] rounded-full opacity-70" />
 
         <div className="relative grid items-center gap-12 lg:grid-cols-[1fr_.95fr]">
           <div>
@@ -233,7 +252,10 @@ export function ProjectPulseView({
       </section>
 
       {/* How it works */}
-      <section className="synora-rise synora-d5 mt-10 rounded-[2rem] border border-border bg-canvas p-8 sm:p-10">
+      <section className="synora-rise synora-d5 relative mt-10 overflow-hidden rounded-[2rem] border border-border bg-canvas p-8 sm:p-10">
+        <div aria-hidden className="synora-grid-bg pointer-events-none absolute inset-0 opacity-60" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-24 -right-16 h-64 w-64 rounded-full bg-primary/[0.07] blur-3xl synora-orb" />
+        <div className="relative">
         <h2 className="text-xl font-semibold tracking-tight">From call to canvas in four steps</h2>
         <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s) => (
@@ -253,6 +275,7 @@ export function ProjectPulseView({
             <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
             {openConflicts === 0 ? "No open conflicts" : `${openConflicts} items need review in State`}
           </span>
+        </div>
         </div>
       </section>
     </div>
