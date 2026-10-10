@@ -781,6 +781,20 @@ export default function Home() {
           connections={connections}
           activeProjectName={activeProject?.name || "Synora Core"}
           projectVersion={state?.current_version || 1}
+          projects={projects}
+          currentProjectId={currentProjectId || undefined}
+          onSelectProject={(pId) => {
+            setSelectedMeetingId(null);
+            if (pId === currentProjectId) return;
+            setCurrentProjectId(pId);
+            setState(null);
+            setExcalArtifact(null);
+            setExcalProposals([]);
+            setCandidates([]);
+            setAllEvidence([]);
+            setHistory([]);
+            refreshAll(pId);
+          }}
           onNavigateToTab={(tab: NavTab) => {
             setSelectedMeetingId(null);
             setCurrentTab(tab);

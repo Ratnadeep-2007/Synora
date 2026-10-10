@@ -9,6 +9,7 @@ import {
   Command,
   FolderKanban,
   FolderPlus,
+  Home,
   Layers3,
   Menu,
   PenTool,
@@ -74,7 +75,7 @@ const NAV_ITEMS: Array<{
   shortcut: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: "overview", label: "Pulse", hint: "What changed", shortcut: "1", icon: Activity },
+  { id: "overview", label: "Home", hint: "Start here", shortcut: "1", icon: Home },
   { id: "state", label: "State", hint: "Authoritative brain", shortcut: "2", icon: Layers3 },
   { id: "excalidraw", label: "Atlas", hint: "Living visual brain", shortcut: "3", icon: PenTool },
   { id: "meetings", label: "Meetings", hint: "Conversation memory", shortcut: "4", icon: Video },
@@ -195,8 +196,12 @@ export function Shell({
     onTabChange(tab);
   };
 
+  // Home is a full-bleed landing page: no rail, no topbar, only content.
+  const isHome = currentTab === "overview";
+
   return (
     <div className="synora-shell min-h-screen bg-canvas text-text-main">
+      {!isHome && (
       <aside
         className={
           "synora-rail fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-white/90 backdrop-blur-xl transition-all duration-300 " +
@@ -367,8 +372,10 @@ export function Shell({
           )}
         </div>
       </aside>
+      )}
 
-      <div className={railOpen ? "ml-[232px] transition-all duration-300" : "ml-[76px] transition-all duration-300"}>
+      <div className={isHome ? "" : railOpen ? "ml-[232px] transition-all duration-300" : "ml-[76px] transition-all duration-300"}>
+        {!isHome && (
         <header className="synora-topbar sticky top-0 z-30 border-b border-border/80 bg-white/80 backdrop-blur-xl">
           <div className="flex h-[68px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
             <div className="flex min-w-0 items-center gap-2.5">
@@ -628,6 +635,7 @@ export function Shell({
             </div>
           </div>
         </header>
+        )}
 
         <main className="mx-auto w-full max-w-[1500px] px-4 pb-12 pt-5 sm:px-6 lg:px-8">
           {children}
