@@ -768,6 +768,26 @@ class VexaSarvamService:
                 f"{transcription_provider} returned no transcript segments."
             )
 
+        # Hindi-first meetings: translate Indic-script segments to English.
+        # Originals stay authoritative (transcript text); translations ride
+        # alongside into evidence so the agent and memory work in English.
+        # Any failure degrades to originals-only and never blocks the pipeline.
+        from app.services.translation_service import translate_segments
+
+        try:
+            segment_translations, translation_status = translate_segments(
+                segments, source_language=transcription_language_code
+            )
+        except Exception as exc:
+            logger.warning("meeting_translation_failed: meeting=%s error=%s", meeting.id, exc)
+            segment_translations, translation_status = {}, "unavailable"
+
+        def _english_text(entry_key: str, original: str) -> Optional[str]:
+            translated = segment_translations.get(entry_key)
+            if translated and translated.strip() and translated.strip() != original.strip():
+                return translated.strip()
+            return None
+
         transcript = Transcript(
             meeting_id=meeting.id,
             provider="google",
@@ -826,6 +846,7 @@ class VexaSarvamService:
             start_time = base_time + timedelta(seconds=max(0.0, segment["start_seconds"]))
             end_time = base_time + timedelta(seconds=max(0.0, segment["end_seconds"]))
             entry_key = segment["id"] or f"seg_{index:06d}"
+            text_en = _english_text(entry_key, segment["text"])
 
             entry = TranscriptEntry(
                 transcript_id=transcript.id,
@@ -844,6 +865,8 @@ class VexaSarvamService:
                         "speaker_id": speaker,
                         "segment_start_seconds": segment["start_seconds"],
                         "segment_end_seconds": segment["end_seconds"],
+                        "text_en": text_en,
+                        "translation_status": translation_status,
                     }
                 ),
             )
@@ -876,6 +899,8 @@ class VexaSarvamService:
                     payload_json=_json_dump(
                         {
                             "text": segment["text"],
+                            "text_en": text_en,
+                            "translation_status": translation_status,
                             "speaker_name": speaker,
                             "start_time": start_time.isoformat(),
                             "end_time": end_time.isoformat(),
@@ -907,13 +932,19 @@ class VexaSarvamService:
                         transcript_entry_id=entry.id,
                         actor_id=speaker,
                         occurred_at=start_time,
-                        content=segment["text"],
+                        content=(
+                            f"{segment['text']}\n[EN] {text_en}"
+                            if text_en
+                            else segment["text"]
+                        ),
                         metadata_json=_json_dump(
                             {
                                 "capture_provider": "vexa",
                                 "transcription_provider": transcription_provider,
                                 "transcription_model": transcription_model,
                                 "speaker_id": speaker,
+                                "text_en": text_en,
+                                "translation_status": translation_status,
                             }
                         ),
                     )
@@ -955,6 +986,7 @@ class VexaSarvamService:
                 "transcription_job_id": transcription_job_id,
                 "transcription_fallback_used": transcription_provider != "sarvam_saaras",
                 "transcription_fallback_reason": fallback_reason,
+                "translation_status": translation_status,
                 "sarvam_job_id": (
                     transcription_job_id
                     if transcription_provider == "sarvam_saaras"

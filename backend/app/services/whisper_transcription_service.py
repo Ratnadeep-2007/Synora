@@ -1,9 +1,15 @@
 import asyncio
 import logging
+import os
 import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Belt-and-suspenders with app/main.py: this module may be imported by
+# scripts/workers that never go through main, and the flag must be set
+# before any OpenMP runtime loads.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from app.core.config import settings
 

@@ -1,3 +1,12 @@
+import os
+
+# faster-whisper (via ctranslate2/ONNX/MKL) trips on duplicate OpenMP
+# runtimes on Windows unless this is set before those libraries load.
+# The server process is started bare (no launcher env), so the backend
+# must guarantee it itself — otherwise the Whisper fallback crashes
+# with OMP Error #15 exactly when it is needed most.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import asyncio
 from contextlib import asynccontextmanager
 import logging

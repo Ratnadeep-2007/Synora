@@ -22,7 +22,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+import time
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -30,6 +31,7 @@ from app.models.evidence import Evidence
 from app.models.intelligence import CandidateKnowledge
 from app.models.meeting import Meeting, Transcript, TranscriptEntry
 from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+from app.services.visual_plan_service import VisualPlanService
 
 
 DUE_HINT_PATTERN = re.compile(
@@ -37,6 +39,157 @@ DUE_HINT_PATTERN = re.compile(
     r"([A-Za-z0-9][A-Za-z0-9 ,./:-]{1,48})",
     re.IGNORECASE,
 )
+
+#: Evidence snippets per meeting-canvas plan call. Matches the prompt
+#: builder's own cap, so every batch is fully seen by the design model and
+#: long meetings no longer lose their early parts.
+MEETING_CANVAS_BATCH_SIZE = 16
+#: Plan attempts per batch before accepting the deterministic fallback.
+#: Retries stay short: this path also serves sync-on-read GET requests.
+MEETING_CANVAS_PLAN_ATTEMPTS = 2
+MEETING_CANVAS_RETRY_DELAY_S = 10.0
+
+
+def _semantic_provider_configured() -> bool:
+    """True when any LLM design provider could serve a plan (retry is useful)."""
+    from app.core.config import settings
+
+    return bool(
+        settings.is_groq_configured
+        or settings.is_gemini_configured
+        or settings.is_meta_configured
+        or settings.is_nvidia_nim_configured
+    )
+
+
+def _remap_ids(value: Any, idmap: Dict[str, str]) -> Any:
+    """Rewrite batch-local semantic ids inside opaque group payloads."""
+    if isinstance(value, str):
+        return idmap.get(value, value)
+    if isinstance(value, list):
+        return [_remap_ids(item, idmap) for item in value]
+    if isinstance(value, dict):
+        return {key: _remap_ids(item, idmap) for key, item in value.items()}
+    return value
+
+
+def _merge_meeting_plans(plans: List[Any], meeting_title: str) -> Any:
+    """Merge per-batch VisualPlans into one compilable plan.
+
+    Batch ids are namespaced (m0_, m1_, ...) so identical model-chosen ids
+    across batches cannot collide, and intra-batch references (relationships,
+    visualization connectors, group members) are remapped to the new ids.
+    Sections keep chronological order via an order offset per batch.
+    """
+    from app.schemas.visual_plan import VisualPlan
+
+    if len(plans) == 1:
+        return plans[0]
+
+    merged_nodes: List[Dict[str, Any]] = []
+    merged_rels: List[Dict[str, Any]] = []
+    merged_sections: List[Dict[str, Any]] = []
+    merged_notes: List[Any] = []
+    merged_viz: List[Dict[str, Any]] = []
+    merged_groups: List[Any] = []
+    merged_emphasis: List[Any] = []
+    strategies: List[str] = []
+    doc_title: Optional[str] = None
+    doc_subtitle: Optional[str] = None
+    doc_updated: Optional[str] = None
+    order_base = 0
+
+    for index, plan in enumerate(plans):
+        tag = f"m{index}"
+        idmap: Dict[str, str] = {}
+        for node in (plan.nodes or []):
+            node_dict = node.model_dump(mode="json")
+            new_id = f"{tag}_{node_dict.get('id') or f'node_{len(merged_nodes)}'}"
+            idmap[str(node_dict.get("id"))] = new_id
+            node_dict["id"] = new_id
+            merged_nodes.append(node_dict)
+        for rel in (plan.relationships or []):
+            rel_dict = rel.model_dump(mode="json")
+            rel_dict["source"] = idmap.get(str(rel_dict.get("source")), f"{tag}_{rel_dict.get('source')}")
+            rel_dict["target"] = idmap.get(str(rel_dict.get("target")), f"{tag}_{rel_dict.get('target')}")
+            merged_rels.append(rel_dict)
+        # Sections may live on notes_sections, inside notes_document, or
+        # both (dedupe by id so a section is never recorded twice).
+        seen_section_ids: set = set()
+        raw_sections: List[Any] = []
+        if plan.notes_document is not None:
+            raw_sections.extend(plan.notes_document.sections or [])
+        raw_sections.extend(plan.notes_sections or [])
+        for section in raw_sections:
+            if section.id in seen_section_ids:
+                continue
+            seen_section_ids.add(section.id)
+            section_dict = section.model_dump(mode="json")
+            section_dict["id"] = f"{tag}_{section_dict.get('id')}"
+            try:
+                section_dict["order"] = int(section_dict.get("order") or 0) + order_base
+            except (TypeError, ValueError):
+                section_dict["order"] = order_base
+            blocks = []
+            for block in (section_dict.get("blocks") or []):
+                block_dict = dict(block)
+                block_dict["id"] = f"{tag}_{block_dict.get('id')}"
+                blocks.append(block_dict)
+            section_dict["blocks"] = blocks
+            merged_sections.append(section_dict)
+        document = plan.notes_document
+        if document is not None:
+            doc_dict = document.model_dump(mode="json")
+            if doc_title is None:
+                doc_title = doc_dict.get("title") or None
+                doc_subtitle = doc_dict.get("subtitle")
+            doc_updated = doc_dict.get("updated_label") or doc_updated
+        merged_notes.extend(plan.notes or [])
+        for viz in (plan.visualizations or []):
+            viz_dict = viz.model_dump(mode="json")
+            viz_dict["id"] = f"{tag}_{viz_dict.get('id')}"
+            prim_map: Dict[str, str] = {}
+            prims = []
+            for prim in (viz_dict.get("elements") or []):
+                prim_dict = dict(prim)
+                new_pid = f"{tag}_{prim_dict.get('id')}"
+                prim_map[str(prim_dict.get("id"))] = new_pid
+                prim_dict["id"] = new_pid
+                prims.append(prim_dict)
+            for prim_dict in prims:
+                if str(prim_dict.get("source")) in prim_map:
+                    prim_dict["source"] = prim_map[str(prim_dict.get("source"))]
+                if str(prim_dict.get("target")) in prim_map:
+                    prim_dict["target"] = prim_map[str(prim_dict.get("target"))]
+            viz_dict["elements"] = prims
+            merged_viz.append(viz_dict)
+        for group in (plan.groups or []):
+            merged_groups.append(_remap_ids(group, idmap))
+        merged_emphasis.extend(plan.emphasis or [])
+        strategies.append(plan.canvas_strategy or "mixed")
+        order_base += 10000
+
+    strategy = "mixed" if "mixed" in strategies else (strategies[0] if strategies else "mixed")
+    first = plans[0]
+    return VisualPlan.model_validate({
+        "title": (first.title if first else None) or meeting_title,
+        "canvas_strategy": strategy,
+        "nodes": merged_nodes,
+        "relationships": merged_rels,
+        "groups": merged_groups,
+        "emphasis": merged_emphasis,
+        "notes_document": {
+            "title": doc_title or meeting_title,
+            "subtitle": doc_subtitle,
+            "sections": merged_sections,
+            "updated_label": doc_updated,
+        } if (merged_sections or doc_title) else None,
+        "notes_sections": merged_sections,
+        "visualizations": merged_viz,
+        "notes": merged_notes,
+        "model": f"merged/{len(plans)}-batches",
+        "prompt_version": first.prompt_version if first else "",
+    })
 
 
 class MeetingSessionIntelligenceService:
@@ -409,6 +562,79 @@ class MeetingSessionIntelligenceService:
         """Stable visual workspace key that is isolated from any project."""
         return f"meeting_canvas:{meeting_id}"
 
+    def _build_canvas_plans(
+        self,
+        meeting: Meeting,
+        state_summary: Dict[str, Any],
+        current_nodes: List[str],
+        evidence_snippets: List[Dict[str, Any]],
+        focus_prompt: str,
+    ) -> Tuple[Any, str, Dict[str, Any]]:
+        """Plan the meeting canvas in chronological evidence batches.
+
+        Long meetings exceed what one plan call sees, so evidence is split
+        into batches of MEETING_CANVAS_BATCH_SIZE and each batch gets its own
+        plan (with one short retry on rate-limit fallback). The batch plans
+        are merged into a single compilable plan, so the canvas covers the
+        whole meeting — early parts included — in one go.
+        """
+        planner = VisualPlanService()
+        batches = [
+            evidence_snippets[i:i + MEETING_CANVAS_BATCH_SIZE]
+            for i in range(0, len(evidence_snippets), MEETING_CANVAS_BATCH_SIZE)
+        ] or [[]]
+        meeting_title = str(meeting.title or meeting.id)
+
+        plans: List[Any] = []
+        statuses: List[str] = []
+        for index, batch in enumerate(batches):
+            if len(batches) == 1:
+                part_focus: Optional[str] = focus_prompt
+            else:
+                part_focus = (
+                    f"{focus_prompt} This is PART {index + 1} of {len(batches)}: "
+                    "record ONLY the evidence in this part. Do not repeat or "
+                    "summarize other parts."
+                )
+            plan, status = planner.build_plan(
+                state_summary=state_summary,
+                current_nodes=current_nodes,
+                evidence_snippets=batch,
+                focus_prompt=part_focus,
+                constraints=None,
+            )
+            if status != "ai" and _semantic_provider_configured():
+                # One short retry: transient TPM rate limits clear quickly,
+                # and this path also serves sync-on-read GETs, so retries
+                # must stay bounded.
+                for _ in range(MEETING_CANVAS_PLAN_ATTEMPTS - 1):
+                    time.sleep(MEETING_CANVAS_RETRY_DELAY_S)
+                    retry_plan, retry_status = planner.build_plan(
+                        state_summary=state_summary,
+                        current_nodes=current_nodes,
+                        evidence_snippets=batch,
+                        focus_prompt=part_focus,
+                        constraints=None,
+                    )
+                    if retry_status == "ai":
+                        plan, status = retry_plan, retry_status
+                        break
+            plans.append(plan)
+            statuses.append(status)
+
+        merged = plans[0] if len(plans) == 1 else _merge_meeting_plans(plans, meeting_title)
+        if all(status == "ai" for status in statuses):
+            overall = "ai"
+        elif all(status == "deterministic" for status in statuses):
+            overall = "deterministic"
+        else:
+            overall = "partial"
+        merged_dashboard = {
+            "batches": len(batches),
+            "batches_ai": sum(1 for status in statuses if status == "ai"),
+        }
+        return merged, overall, merged_dashboard
+
     def sync_meeting_canvas(
         self,
         meeting_id: str,
@@ -426,7 +652,6 @@ class MeetingSessionIntelligenceService:
         """
         from app.services.excalidraw_service import ExcalidrawService
         from app.services.excalidraw_compiler import ExcalidrawCompiler, ExcalidrawCompileError
-        from app.services.visual_plan_service import VisualPlanService
         from app.services.visual_revision_service import VisualRevisionService
 
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
@@ -501,12 +726,12 @@ class MeetingSessionIntelligenceService:
             "or information from other meetings. The workspace outside this canvas handles project routing."
         )
 
-        plan, ai_status = VisualPlanService().build_plan(
+        plan, ai_status, batch_info = self._build_canvas_plans(
+            meeting=meeting,
             state_summary=state_summary,
             current_nodes=current_nodes,
             evidence_snippets=evidence_snippets,
             focus_prompt=focus,
-            constraints=None,
         )
 
         try:
@@ -559,6 +784,8 @@ class MeetingSessionIntelligenceService:
                     "plan_fingerprint": plan_fingerprint,
                     "evidence_ids": [e.id for e in evidence_records],
                     "transcript_entry_count": len(entries),
+                    "batches": batch_info.get("batches"),
+                    "batches_ai": batch_info.get("batches_ai"),
                 },
             },
             operations=[
@@ -594,6 +821,8 @@ class MeetingSessionIntelligenceService:
             "plan_fingerprint": plan_fingerprint,
             "evidence_count": len(evidence_records),
             "transcript_entry_count": len(entries),
+            "batches": batch_info.get("batches"),
+            "batches_ai": batch_info.get("batches_ai"),
         }
 
     @staticmethod

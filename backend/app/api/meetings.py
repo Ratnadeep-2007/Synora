@@ -249,10 +249,11 @@ async def get_meeting_canvas(
     stored_ai = canvas_meta.get("ai_status")
 
     # Re-sync when the evidence set changed OR when the stored canvas was
-    # drawn by the deterministic fallback (ai_status deterministic/None):
-    # that means no design model was reachable at the time, and the stub
-    # must not be cached forever once a model is available.
-    if stored_ids != evidence_ids or stored_ai in (None, "deterministic"):
+    # drawn by the deterministic fallback (ai_status deterministic/None) or
+    # only partly by the design model (ai_status partial): that means no
+    # design model was reachable for some evidence batches at the time, and
+    # the stub must not be cached forever once a model is available.
+    if stored_ids != evidence_ids or stored_ai in (None, "deterministic", "partial"):
         try:
             service = MeetingSessionIntelligenceService()
             return service.sync_meeting_canvas(

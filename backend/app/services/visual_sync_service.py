@@ -32,8 +32,24 @@ def _scene_fingerprint(elements: List[Dict[str, Any]]) -> str:
 
 def _is_agent_managed(element: Dict[str, Any]) -> bool:
     custom = element.get("customData") or {}
-    visual = custom.get("visual") if isinstance(custom, dict) else None
-    return isinstance(visual, dict) and bool(visual)
+    if isinstance(custom, dict):
+        if isinstance(custom.get("visual"), dict) and bool(custom.get("visual")):
+            return True
+        # The atlas service tags with customData.atlas instead of .visual.
+        if isinstance(custom.get("atlas"), dict) and bool(custom.get("atlas")):
+            return True
+    # Fallback for scenes written before the provenance markers existed:
+    # every compiler/atlas id scheme below is machine-generated, while
+    # human-drawn elements get random ids. Without this, stale pre-fix
+    # elements are mistaken for user drawings and carried forward forever.
+    eid = str(element.get("id") or "")
+    return eid.startswith((
+        "node_", "label_", "annotation_", "edge_", "edge_label_",
+        "group_backdrop_", "group_label_", "conn_",
+        "notes_", "note_", "note_block_", "note_section_",
+        "sticky_text_", "lbl_notes", "legacy_", "legacy_block_",
+        "visual_", "atlas_",
+    ))
 
 
 def _canvas_summary(scene: List[Dict[str, Any]]) -> List[str]:

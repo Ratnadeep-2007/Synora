@@ -33,6 +33,55 @@ BASE_X = 80
 BASE_Y = 80
 
 
+def _chars_per_line(width_px: float, font_size: float) -> int:
+    """Estimate how many average glyphs fit on one canvas line.
+
+    Excalidraw does not wrap unbound text server-side, so the compiler must
+    break lines itself. Average glyph advance for the canvas hand font
+    (Virgil, fontFamily 1) is ~0.6em; the estimate stays conservative so
+    lines never overshoot the box they are drawn in.
+    """
+    return max(10, int(float(width_px) / max(8.0, float(font_size) * 0.6)))
+
+
+def _wrap_text(text: str, width_px: float, font_size: float) -> str:
+    """Word-wrap text to the given box width, preserving blank lines.
+
+    Tokens longer than the line budget (URLs, hashes, long compounds) are
+    hard-broken so no single line can ever exceed the container. Returns the
+    text unchanged when it already fits.
+    """
+    budget = _chars_per_line(width_px, font_size)
+    out_lines: List[str] = []
+    for paragraph in str(text or "").split("\n"):
+        stripped = paragraph.strip()
+        if not stripped:
+            out_lines.append("")
+            continue
+        current: List[str] = []
+        current_len = 0
+        for token in stripped.split():
+            # Hard-break over-long tokens first.
+            while len(token) > budget:
+                if current:
+                    out_lines.append(" ".join(current))
+                    current, current_len = [], 0
+                out_lines.append(token[:budget])
+                token = token[budget:]
+            if not token:
+                continue
+            extra = len(token) + (1 if current else 0)
+            if current_len + extra > budget:
+                out_lines.append(" ".join(current))
+                current, current_len = [token], len(token)
+            else:
+                current.append(token)
+                current_len += extra
+        if current:
+            out_lines.append(" ".join(current))
+    return "\n".join(out_lines)
+
+
 class ExcalidrawCompileError(SynesisException):
     """Raised when a VisualPlan cannot be compiled into a valid scene."""
 
@@ -156,7 +205,11 @@ class ExcalidrawCompiler:
             # Adaptive font and height for clean text rendering
             is_long = len(node.label) > 22 or "\n" in node.label
             font_sz = 13 if is_long or node.node_type == "note" else 15
-            txt_h = 36 if is_long else 24
+            label_wrapped = _wrap_text(str(node.label or ""), NODE_WIDTH - 24, font_sz)
+            label_lines = max(1, len(label_wrapped.split("\n")))
+            # Bound label must stay inside the node: grow the text box with
+            # wrapped lines but cap it so it never spills past the border.
+            txt_h = min(NODE_HEIGHT - 24, max(36 if is_long else 24, 15 * label_lines + 8))
             txt_y = y + (NODE_HEIGHT - txt_h) / 2
             txt_color = "#713f12" if node.node_type == "note" else "#1e1e1e"
 
@@ -168,8 +221,8 @@ class ExcalidrawCompiler:
                     "y": txt_y,
                     "width": NODE_WIDTH - 24,
                     "height": txt_h,
-                    "text": node.label,
-                    "originalText": node.label,
+                    "text": label_wrapped,
+                    "originalText": label_wrapped,
                     "fontSize": font_sz,
                     "fontFamily": 1,
                     "textAlign": "center",
@@ -191,24 +244,27 @@ class ExcalidrawCompiler:
                 }
             )
             # Annotations render as small captions under the node.
+            ann_y = y + NODE_HEIGHT + 6
             for idx, annotation in enumerate(node.annotations[:2]):
+                ann_wrapped = _wrap_text(str(annotation or ""), NODE_WIDTH - 24, 11)
+                ann_h = 13 * max(1, len(ann_wrapped.split("\n"))) + 4
                 elements.append(
                     {
                         "id": f"annotation_{node.id}_{idx}",
                         "type": "text",
                         "x": x + 12,
-                        "y": y + NODE_HEIGHT + 6 + idx * 16,
+                        "y": ann_y,
                         "width": NODE_WIDTH - 24,
-                        "height": 16,
-                        "text": annotation,
-                        "originalText": annotation,
+                        "height": ann_h,
+                        "text": ann_wrapped,
+                        "originalText": ann_wrapped,
                         "fontSize": 11,
                         "fontFamily": 1,
                         "textAlign": "center",
                         "verticalAlign": "middle",
                         "lineHeight": 1.25,
                         "baseline": 10,
-                        "autoResize": True,
+                        "autoResize": False,
                         "strokeColor": "#555555",
                         "backgroundColor": "transparent",
                         "fillStyle": "solid",
@@ -233,6 +289,7 @@ class ExcalidrawCompiler:
                         },
                     }
                 )
+                ann_y += ann_h + 4
 
         for index, rel in enumerate(plan.relationships):
             src = node_element_ids.get(rel.source)
@@ -400,7 +457,12 @@ class ExcalidrawCompiler:
             if kind == "heading":
                 return 34
             rendered = _block_text(block)
-            return min(360, max(34, 20 * _line_count(rendered, 72) + 8))
+            # Height follows the wrapped line count at the real body width,
+            # not a fixed character budget: that mismatch is what used to
+            # draw boxes far shorter than their overflowing text.
+            font = 17 if kind == "heading" else 12
+            lines = _wrap_text(rendered, notes_w - 56, font).split("\n")
+            return min(720, max(34, 15 * len(lines) + 8))
 
         if document and document.get("sections"):
             ordered_sections = sorted(
@@ -472,15 +534,17 @@ class ExcalidrawCompiler:
                     title_text = doc_title
                 else:
                     title_text = f"{doc_title} · {page_index + 1}"
+                title_wrapped = _wrap_text(title_text, notes_w - 48, 19)
+                title_h = 22 + 20 * max(0, len(title_wrapped.split("\n")) - 1)
                 elements.append({
                     "id": f"lbl_notes_hdr_{title_digest}" if page_index == 0 else f"notes_title_{title_digest}_{page_index}",
                     "type": "text",
                     "x": notes_x + 24,
                     "y": cursor_y,
                     "width": notes_w - 48,
-                    "height": 32,
-                    "text": title_text,
-                    "originalText": title_text,
+                    "height": 32 + max(0, title_h - 22),
+                    "text": title_wrapped,
+                    "originalText": title_wrapped,
                     "fontSize": 19,
                     "fontFamily": 1,
                     "textAlign": "left",
@@ -504,25 +568,27 @@ class ExcalidrawCompiler:
                         }
                     },
                 })
-                cursor_y += 36
+                cursor_y += 36 + max(0, title_h - 22)
                 subtitle = str(document.get("subtitle") or "").strip()
                 if page_index == 0 and subtitle:
+                    subtitle_wrapped = _wrap_text(subtitle[:400], notes_w - 48, 11)
+                    subtitle_h = 14 + 13 * max(0, len(subtitle_wrapped.split("\n")) - 1)
                     elements.append({
                         "id": f"notes_subtitle_{title_digest}",
                         "type": "text",
                         "x": notes_x + 24,
                         "y": cursor_y,
                         "width": notes_w - 48,
-                        "height": 24,
-                        "text": subtitle[:180],
-                        "originalText": subtitle[:180],
+                        "height": 24 + max(0, subtitle_h - 14),
+                        "text": subtitle_wrapped,
+                        "originalText": subtitle_wrapped,
                         "fontSize": 11,
                         "fontFamily": 1,
                         "textAlign": "left",
                         "verticalAlign": "top",
                         "lineHeight": 1.3,
                         "baseline": 10,
-                        "autoResize": True,
+                        "autoResize": False,
                         "strokeColor": "#6c746e",
                         "backgroundColor": "transparent",
                         "fillStyle": "solid",
@@ -534,7 +600,7 @@ class ExcalidrawCompiler:
                         "isDeleted": False,
                         "customData": {"visual": {"type": "project_notes_subtitle"}},
                     })
-                    cursor_y += 26
+                    cursor_y += 26 + max(0, subtitle_h - 14)
 
                 for sec_index, (section, blocks) in enumerate(page_sections):
                     sec_id = str(section.get("id") or section.get("title") or f"section_{sec_index}")
@@ -542,15 +608,17 @@ class ExcalidrawCompiler:
                     heading = str(section.get("title") or "Notes")[:100]
                     section_evidence = [str(e) for e in (section.get("evidence_ids") or [])][:4]
                     section_support = str(section.get("support_type") or ("explicit" if section_evidence else "inferred"))
+                    heading_wrapped = _wrap_text(heading, notes_w - 48, 14)
+                    heading_h = 20 + 16 * max(0, len(heading_wrapped.split("\n")) - 1)
                     elements.append({
                         "id": f"note_section_{sec_key}_header",
                         "type": "text",
                         "x": notes_x + 24,
                         "y": cursor_y,
                         "width": notes_w - 48,
-                        "height": 26,
-                        "text": heading,
-                        "originalText": heading,
+                        "height": heading_h,
+                        "text": heading_wrapped,
+                        "originalText": heading_wrapped,
                         "fontSize": 14,
                         "fontFamily": 1,
                         "textAlign": "left",
@@ -576,7 +644,7 @@ class ExcalidrawCompiler:
                             }
                         },
                     })
-                    cursor_y += 30
+                    cursor_y += 30 + max(0, heading_h - 20)
 
                     # Section body container, inserted below once the section
                     # height is known. Gives each section a visible body so
@@ -657,6 +725,10 @@ class ExcalidrawCompiler:
                         if kind == "heading":
                             font_size = max(12, 18 - int(block.get("level", 2) or 2))
                         stroke = "#202522" if kind not in ("quote",) else "#59635d"
+                        # Wrap to the box before emitting: an unwrapped line
+                        # renders past the container no matter what height we
+                        # reserve, and autoResize then stretches the element.
+                        wrapped = _wrap_text(rendered or title_text, notes_w - 56, font_size)
                         elements.append({
                             "id": f"note_block_{block_key}_text",
                             "type": "text",
@@ -664,15 +736,15 @@ class ExcalidrawCompiler:
                             "y": cursor_y + (2 if kind != "heading" else 0),
                             "width": notes_w - 56,
                             "height": bh,
-                            "text": rendered or title_text,
-                            "originalText": rendered or title_text,
+                            "text": wrapped,
+                            "originalText": wrapped,
                             "fontSize": font_size,
                             "fontFamily": 1,
                             "textAlign": "left",
                             "verticalAlign": "top",
                             "lineHeight": 1.4,
                             "baseline": 12,
-                            "autoResize": True,
+                            "autoResize": False,
                             "strokeColor": stroke,
                             "backgroundColor": "transparent",
                             "fillStyle": "solid",
@@ -746,15 +818,17 @@ class ExcalidrawCompiler:
                 if page_index == len(pages) - 1:
                     footer = str(document.get("updated_label") or "Maintained automatically from project memory")
                     footer_text = footer + " • rechecked every 30 seconds"
+                    footer_wrapped = _wrap_text(footer_text[:300], notes_w - 48, 9)
+                    footer_h = 16 + 11 * max(0, len(footer_wrapped.split("\n")) - 1)
                     elements.append({
                         "id": f"notes_footer_{title_digest}",
                         "type": "text",
                         "x": notes_x + 24,
                         "y": notes_y + page_index * (page_height + 70) + page_height - 34,
                         "width": notes_w - 48,
-                        "height": 20,
-                        "text": footer_text[:180],
-                        "originalText": footer_text[:180],
+                        "height": footer_h,
+                        "text": footer_wrapped,
+                        "originalText": footer_wrapped,
                         "fontSize": 9,
                         "fontFamily": 1,
                         "textAlign": "left",
@@ -1001,22 +1075,24 @@ class ExcalidrawCompiler:
                 visual_ids[pid] = ex_id
 
                 if ptype in ("text", "label", "paragraph"):
+                    p_raw_text = str(p.get("text") or p.get("title") or "")[:1200]
+                    p_wrapped = _wrap_text(p_raw_text, max(60.0, float(pw)), 12)
                     el = {
                         "id": ex_id,
                         "type": "text",
                         "x": px,
                         "y": py,
                         "width": pw,
-                        "height": ph,
-                        "text": str(p.get("text") or p.get("title") or "")[:1200],
-                        "originalText": str(p.get("text") or p.get("title") or "")[:1200],
+                        "height": max(float(ph), 15 * max(1, len(p_wrapped.split("\n"))) + 8),
+                        "text": p_wrapped,
+                        "originalText": p_wrapped,
                         "fontSize": 12,
                         "fontFamily": 1,
                         "textAlign": "left",
                         "verticalAlign": "top",
                         "lineHeight": 1.35,
                         "baseline": 11,
-                        "autoResize": True,
+                        "autoResize": False,
                         "backgroundColor": "transparent",
                         "fillStyle": "solid",
                         "strokeWidth": 1,
@@ -1061,22 +1137,24 @@ class ExcalidrawCompiler:
                     el.update(style)
                     elements.append(el)
                     if text_value:
+                        label_font = int(style.get("fontSize") or 12)
+                        label_wrapped = _wrap_text(text_value[:800], max(60.0, float(pw) - 24), label_font)
                         elements.append({
                             "id": label_id,
                             "type": "text",
                             "x": px + 12,
                             "y": py + 12,
                             "width": pw - 24,
-                            "height": ph - 24,
-                            "text": text_value[:800],
-                            "originalText": text_value[:800],
-                            "fontSize": int(style.get("fontSize") or 12),
+                            "height": max(float(ph) - 24, 15 * max(1, len(label_wrapped.split("\n"))) + 8),
+                            "text": label_wrapped,
+                            "originalText": label_wrapped,
+                            "fontSize": label_font,
                             "fontFamily": int(style.get("fontFamily") or 1),
                             "textAlign": str(style.get("textAlign") or "center"),
                             "verticalAlign": "middle",
                             "lineHeight": 1.3,
                             "baseline": 11,
-                            "autoResize": True,
+                            "autoResize": False,
                             "strokeColor": str(style.get("strokeColor") or "#23302a"),
                             "backgroundColor": "transparent",
                             "fillStyle": "solid",
@@ -1157,14 +1235,15 @@ class ExcalidrawCompiler:
                     },
                 })
                 if c.get("label"):
-                    label_text = str(c["label"])[:80]
+                    label_text = _wrap_text(str(c["label"])[:80], 100, 9)
+                    label_h = 12 + 10 * max(0, len(label_text.split("\n")) - 1)
                     elements.append({
                         "id": f"{arrow_id}_label",
                         "type": "text",
                         "x": min(start_x, end_x) + abs(end_x - start_x) / 2 - 50,
                         "y": min(start_y, end_y) + abs(end_y - start_y) / 2 - 14,
                         "width": 100,
-                        "height": 20,
+                        "height": max(20, label_h),
                         "text": label_text,
                         "originalText": label_text,
                         "fontSize": 9,
