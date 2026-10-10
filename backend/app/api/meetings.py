@@ -246,8 +246,13 @@ async def get_meeting_canvas(
         app_state = {}
     canvas_meta = app_state.get("meeting_canvas") or {}
     stored_ids = list(canvas_meta.get("evidence_ids") or [])
+    stored_ai = canvas_meta.get("ai_status")
 
-    if stored_ids != evidence_ids:
+    # Re-sync when the evidence set changed OR when the stored canvas was
+    # drawn by the deterministic fallback (ai_status deterministic/None):
+    # that means no design model was reachable at the time, and the stub
+    # must not be cached forever once a model is available.
+    if stored_ids != evidence_ids or stored_ai in (None, "deterministic"):
         try:
             service = MeetingSessionIntelligenceService()
             return service.sync_meeting_canvas(
