@@ -371,6 +371,26 @@ export default function Home() {
     }
   };
 
+  const handleDeleteMeeting = async (meetingId: string) => {
+    // Optimistic removal so the list responds instantly; the 5s refreshAll
+    // loop plus an explicit refresh then reconciles with server state.
+    const previous = meetings;
+    setMeetings((prev) => prev.filter((m) => m.id !== meetingId));
+    if (selectedMeetingId === meetingId) {
+      setSelectedMeetingId(null);
+      setMeetingDetail(null);
+      setMeetingCanvas(null);
+    }
+    try {
+      await api.deleteMeeting(meetingId);
+      await refreshAll();
+    } catch (err: any) {
+      // Roll back the optimistic removal so a failed delete never hides data.
+      setMeetings(previous);
+      throw new Error(err.message || "Meeting deletion failed");
+    }
+  };
+
   const requireProject = (): string | null => {
     if (!currentProjectId) {
       alert("Create or select a project first.");
@@ -805,6 +825,7 @@ export default function Home() {
             activeCaptures={activeCaptures}
             onStartVexaCapture={handleStartVexaCapture}
             onStopVexaCapture={handleStopVexaCapture}
+            onDeleteMeeting={handleDeleteMeeting}
           />
         ) : (
           <MeetingDetailView
@@ -820,6 +841,7 @@ export default function Home() {
             )}
             onBack={() => setSelectedMeetingId(null)}
             onOpenEvidence={handleOpenEvidence}
+            onDeleteMeeting={handleDeleteMeeting}
           />
         ))}
 

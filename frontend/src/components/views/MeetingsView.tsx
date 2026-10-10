@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Radio,
   FileText,
+  Trash2,
 } from "lucide-react";
 import { MeetingItem } from "@/lib/types";
 import { ProgressLine } from "@/components/ui/primitives";
@@ -59,6 +60,7 @@ interface MeetingsViewProps {
   }>;
   onStartVexaCapture?: (meetingUrl: string) => Promise<void>;
   onStopVexaCapture?: (meetingId?: string) => Promise<void>;
+  onDeleteMeeting?: (meetingId: string) => Promise<void>;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -85,11 +87,31 @@ export function MeetingsView({
   activeCaptures = [],
   onStartVexaCapture,
   onStopVexaCapture,
+  onDeleteMeeting,
 }: MeetingsViewProps) {
   const [search, setSearch] = useState("");
   const [meetingUrl, setMeetingUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const confirmDeleteMeeting = async (meetingId: string, title?: string) => {
+    if (
+      !window.confirm(
+        `Delete "${title || meetingId}" and its transcript? Evidence rows are kept but unlinked so project knowledge keeps provenance.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(meetingId);
+    try {
+      await onDeleteMeeting?.(meetingId);
+    } catch (err: any) {
+      setError(err?.message || "Could not delete meeting.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const captureStatus = vexaCaptureStatus?.status || "idle";
   const isRunning = [
@@ -358,6 +380,20 @@ export function MeetingsView({
                         <span>Inspect Memory</span>
                         <ChevronRight className="w-3.5 h-3.5" />
                       </span>
+                      {onDeleteMeeting && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            confirmDeleteMeeting(meeting.id, meeting.title);
+                          }}
+                          disabled={deletingId === meeting.id}
+                          title="Delete meeting and its transcript"
+                          aria-label={`Delete ${meeting.title || meeting.id}`}
+                          className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 border border-transparent hover:border-danger/25 transition-all disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 

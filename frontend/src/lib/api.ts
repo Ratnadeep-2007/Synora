@@ -183,6 +183,11 @@ export const api = {
   getMeetings: (): Promise<MeetingItem[]> =>
     request<MeetingItem[]>("/meetings"),
 
+  deleteMeeting: (meetingId: string): Promise<{ success: boolean; meeting_id: string; message: string }> =>
+    request(`/meetings/${meetingId}`, {
+      method: "DELETE",
+    }),
+
   // Server-side Google Meet capture via Vexa; Sarvam transcribes after the meeting.
   startVexaCapture: (meeting_url: string): Promise<any> =>
     request<any>("/vexa/meetings/start", {
