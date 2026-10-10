@@ -753,6 +753,15 @@ class MeetingSessionIntelligenceService:
         plan_fingerprint = hashlib.sha256(
             json.dumps(plan_dump, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
+
+        # Post-render verification (warn-first, never blocking): diff the
+        # compiled meeting scene against the meeting evidence.
+        from app.services.note_verification_service import verify_scene
+
+        verification = verify_scene(
+            compiled or [],
+            [str(snippet.get("content") or "") for snippet in evidence_snippets],
+        )
         scene_fingerprint = hashlib.sha256(
             json.dumps(compiled or [], sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
@@ -786,6 +795,7 @@ class MeetingSessionIntelligenceService:
                     "transcript_entry_count": len(entries),
                     "batches": batch_info.get("batches"),
                     "batches_ai": batch_info.get("batches_ai"),
+                    "verification": verification,
                 },
             },
             operations=[
@@ -823,6 +833,7 @@ class MeetingSessionIntelligenceService:
             "transcript_entry_count": len(entries),
             "batches": batch_info.get("batches"),
             "batches_ai": batch_info.get("batches_ai"),
+            "verification": verification,
         }
 
     @staticmethod

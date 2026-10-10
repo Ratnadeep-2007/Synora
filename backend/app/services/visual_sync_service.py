@@ -190,6 +190,17 @@ class VisualSyncService:
             json.dumps(plan_dump, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
 
+        # Post-render verification (warn-first, never blocking): diff the
+        # compiled scene against memory + evidence so ungrounded sentences
+        # are flagged, badged, and logged — never silently rendered.
+        from app.services.note_verification_service import verify_scene
+
+        verification = verify_scene(
+            merged_scene,
+            [json.dumps(state_summary, default=str, ensure_ascii=False)]
+            + [str(snippet.get("content") or "") for snippet in evidence_snippets],
+        )
+
         revision = revision_service.commit_revision(
             project_id=project_id,
             scene=merged_scene,
@@ -205,6 +216,7 @@ class VisualSyncService:
                     "evidence_ids": [row.id for row in evidence_rows],
                     "notes_sections": len(getattr(plan, "notes_sections", []) or []),
                     "visualizations": len(getattr(plan, "visualizations", []) or []),
+                    "verification": verification,
                 }
             },
             operations=[
@@ -235,6 +247,13 @@ class VisualSyncService:
             plan.canvas_strategy,
             proper_diagram,
         )
+        if verification.get("unverified_total"):
+            logger.warning(
+                "visual_sync_unverified_items: project=%s unverified=%d checked=%d",
+                project_id,
+                verification.get("unverified_total"),
+                verification.get("checked"),
+            )
         return {
             "project_id": project_id,
             "synced": True,
@@ -245,6 +264,7 @@ class VisualSyncService:
             "representation": plan.canvas_strategy,
             "diagram": proper_diagram,
             "state_version": getattr(state_row, "current_version", None),
+            "verification": verification,
         }
 
     def sync_all(
