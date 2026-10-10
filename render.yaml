@@ -8,6 +8,17 @@
 #   backend  -> https://synora-backend.onrender.com
 #   frontend -> https://synora-frontend.onrender.com
 
+# Shared secrets live in one env group: Render forbids workers from
+# referencing a web service's generated env vars, so SECRET_KEY and
+# ENCRYPTION_KEY are minted once here and attached to every service.
+envVarGroups:
+  - name: synora-secrets
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+
 services:
   - type: web
     name: synora-backend
@@ -16,15 +27,13 @@ services:
     dockerContext: ./backend
     plan: free
     healthCheckPath: /health/ready
+    envVarGroups:
+      - synora-secrets
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: DATABASE_URL
         sync: false # Neon pooled connection string, with ?sslmode=require
-      - key: SECRET_KEY
-        generateValue: true
-      - key: ENCRYPTION_KEY
-        generateValue: true
       - key: FRONTEND_URL
         value: https://synora-frontend.onrender.com
       - key: GOOGLE_CLIENT_ID
@@ -34,7 +43,7 @@ services:
       - key: GOOGLE_REDIRECT_URI
         value: https://synora-backend.onrender.com/auth/google/callback
       - key: LLM_PROVIDER
-        value: gemini
+        value: groq
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
@@ -83,25 +92,15 @@ services:
     dockerContext: ./backend
     plan: free
     dockerCommand: python -m app.services.whatsapp_batch_worker
+    envVarGroups:
+      - synora-secrets
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: DATABASE_URL
         sync: false # same Neon connection string as the backend
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: synora-backend
-          property: envVar
-          envVar: SECRET_KEY
-      - key: ENCRYPTION_KEY
-        fromService:
-          type: web
-          name: synora-backend
-          property: envVar
-          envVar: ENCRYPTION_KEY
       - key: LLM_PROVIDER
-        value: gemini
+        value: groq
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
@@ -115,24 +114,15 @@ services:
     dockerContext: ./backend
     plan: free
     dockerCommand: python -m app.services.visual_sync_worker
+    envVarGroups:
+      - synora-secrets
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: DATABASE_URL
         sync: false
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: synora-backend
-          property: envVar
-          envVar: SECRET_KEY
-      - key: ENCRYPTION_KEY
-        fromService:
-          type: web
-          name: synora-backend
-          property: envVar
       - key: LLM_PROVIDER
-        value: gemini
+        value: groq
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
