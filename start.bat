@@ -76,11 +76,11 @@ if !errorlevel! equ 0 (
     echo  [OK] Port 8000 is available for Backend.
 )
 
-netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul 2>&1
+netstat -ano | findstr /R /C:":3002 .*LISTENING" >nul 2>&1
 if !errorlevel! equ 0 (
-    echo  [!] Port 3000 is currently in use (Frontend already running or port occupied)
+    echo  [!] Port 3002 is currently in use (Frontend already running or port occupied)
 ) else (
-    echo  [OK] Port 3000 is available for Frontend.
+    echo  [OK] Port 3002 is available for Frontend.
 )
 
 echo.
@@ -89,7 +89,7 @@ echo  Please select an option:
 echo.
 echo    [1] Start All Services (Backend + Frontend + WhatsApp Baileys) [DEFAULT]
 echo    [2] Start Backend API Only (:8000)
-echo    [3] Start Frontend UI Only (:3000)
+echo    [3] Start Frontend UI Only (:3002)
 echo    [4] Start WhatsApp Baileys Bridge Only
 echo    [5] Run Full Test Suite (pytest)
 echo    [6] Refresh Health and Port Status
@@ -115,8 +115,8 @@ echo ===========================================================================
 echo [1/3] Launching Backend API in new window (http://localhost:8000)...
 start "Synora Backend (API :8000)" cmd /k call "%~dp0start_backend.bat"
 
-echo [2/3] Launching Frontend UI in new window (http://localhost:3000)...
-start "Synora Frontend (UI :3000)" cmd /k call "%~dp0start_frontend.bat"
+echo [2/3] Launching Frontend UI in new window (http://localhost:3002)...
+start "Synora Frontend (UI :3002)" cmd /k call "%~dp0start_frontend.bat"
 
 echo [3/3] Launching WhatsApp Baileys Bridge in new window...
 start "Synora WhatsApp Baileys Bridge" cmd /k call "%~dp0start_baileys.bat"
@@ -125,7 +125,7 @@ echo.
 echo ==============================================================================
 echo                        SERVICES LAUNCHED SUCCESSFULLY                        
 echo ==============================================================================
-echo  - Frontend Web UI:          http://localhost:3000
+echo  - Frontend Web UI:          http://localhost:3002
 echo  - Backend API and Docs:     http://localhost:8000/docs
 echo  - System Health:            http://localhost:8000/health
 echo  - WhatsApp Baileys Bridge:  Running in dedicated window (QR code prompt)
