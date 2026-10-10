@@ -694,11 +694,20 @@ class MeetingSessionIntelligenceService:
             if text_value:
                 current_nodes.append(text_value[:120])
 
+        from app.models.project import Project as _CanvasProject
+
+        _project_names = {
+            row.id: row.name
+            for row in db.query(_CanvasProject).all()
+        }
         evidence_snippets = [
             {
                 "id": evidence.id,
                 "content": f"{evidence.actor_id or 'Speaker'}: {evidence.content}",
                 "source": evidence.source,
+                # Per-project canvas separation: the planner groups notes by
+                # this name; unrouted rows render under "Shared".
+                "project_name": _project_names.get(evidence.project_id or "", "Shared"),
             }
             for evidence in evidence_records
             if evidence.content and evidence.content.strip()

@@ -37,6 +37,13 @@ def _snippet_ids(snippet: Any) -> List[str]:
     return [eid] if eid else []
 
 
+def _snippet_project(snippet: Any) -> str:
+    """Project display name carried on a snippet, or '' when ungrouped."""
+    if isinstance(snippet, dict):
+        return str(snippet.get("project_name") or "").strip()
+    return ""
+
+
 def _text_evidence_id(text: str) -> str:
     """
     Stable pseudo-evidence id for text that has no persisted Evidence row.
@@ -300,11 +307,27 @@ class VisualPlanService:
         ]
 
         if evidence_snippets:
+            grouped: Dict[str, List[Any]] = {}
+            for item in evidence_snippets:
+                grouped.setdefault(_snippet_project(item) or "Shared", []).append(item)
+            if len(grouped) > 1:
+                # Multi-project discussion: keep each project's notes in its
+                # own section so contexts never blend on the canvas.
+                prompt_lines += [
+                    "",
+                    "PROJECT SEPARATION: the evidence below spans multiple "
+                    "projects. Record each project in its own note section "
+                    f"({', '.join(grouped)}). Never mix one project's items "
+                    "into another project's section.",
+                ]
             prompt_lines += ["", "--- RECENT PROJECT EVIDENCE ---"]
-            prompt_lines += [
-                f"- [EVIDENCE: {_evidence_id_of(s)}] {_snippet_text(s)[:700]}"
-                for s in evidence_snippets[:16]
-            ]
+            for project_name, items in grouped.items():
+                if len(grouped) > 1:
+                    prompt_lines.append(f"--- EVIDENCE: {project_name} ---")
+                prompt_lines += [
+                    f"- [EVIDENCE: {_evidence_id_of(s)}] {_snippet_text(s)[:700]}"
+                    for s in items[:16]
+                ]
 
         if constraints:
             prompt_lines += ["", "--- SYSTEM CANVAS CONSTRAINTS ---"] + [f"- {c}" for c in constraints]
@@ -664,13 +687,50 @@ class VisualPlanService:
         # plain derived notebook entry instead of fabricating a diagram.
         if settings.visual_design_free:
             project_title = str(state_summary.get("title") or "Project Notes")
-            source_text = " ".join(
-                _snippet_text(item) for item in (evidence_snippets or []) if _snippet_text(item).strip()
-            ).strip()
-            source_text = source_text or str(
-                focus_prompt or state_summary.get("vision") or state_summary.get("description") or ""
-            ).strip()
-            source_text = " ".join(source_text.split())[:5000]
+            grouped: Dict[str, List[Any]] = {}
+            for item in (evidence_snippets or []):
+                if _snippet_text(item).strip():
+                    grouped.setdefault(_snippet_project(item) or "Notes", []).append(item)
+            sections = []
+            for order, (project_name, items) in enumerate(grouped.items()):
+                section_text = " ".join(_snippet_text(item) for item in items).strip()
+                section_text = " ".join(section_text.split())[:5000]
+                sections.append(
+                    NoteSection(
+                        id=f"notes_{order}",
+                        title=project_name if len(grouped) > 1 else "Notes",
+                        order=order,
+                        blocks=[
+                            NoteBlock(
+                                id=f"notes_content_{order}",
+                                block_type="paragraph",
+                                text=section_text or "No source content available yet.",
+                                evidence_ids=[_evidence_id_of(item) for item in items if _evidence_id_of(item)][:8],
+                                support_type="explicit" if items else "inferred",
+                            )
+                        ],
+                    )
+                )
+            if not sections:
+                source_text = " ".join(
+                    str(focus_prompt or state_summary.get("vision") or state_summary.get("description") or "").split()
+                )[:5000]
+                sections = [
+                    NoteSection(
+                        id="notes",
+                        title="Notes",
+                        order=0,
+                        blocks=[
+                            NoteBlock(
+                                id="notes_content",
+                                block_type="paragraph",
+                                text=source_text or "No source content available yet.",
+                                evidence_ids=[],
+                                support_type="inferred",
+                            )
+                        ],
+                    )
+                ]
             return VisualPlan(
                 title=project_title,
                 canvas_strategy="text",
@@ -679,22 +739,7 @@ class VisualPlanService:
                 notes_document=NotesDocument(
                     title=project_title,
                     subtitle="Deterministic fallback — semantic design provider unavailable",
-                    sections=[
-                        NoteSection(
-                            id="notes",
-                            title="Notes",
-                            order=0,
-                            blocks=[
-                                NoteBlock(
-                                    id="notes_content",
-                                    block_type="paragraph",
-                                    text=source_text or "No source content available yet.",
-                                    evidence_ids=[_evidence_id_of(item) for item in (evidence_snippets or []) if _evidence_id_of(item)][:8],
-                                    support_type="explicit" if evidence_snippets else "inferred",
-                                )
-                            ],
-                        )
-                    ],
+                    sections=sections,
                     updated_label="Deterministic fallback",
                 ),
             )
