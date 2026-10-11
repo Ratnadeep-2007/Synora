@@ -118,6 +118,10 @@ export function Shell({
   const [activityOpen, setActivityOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
 
+  useEffect(() => {
+    if (window.innerWidth < 1024) setRailOpen(false);
+  }, []);
+
   const selectedProject =
     activeProject || projects.find((project) => project.id === currentProjectId) || null;
 
@@ -191,6 +195,7 @@ export function Shell({
   };
 
   const navTo = (tab: NavTab) => {
+    if (window.innerWidth < 1024) setRailOpen(false);
     setActivityOpen(false);
     setUserOpen(false);
     onTabChange(tab);
@@ -203,6 +208,7 @@ export function Shell({
     <div className="synora-shell min-h-screen bg-canvas text-text-main">
       {!isHome && (
       <aside
+        data-expanded={railOpen}
         className={
           "synora-rail fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-white/90 backdrop-blur-xl transition-all duration-300 " +
           (railOpen ? "w-[232px]" : "w-[76px]")
@@ -249,6 +255,8 @@ export function Shell({
                   type="button"
                   onClick={() => navTo(item.id)}
                   title={!railOpen ? item.label : undefined}
+                  aria-label={item.label}
+                  aria-current={active ? "page" : undefined}
                   className={
                     "group relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all duration-200 " +
                     (active
@@ -374,7 +382,7 @@ export function Shell({
       </aside>
       )}
 
-      <div className={isHome ? "" : railOpen ? "ml-[232px] transition-all duration-300" : "ml-[76px] transition-all duration-300"}>
+      <div className={isHome ? "" : `studio-workspace ${railOpen ? "ml-[232px]" : "ml-[76px]"} transition-all duration-300`}>
         {!isHome && (
         <header className="synora-topbar sticky top-0 z-30 border-b border-border/80 bg-white/80 backdrop-blur-xl">
           <div className="flex h-[68px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">

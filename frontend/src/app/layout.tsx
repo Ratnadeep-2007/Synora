@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import localFont from "next/font/local";
 import "./globals.css";
+import "./cinematic.css";
 import "./excalidraw.css";
+const geist = localFont({ src: "./fonts/GeistVF.woff", variable: "--font-geist", display: "swap" });
 
 export const metadata: Metadata = {
   title: "Synora — Project Intelligence & Living Architecture",
@@ -14,7 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased bg-canvas text-text-main">
+      <body className={`${geist.variable} antialiased bg-canvas text-text-main`}>
         {/* Runtime backend URL (SYNORA_API_URL). Plain script so it executes
             before page bundles; api.ts reads window.__SYNORA_API_URL__. */}
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
