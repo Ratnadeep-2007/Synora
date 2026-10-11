@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     SARVAM_HTTP_TIMEOUT_SECONDS: float = Field(default=60.0, gt=1)
     SARVAM_UPLOAD_TIMEOUT_SECONDS: float = Field(default=900.0, gt=10)
 
+    # Post-transcription translation for Hindi-first meetings. Translates
+    # Indic-script segments to English; originals are always preserved.
+    SARVAM_TRANSLATE_ENABLED: bool = True
+    SARVAM_TRANSLATE_MODEL: str = "sarvam-translate:v1"
+    SARVAM_TRANSLATE_TARGET: str = "en-IN"
+    SARVAM_TRANSLATE_MAX_CHARS: int = Field(default=1800, ge=200, le=2000)
+
     # Self-hosted Whisper fallback. Loaded only when Sarvam is unavailable or fails.
     WHISPER_ENABLED: bool = True
     WHISPER_MODEL: str = "large-v3-turbo"

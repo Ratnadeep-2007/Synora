@@ -159,7 +159,8 @@ class ProjectStateService:
 
         Idempotent: a candidate with an already-open proposal reuses it.
         Reprocessing a meeting must not stack duplicate proposals for the
-        same candidate.
+        same candidate. Verified live 2026-10-08: two pipeline re-runs
+        doubled MediQueue's proposals (8 -> 16) before this guard.
         """
         existing = (
             db.query(StateChange)

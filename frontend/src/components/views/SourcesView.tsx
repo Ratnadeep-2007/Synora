@@ -13,11 +13,16 @@ import {
   ArrowRight,
   ShieldAlert,
 } from "lucide-react";
-import { SourceConnection, WhatsAppStatus, WhatsAppSimulateResult } from "@/lib/types";
+import { Project, SourceConnection, WhatsAppStatus, WhatsAppSimulateResult } from "@/lib/types";
+import { SourceInputsPanel } from "./SourceInputsPanel";
+import { ContextInboxPanel } from "./ContextInboxPanel";
 import { api } from "@/lib/api";
 
 interface SourcesViewProps {
   connections: SourceConnection[];
+  projects?: Project[];
+  unknownPendingCount?: number;
+  onChanged?: () => Promise<void> | void;
   subscriptionsActive?: boolean;
   lastMeetEventAt?: string | null;
   pendingMeetEvents?: number;
@@ -28,6 +33,9 @@ interface SourcesViewProps {
 
 export function SourcesView({
   connections = [],
+  projects = [],
+  unknownPendingCount = 0,
+  onChanged,
   subscriptionsActive = false,
   lastMeetEventAt,
   pendingMeetEvents = 0,
@@ -146,7 +154,7 @@ export function SourcesView({
               <div className="flex items-center justify-between">
                 <span className="text-text-muted">Auto-Sync Webhook</span>
                 <span className="font-semibold text-text-main">
-                  {subscriptionsActive ? "Active" : "Enabled"}
+                  {subscriptionsActive ? "Active" : "Not configured"}
                 </span>
               </div>
               {googleConn?.account_email && (
@@ -226,7 +234,7 @@ export function SourcesView({
               <div className="flex items-center justify-between">
                 <span className="text-text-muted">Monitored Groups</span>
                 <span className="font-mono font-semibold text-text-main">
-                  {whatsappConnected ? waStatus?.details?.active_groups_count ?? "4 active" : "Standby"}
+                  {whatsappConnected ? waStatus?.details?.active_groups_count ?? 0 : "Standby"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -245,6 +253,9 @@ export function SourcesView({
           </div>
         </section>
       </div>
+
+      <SourceInputsPanel projects={projects} onChanged={onChanged} />
+      <ContextInboxPanel projects={projects} pendingCount={unknownPendingCount} onChanged={onChanged} />
 
       {/* Live Stream Simulation Sandbox */}
       <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm relative overflow-hidden space-y-5">
@@ -351,7 +362,7 @@ export function SourcesView({
             <div className="flex items-center justify-between">
               <span className="font-semibold text-success flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4" />
-                Packet Ingested & Synthesized into Memory
+                Packet Accepted
               </span>
               <span className="font-mono text-[10px] text-text-muted">
                 Status: {simResult.status || "processed"}
@@ -359,7 +370,7 @@ export function SourcesView({
             </div>
 
             <div className="text-text-muted text-[11px] leading-relaxed">
-              Synora processed the packet as verbatim evidence, verified project boundaries, and refreshed shared memory.
+              The packet enters the shared routing pipeline. Unresolved evidence appears in the context inbox.
             </div>
 
             {onNavigateToArchitecture && (

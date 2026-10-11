@@ -82,7 +82,6 @@ def test_atlas_project_columns_do_not_overlap(db_session: Session):
         for el in scene
         if el.get("type") == "rectangle"
         and el.get("width") == COLUMN_WIDTH
-        and el.get("height", 0) >= 900
     }
     frame_a = frames[WorkspaceAtlasService._id("proj_scene_a", "frame")]
     frame_b = frames[WorkspaceAtlasService._id("proj_scene_b", "frame")]

@@ -1,13 +1,13 @@
 @echo off
 setlocal enabledelayedexpansion
-title Synora Frontend Next.js Dev Server (:3000)
+title Synora Frontend Next.js Dev Server (:3002)
 
 :: Always ensure working directory is frontend directory
 cd /d "%~dp0frontend"
 
 echo ==============================================================================
 echo                         SYNORA FRONTEND SERVER                               
-echo                Next.js 14 + Tailwind CSS + Flow (Port 3000)                   
+echo                Next.js 14 + Tailwind CSS + Flow (Port 3002)                   
 echo ==============================================================================
 echo.
 
@@ -32,20 +32,20 @@ if not exist "%~dp0frontend\node_modules" (
     )
 )
 
-:: 3. Check if port 3000 is occupied
-netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul 2>&1
+:: 3. Check if port 3002 is occupied
+netstat -ano | findstr /R /C:":3002 .*LISTENING" >nul 2>&1
 if !errorlevel! equ 0 (
-    echo [WARNING] Port 3000 is already in use by another process!
-    echo Next.js will typically try port 3001 if 3000 is unavailable.
+    echo [WARNING] Port 3002 is already in use by another process!
+    echo Next.js will typically try port 3003 if 3002 is unavailable.
     echo.
 )
 
-echo Starting Next.js Dev Server on http://localhost:3000 ...
+echo Starting Next.js Dev Server on http://localhost:3002 ...
 echo Press CTRL+C to stop the frontend server.
 echo ==============================================================================
 echo.
 
-call npm run dev
+call npm run dev -- --port 3002
 
 if !errorlevel! neq 0 (
     echo.

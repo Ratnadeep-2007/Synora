@@ -115,6 +115,10 @@ class VisualPatchService:
 
         Deliberately domain-neutral: operations are derived from the incoming
         evidence text itself, never from hardcoded per-domain templates.
+        Domain templates once drew a restaurant ordering flow ("Table QR
+        Ordering", "POS Integration") onto an unrelated hospital project,
+        because the evidence mentioned a QR code and the words "live
+        position" contain the substring "pos". Verified live 2026-10-08.
         The LLM planner path remains the route for rich domain modelling;
         this deterministic path records what was said, nothing more.
         """

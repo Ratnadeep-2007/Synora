@@ -10,7 +10,7 @@ export interface ProjectState {
   // Memory sections are stored as item objects
   // {id, title?, text?, content?, evidence_ids?, ...}, never plain strings.
   // They were typed string[] historically, which hid direct-object renders
-  // from the typechecker (see the ProjectPulseView question crash).
+  // from the typechecker (see ProjectPulseView question crash).
   constraints: Array<{
     id?: string;
     title?: string;

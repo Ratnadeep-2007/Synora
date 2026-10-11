@@ -39,7 +39,7 @@ class SlackConnector(BaseConnector):
     MAX_TIMESTAMP_DRIFT_SECONDS = 300  # 5 minutes replay protection window
 
     def __init__(self, signing_secret: Optional[str] = None):
-        self.signing_secret = signing_secret or "slack_signing_secret_synesis_default"
+        self.signing_secret = settings.SLACK_SIGNING_SECRET if signing_secret is None else signing_secret
 
     def authenticate(self, credentials: Dict[str, Any]) -> bool:
         """
@@ -71,9 +71,9 @@ class SlackConnector(BaseConnector):
         latency = (time.time() - start) * 1000.0
         return ConnectorHealth(
             provider=self.provider_name,
-            status=ConnectorStatus.HEALTHY,
+            status=ConnectorStatus.HEALTHY if settings.SLACK_BOT_TOKEN else ConnectorStatus.AUTHENTICATION_REQUIRED,
             latency_ms=latency,
-            details={"api": "https://slack.com/api", "supports_webhooks": True},
+            details={"api": "https://slack.com/api", "supports_webhooks": True, "configured": bool(settings.SLACK_BOT_TOKEN), "webhook_configured": bool(self.signing_secret)},
         )
 
     def verify_webhook(self, payload: bytes, headers: Dict[str, str], secret: Optional[str] = None) -> bool:

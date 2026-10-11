@@ -45,7 +45,7 @@ def test_connector_registry_health_checks():
     health_map = reg.check_all_health()
     assert "google_meet" in health_map
     assert "slack" in health_map
-    assert health_map["slack"].status == ConnectorStatus.HEALTHY
+    assert health_map["slack"].status == ConnectorStatus.AUTHENTICATION_REQUIRED
     assert health_map["slack"].latency_ms >= 0
 
 

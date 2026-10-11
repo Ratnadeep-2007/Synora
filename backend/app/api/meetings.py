@@ -246,8 +246,14 @@ async def get_meeting_canvas(
         app_state = {}
     canvas_meta = app_state.get("meeting_canvas") or {}
     stored_ids = list(canvas_meta.get("evidence_ids") or [])
+    stored_ai = canvas_meta.get("ai_status")
 
-    if stored_ids != evidence_ids:
+    # Re-sync when the evidence set changed OR when the stored canvas was
+    # drawn by the deterministic fallback (ai_status deterministic/None) or
+    # only partly by the design model (ai_status partial): that means no
+    # design model was reachable for some evidence batches at the time, and
+    # the stub must not be cached forever once a model is available.
+    if stored_ids != evidence_ids or stored_ai in (None, "deterministic", "partial"):
         try:
             service = MeetingSessionIntelligenceService()
             return service.sync_meeting_canvas(
@@ -303,6 +309,72 @@ async def get_meeting(
         metadata = {}
     detail.session_intelligence = metadata.get("session_intelligence")
     return detail
+
+
+@router.delete(
+    "/{meeting_id}",
+    summary="Delete Meeting and Meeting Data",
+    description=(
+        "Permanently deletes one meeting and its meeting-scoped records "
+        "(participants, transcripts, entries, meeting canvas). Evidence rows "
+        "are immutable ground truth: their meeting links are cleared but the "
+        "rows themselves are preserved so project knowledge keeps provenance."
+    ),
+)
+async def delete_meeting(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Hard-delete a user meeting while preserving evidence provenance."""
+    from app.models.excalidraw import ExcalidrawArtifact
+
+    meeting = (
+        db.query(Meeting)
+        .filter(Meeting.id == meeting_id, Meeting.user_id == current_user.id)
+        .first()
+    )
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting '{meeting_id}' not found.",
+        )
+
+    try:
+        # Evidence is immutable: clear its meeting links but keep the rows,
+        # so candidate knowledge built from this meeting keeps provenance.
+        db.query(Evidence).filter(Evidence.meeting_id == meeting_id).update(
+            {
+                Evidence.meeting_id: None,
+                Evidence.transcript_id: None,
+                Evidence.transcript_entry_id: None,
+            },
+            synchronize_session=False,
+        )
+
+        # Meeting canvas lives under a synthetic project key per meeting.
+        db.query(ExcalidrawArtifact).filter(
+            ExcalidrawArtifact.project_id == f"meeting_canvas:{meeting_id}"
+        ).delete(synchronize_session=False)
+
+        # ORM delete cascades participants -> transcripts -> entries.
+        title = meeting.title
+        db.delete(meeting)
+        db.commit()
+
+        return {
+            "success": True,
+            "meeting_id": meeting_id,
+            "title": title,
+            "message": f"Meeting '{title or meeting_id}' and its meeting-scoped data were permanently deleted.",
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Meeting deletion failed for {meeting_id}: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Meeting deletion failed: {str(exc)}",
+        )
 
 
 @router.get(

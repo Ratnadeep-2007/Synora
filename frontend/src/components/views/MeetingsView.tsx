@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Radio,
   FileText,
+  Trash2,
 } from "lucide-react";
 import { MeetingItem } from "@/lib/types";
 import { ProgressLine } from "@/components/ui/primitives";
@@ -46,13 +47,26 @@ interface MeetingsViewProps {
   };
   onSelectMeeting: (meetingId: string) => void;
   vexaCaptureStatus?: VexaCaptureStatus | null;
+  // Server-driven list of captures still running. Rendered with their own
+  // Stop buttons so a reload can never strand a live bot without a control.
+  activeCaptures?: Array<{
+    meeting_id: string;
+    meeting_code?: string;
+    title?: string;
+    status?: string;
+    bot_status?: string;
+    bot_container_id?: string;
+    capture_started_at?: string;
+  }>;
   onStartVexaCapture?: (meetingUrl: string) => Promise<void>;
-  onStopVexaCapture?: () => Promise<void>;
+  onStopVexaCapture?: (meetingId?: string) => Promise<void>;
+  onDeleteMeeting?: (meetingId: string) => Promise<void>;
 }
 
 const STATUS_LABELS: Record<string, string> = {
   idle: "Idle",
   starting: "Starting capture...",
+  joining: "Bot joining the meeting...",
   waiting_for_recording: "In call · waiting for audio",
   recording_ready: "Recording",
   transcribing: "Transcribing",
@@ -70,17 +84,39 @@ export function MeetingsView({
   autoSyncStatus,
   onSelectMeeting,
   vexaCaptureStatus,
+  activeCaptures = [],
   onStartVexaCapture,
   onStopVexaCapture,
+  onDeleteMeeting,
 }: MeetingsViewProps) {
   const [search, setSearch] = useState("");
   const [meetingUrl, setMeetingUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const confirmDeleteMeeting = async (meetingId: string, title?: string) => {
+    if (
+      !window.confirm(
+        `Delete "${title || meetingId}" and its transcript? Evidence rows are kept but unlinked so project knowledge keeps provenance.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(meetingId);
+    try {
+      await onDeleteMeeting?.(meetingId);
+    } catch (err: any) {
+      setError(err?.message || "Could not delete meeting.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const captureStatus = vexaCaptureStatus?.status || "idle";
   const isRunning = [
     "starting",
+    "joining",
     "waiting_for_recording",
     "recording_ready",
     "transcribing",
@@ -213,6 +249,56 @@ export function MeetingsView({
         </section>
       )}
 
+      {/* Active captures — server-driven, so Stop survives reloads. */}
+      {activeCaptures.length > 0 && (
+        <section className="reveal rounded-2xl border border-warning/30 bg-warning/[0.04] p-5 sm:p-6 shadow-xs space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-60" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-warning" />
+            </span>
+            <h2 className="text-sm font-semibold text-text-main">
+              Active captures ({activeCaptures.length})
+            </h2>
+          </div>
+          <div className="space-y-2">
+            {activeCaptures.map((cap) => (
+              <div
+                key={cap.meeting_id}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-text-main truncate">
+                    {cap.title || cap.meeting_code || cap.meeting_id}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-text-muted font-mono">
+                    {STATUS_LABELS[cap.status || ""] || cap.status || "running"}
+                    {cap.bot_status ? ` · bot: ${cap.bot_status}` : ""}
+                    {cap.bot_status === "awaiting_admission"
+                      ? " · open the Meet and admit the bot"
+                      : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => onSelectMeeting(cap.meeting_id)}
+                    className="px-3 py-2 rounded-xl border border-border text-xs font-semibold text-text-main hover:border-primary/40 transition-colors"
+                  >
+                    Open
+                  </button>
+                  <button
+                    onClick={() => onStopVexaCapture?.(cap.meeting_id)}
+                    className="px-3 py-2 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all"
+                  >
+                    Stop bot
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Filter / Search Bar */}
       <div className="flex items-center justify-between gap-4">
         <div className="relative flex-1 max-w-md">
@@ -243,6 +329,9 @@ export function MeetingsView({
             <p>No meeting memory entries recorded yet.</p>
             <p className="text-[11px] text-text-muted/60">
               Deploy Vexa to a live Google Meet or connect your Google Workspace account to begin automatic transcription.
+            </p>
+            <p className="text-[11px] text-text-muted/60">
+              On a different browser than usual? Restore your session ID under Settings to see your existing meetings.
             </p>
           </div>
         ) : (
@@ -291,6 +380,20 @@ export function MeetingsView({
                         <span>Inspect Memory</span>
                         <ChevronRight className="w-3.5 h-3.5" />
                       </span>
+                      {onDeleteMeeting && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            confirmDeleteMeeting(meeting.id, meeting.title);
+                          }}
+                          disabled={deletingId === meeting.id}
+                          title="Delete meeting and its transcript"
+                          aria-label={`Delete ${meeting.title || meeting.id}`}
+                          className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 border border-transparent hover:border-danger/25 transition-all disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 

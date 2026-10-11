@@ -316,6 +316,9 @@ def test_deterministic_plan_has_no_hardcoded_dinein_template():
 
 
 def test_deterministic_plan_grounds_nodes_in_evidence():
+    """In free design mode the deterministic fallback preserves content as a
+    text notebook instead of fabricating a fixed diagram. Evidence ids travel
+    on the note block so provenance survives without any diagram nodes."""
     from app.services.visual_plan_service import VisualPlanService
 
     svc = VisualPlanService.__new__(VisualPlanService)
@@ -325,8 +328,11 @@ def test_deterministic_plan_grounds_nodes_in_evidence():
         focus_prompt=None,
         evidence_snippets=[{"id": "ev_77", "content": "claims return a denial reason"}],
     )
-    assert plan.nodes, "deterministic plan should still produce grounded nodes"
-    assert all(n.evidence_ids for n in plan.nodes)
+    assert plan.canvas_strategy == "text"
+    assert plan.model == "deterministic"
+    blocks = plan.notes_document.sections[0].blocks
+    assert blocks
+    assert "ev_77" in (blocks[0].evidence_ids or [])
 
 
 def test_deterministic_plan_notes_state_source_not_guessed_domain():
@@ -354,7 +360,7 @@ def test_planner_prompt_exposes_evidence_ids_and_requires_citation():
     )
     assert "[EVIDENCE: ev_abc]" in prompt
     assert "evidence_ids" in prompt
-    assert "GROUNDING IS MANDATORY" in prompt
+    assert "CONTENT AND REPRESENTATION ARE OPEN-ENDED" in prompt
 
 
 def test_schema_accepts_singular_evidence_spelling():

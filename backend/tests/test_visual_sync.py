@@ -127,16 +127,18 @@ def test_visual_sync_draws_approved_memory(db_session, test_user):
     svc = VisualSyncService()
     first = svc.sync_project(project.id, db_session)
     assert first["synced"] is True, first
-    assert first["reason"] == "applied"
+    assert first["reason"] == "reconciled"
 
     # Second cycle must be a no-op: memory has not moved since.
     second = svc.sync_project(project.id, db_session)
     assert second["synced"] is False
-    assert second["reason"] == "up_to_date"
+    assert second["reason"] == "no_change"
 
 
-def test_visual_sync_defers_below_evidence_gate(db_session, test_user):
-    """A project with a single evidence row keeps its canvas untouched."""
+def test_visual_sync_has_no_evidence_gate(db_session, test_user):
+    """No restrictions: even a project with zero evidence rows gets its
+    approved memory drawn. The gate was removed per the operator's standing
+    direction that the agent works on the canvas without restrictions."""
     from app.models.project_state import StateChange, ChangeOperation, ApprovalStatus
     from app.services.project_state_service import ProjectStateService
     from datetime import datetime, timezone
@@ -165,5 +167,5 @@ def test_visual_sync_defers_below_evidence_gate(db_session, test_user):
     db_session.commit()
 
     out = VisualSyncService().sync_project(project.id, db_session)
-    assert out["synced"] is False
-    assert out["reason"] == "deferred_below_evidence_gate"
+    assert out["synced"] is True, out
+    assert out["reason"] == "reconciled"

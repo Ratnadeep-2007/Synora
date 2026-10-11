@@ -10,7 +10,9 @@ Synora bridges unstructured discussions across communication channels (Google Me
 1. **Multi-Channel Ingestion Engine**
    - **Google Meet & Calendar Integration**: Automatic sync, push notifications, and transcript parsing.
    - **WhatsApp Baileys Bridge**: Native multi-device WebSocket connection for real-time group and direct chat ingestion.
-   - **Manual Transcript Uploader**: Instant text & file pipeline ingestion.
+   - **Direct Evidence Inputs**: Sources accepts manual text, TXT/Markdown/CSV/TSV/VTT/SRT, text PDFs, DOCX, and Excalidraw JSON (10 MB maximum).
+   - **Drawing Input**: Draw and label an Excalidraw scene from Sources, then save it as evidence. Bound arrow directions are retained in the extracted text; the raw scene remains in source provenance.
+   - **Slack Channels**: Signed Events API messages and paginated channel history use the shared intelligence/routing pipeline.
    - **Google Meet Vexa Capture**: Self-hosted bot capture with post-meeting Sarvam Saaras STT for accounts without native Meet transcripts.
 
 2. **Shared Intelligence & Project Memory**
@@ -95,6 +97,23 @@ npm install
 npm run dev
 ```
 Open `http://localhost:3000` to access the Synora dashboard.
+
+### Direct inputs and Unknown Context
+
+Open **Sources → Add source evidence**. Leave project routing on automatic to resolve input from context, or explicitly select the intended project. Submit manual text, upload a supported document, or open **Draw with Excalidraw**, add text labels, and save the scene. Scanned PDFs and drawings without text labels are rejected rather than producing invented evidence. Duplicate submissions from the same user and target are idempotent.
+
+Unresolved input is persisted as evidence in **Unknown Context** and appears in the Sources context inbox as well as the Project Atlas. Review an item to assign it to an existing project, create a project, keep it for later, or dismiss it. Assignment retains the original provenance and runs the existing memory/visual synchronization path. No additional Unknown Context credentials or migrations are required beyond normal startup schema initialization.
+
+For Slack, configure `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in `.env`, restart the backend, invite the bot to the channel, and enable the relevant message events with `channels:history` (public channels) or `groups:history` (private channels). Set the Events API request URL to your public backend's `/connectors/slack/events`. Use the channel ID in Sources to import history; **Fetch next page** follows Slack's cursor. Without a bot token, history sync reports a configuration error; unsigned events are rejected. Google Meet/Vexa and WhatsApp retain their existing setup requirements.
+
+New API boundaries:
+
+- `POST /connectors/manual/text`: `{ "text": "…", "project_id": "optional target" }`.
+- `POST /connectors/manual/upload`: multipart `file` and optional `project_id`.
+- `POST /connectors/excalidraw/ingest`: scene `name`, `elements`, `app_state`, optional `project_id`.
+- `POST /connectors/slack/sync?channel=C…`: optional `project_id`, `cursor`, and `limit`.
+
+Direct input responses expose `outcome` (`resolved`, `unknown_context`, `duplicate`, or `ignored`), evidence/routing identifiers, and the routing reason. Channel responses include per-message outcomes, pagination and rate-limit state. All user-submitted boundaries require `X-User-ID`; Slack webhooks require the provider signature instead.
 
 ### 5. Running Tests
 Run the complete backend test suite:

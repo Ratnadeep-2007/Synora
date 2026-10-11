@@ -6,11 +6,36 @@ from app.core.config import settings
 
 # Configure database engine
 connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
+_db_url = settings.DATABASE_URL
+if _db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
+elif _db_url.startswith("postgresql://"):
+    # Dashboard URLs (Neon/Render) carry the bare scheme, which SQLAlchemy
+    # maps to psycopg2. Prefer psycopg3, but fall back to pure-Python
+    # pg8000: locked-down Windows hosts block psycopg's binary DLL via
+    # Application Control, while Render's Linux build uses psycopg fine.
+    try:
+        import psycopg  # noqa: F401
+
+        _db_url = "postgresql+psycopg://" + _db_url[len("postgresql://"):]
+    except ImportError:
+        # pg8000 speaks neither sslmode nor channel_binding query params:
+        # fold sslmode=require into an SSL context and drop the rest.
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        parts = urlsplit("postgresql://" + _db_url[len("postgresql://"):])
+        params = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("channel_binding",)]
+        query = [(k, v) for k, v in params if k != "sslmode"]
+        ssl_required = any(k == "sslmode" and v == "require" for k, v in params)
+        if ssl_required:
+            import ssl as _ssl
+
+            connect_args["ssl_context"] = _ssl.create_default_context()
+        _db_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+        _db_url = "postgresql+pg8000://" + _db_url[len("postgresql://"):]
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    _db_url,
     connect_args=connect_args,
     echo=False,
     pool_pre_ping=True,

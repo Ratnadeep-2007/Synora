@@ -59,6 +59,16 @@ export function getFrontendUserId(): string {
   return getSessionUserId();
 }
 
+// Restore an identity from another browser (Settings UI). The meetings,
+// projects and memory visible in the app are scoped to this id, so moving
+// it is what makes a second browser see the same workspace.
+export function setFrontendUserId(id: string): boolean {
+  const clean = (id || "").trim();
+  if (typeof window === "undefined" || !clean) return false;
+  window.localStorage.setItem(USER_ID_KEY, clean);
+  return true;
+}
+
 // Public base URL of the backend (runtime-injected when deployed).
 // Used for full-page navigations such as the OAuth flow, where the api()
 // helper's relative-path fetch cannot go.
@@ -76,7 +86,7 @@ export function getFrontendBaseUrl(): string {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${apiBaseUrl()}${path}`;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...((options?.headers as Record<string, string>) || {}),
   };
   if (!headers["X-User-ID"]) {
@@ -110,7 +120,38 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export interface InputOutcome {
+  outcome: "resolved" | "unknown_context" | "duplicate" | "ignored";
+  source: string;
+  project_id?: string;
+  evidence_id?: string;
+  unknown_item_id?: string;
+  reason: string;
+}
+
 export const api = {
+  ingestManualText: (text: string, project_id?: string) => request<InputOutcome>("/connectors/manual/text", {
+    method: "POST", body: JSON.stringify({ text, project_id }),
+  }),
+  uploadSourceFile: (file: File, projectId?: string) => {
+    const body = new FormData();
+    body.append("file", file);
+    if (projectId) body.append("project_id", projectId);
+    return request<InputOutcome>("/connectors/manual/upload", { method: "POST", body });
+  },
+  ingestDrawing: (scene: { name: string; elements: any[]; app_state?: any }, project_id?: string) =>
+    request<InputOutcome>("/connectors/excalidraw/ingest", {
+      method: "POST", body: JSON.stringify({ ...scene, project_id }),
+    }),
+  syncSlackChannel: (channel: string, projectId?: string, cursor?: string) => {
+    const qs = new URLSearchParams({ channel });
+    if (projectId) qs.set("project_id", projectId);
+    if (cursor) qs.set("cursor", cursor);
+    return request<{ outcomes: InputOutcome[]; next_cursor?: string; messages_fetched: number; rate_limited: boolean; retry_after_seconds?: number }>(
+      `/connectors/slack/sync?${qs}`, { method: "POST" }
+    );
+  },
+
   // 1. Project State
   getProjectState: (projectId: string): Promise<ProjectState> =>
     request<ProjectState>(`/projects/${projectId}/state`),
@@ -173,6 +214,11 @@ export const api = {
   getMeetings: (): Promise<MeetingItem[]> =>
     request<MeetingItem[]>("/meetings"),
 
+  deleteMeeting: (meetingId: string): Promise<{ success: boolean; meeting_id: string; message: string }> =>
+    request(`/meetings/${meetingId}`, {
+      method: "DELETE",
+    }),
+
   // Server-side Google Meet capture via Vexa; Sarvam transcribes after the meeting.
   startVexaCapture: (meeting_url: string): Promise<any> =>
     request<any>("/vexa/meetings/start", {
@@ -185,6 +231,11 @@ export const api = {
 
   stopVexaCapture: (meetingId: string): Promise<any> =>
     request<any>(`/vexa/meetings/${meetingId}/stop`, { method: "POST" }),
+
+  // Captures still running for this user. The Stop buttons are driven by
+  // this server state so a page reload can never hide a live bot.
+  getActiveVexaCaptures: (): Promise<{ ok: boolean; active: any[] }> =>
+    request<{ ok: boolean; active: any[] }>("/vexa/meetings/active"),
 
   processVexaCapture: (meetingId: string): Promise<any> =>
     request<any>(`/vexa/meetings/${meetingId}/process`, { method: "POST" }),
@@ -233,11 +284,6 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-
-  syncSlackChannel: (channel: string, projectId: string): Promise<any> =>
-    request<any>(`/connectors/slack/sync?channel=${encodeURIComponent(channel)}&project_id=${encodeURIComponent(projectId)}`, {
-      method: "POST",
-    }),
 
   // Event-driven Meet pipeline: subscriptions, Pub/Sub event records, reconcile
   createMeetSubscription: (payload: {

@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import {
   ArrowLeft,
   Clock,
+  Trash2,
   User,
   ListChecks,
   MessageSquareText,
@@ -77,6 +78,7 @@ interface MeetingDetailViewProps {
   candidates: CandidateKnowledgeItem[];
   onBack: () => void;
   onOpenEvidence: (title: string, contextType: string, evidenceIds: string[]) => void;
+  onDeleteMeeting?: (meetingId: string) => Promise<void>;
 }
 
 export function MeetingDetailView({
@@ -86,12 +88,35 @@ export function MeetingDetailView({
   candidates,
   onBack,
   onOpenEvidence,
+  onDeleteMeeting,
 }: MeetingDetailViewProps) {
   const [intelligenceFilter, setIntelligenceFilter] = useState<string>("all");
   const [meetingSurface, setMeetingSurface] = useState<"canvas" | "intelligence">("canvas");
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (
+      !window.confirm(
+        "Delete this meeting and its transcript? Evidence rows are kept but unlinked so project knowledge keeps provenance."
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await onDeleteMeeting?.(meetingId);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const meeting = meetingData?.meeting || meetingData || {};
-  const entries = meetingData?.transcript_entries || [];
+  // Entries arrive nested under transcripts[].entries; flatten them in
+  // time order. The previous binding read a flat transcript_entries key
+  // the API never returns, so the transcript always rendered empty.
+  const entries = ((meetingData?.transcripts || meeting?.transcripts || []) as any[]).flatMap(
+    (t: any) => t?.entries || []
+  ).sort((a: any, b: any) => String(a?.start_time || "").localeCompare(String(b?.start_time || "")));
 
   const filteredCandidates = candidates.filter((c) => {
     if (intelligenceFilter === "all") return true;
@@ -102,13 +127,25 @@ export function MeetingDetailView({
     <div className="space-y-6 view-enter">
       {/* Top back navigation */}
       <div>
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text-main transition-colors mb-3"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Back to Meetings</span>
-        </button>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text-main transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back to Meetings</span>
+          </button>
+          {onDeleteMeeting && (
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-danger hover:bg-danger/10 border border-transparent hover:border-danger/25 transition-all disabled:opacity-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {deleting ? "Deleting…" : "Delete meeting"}
+            </button>
+          )}
+        </div>
 
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -350,7 +387,7 @@ export function MeetingDetailView({
                   <div className="flex items-center justify-between text-xs text-text-muted">
                     <div className="flex items-center gap-1.5 font-medium text-text-main">
                       <User className="w-3.5 h-3.5 text-primary" />
-                      <span>{entry.participant_name || entry.speaker || "Participant"}</span>
+                      <span>{entry.participant_display_name || entry.participant_name || entry.speaker || "Participant"}</span>
                     </div>
                     <div className="flex items-center gap-1 font-mono text-[11px]">
                       <Clock className="w-3 h-3" />

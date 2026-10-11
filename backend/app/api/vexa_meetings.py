@@ -21,6 +21,22 @@ from app.services.vexa_sarvam_service import (
 
 router = APIRouter(prefix="/vexa", tags=["Vexa Google Meet"])
 
+# Capture states that mean "something is still running". Shared by the
+# start guard, the active list, and the UI, so a reload can never hide a
+# live bot: the Stop button is driven by this server state, not by
+# in-memory page state.
+ACTIVE_CAPTURE_STATUSES = frozenset({
+    "starting",
+    "joining",
+    "waiting_for_recording",
+    "recording_ready",
+    "transcribing",
+    "transcribing_sarvam",
+    "transcribing_whisper",
+    "ingesting",
+    "stopping",
+})
+
 
 class VexaMeetingStartRequest(BaseModel):
     meeting_url: str = Field(..., min_length=1)
@@ -81,16 +97,7 @@ async def start_vexa_capture(
         db.flush()
 
     capture = get_capture_metadata(meeting)
-    if capture.get("status") in {
-        "starting",
-        "waiting_for_recording",
-        "recording_ready",
-        "transcribing",
-        "transcribing_sarvam",
-        "transcribing_whisper",
-        "ingesting",
-        "stopping",
-    }:
+    if capture.get("status") in ACTIVE_CAPTURE_STATUSES:
         return {
             "ok": True,
             "meeting_id": meeting.id,
@@ -135,6 +142,56 @@ async def start_vexa_capture(
     }
 
 
+@router.get(
+    "/meetings/active",
+    summary="List captures still running for the current user",
+    description=(
+        "Returns every meeting whose capture has not finished. The UI drives "
+        "its Stop buttons from this server state, so a page reload can never "
+        "hide a live bot. Registered before /meetings/{meeting_id} so the "
+        "literal path is not swallowed by the parameterized route."
+    ),
+)
+async def list_active_captures(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    import json as _json
+
+    meetings = (
+        db.query(Meeting)
+        .filter(Meeting.user_id == current_user.id)
+        .order_by(Meeting.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    active = []
+    for meeting in meetings:
+        try:
+            capture = _json.loads(meeting.metadata_json or "{}").get("vexa_capture", {})
+        except Exception:
+            capture = {}
+        if not isinstance(capture, dict):
+            continue
+        if capture.get("processed"):
+            continue
+        if capture.get("status") not in ACTIVE_CAPTURE_STATUSES:
+            continue
+        active.append(
+            {
+                "meeting_id": meeting.id,
+                "meeting_code": capture.get("meeting_code")
+                or meeting.provider_conference_id,
+                "title": meeting.title,
+                "status": capture.get("status"),
+                "bot_status": capture.get("bot_status"),
+                "bot_container_id": capture.get("bot_container_id"),
+                "capture_started_at": capture.get("capture_started_at"),
+            }
+        )
+    return {"ok": True, "active": active}
+
+
 @router.get("/meetings/{meeting_id}")
 async def get_vexa_capture_status(
     meeting_id: str,
@@ -166,6 +223,9 @@ async def get_vexa_capture_status(
         "transcription_fallback_reason": capture.get("transcription_fallback_reason"),
         "sarvam_job_id": capture.get("sarvam_job_id"),
         "whisper_job_id": capture.get("whisper_job_id"),
+        "bot_status": capture.get("bot_status"),
+        "bot_status_updated_at": capture.get("bot_status_updated_at"),
+        "bot_container_id": capture.get("bot_container_id"),
         "error": capture.get("error"),
     }
 
@@ -252,16 +312,7 @@ async def process_vexa_capture(
             "message": "This meeting has already been processed.",
         }
 
-    if status_value in {
-        "starting",
-        "waiting_for_recording",
-        "recording_ready",
-        "transcribing",
-        "transcribing_sarvam",
-        "transcribing_whisper",
-        "ingesting",
-        "stopping",
-    }:
+    if status_value in ACTIVE_CAPTURE_STATUSES:
         return {
             "ok": True,
             "meeting_id": meeting.id,

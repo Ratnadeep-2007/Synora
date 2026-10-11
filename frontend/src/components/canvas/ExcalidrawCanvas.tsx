@@ -375,6 +375,24 @@ export const ExcalidrawCanvas = React.memo(function ExcalidrawCanvas({
     setExcalidrawAPI(api);
   }, []);
 
+  // Re-fit content when entering fullscreen: the mount-time auto-fit above
+  // ran for the small container, so without this the maximized canvas keeps
+  // the old scroll/zoom and looks empty.
+  useEffect(() => {
+    if (!isFullscreen || !excalidrawAPI) return;
+    const timer = window.setTimeout(() => {
+      try {
+        if (latestVisibleElementsRef.current.length === 0) return;
+        excalidrawAPI.scrollToContent(undefined, {
+          fitToViewport: true,
+          viewportZoomFactor: 0.85,
+          animate: false,
+        });
+      } catch {}
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [isFullscreen, excalidrawAPI]);
+
   // Listen to viewport changes from API as well
   useEffect(() => {
     if (!excalidrawAPI) return;

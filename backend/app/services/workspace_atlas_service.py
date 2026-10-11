@@ -15,6 +15,7 @@ from app.models.project import Project
 from app.models.project_state import ProjectState
 from app.models.intelligence import CandidateKnowledge
 from app.services.excalidraw_service import ExcalidrawService
+from app.services.excalidraw_compiler import _wrap_text
 from app.services.visual_revision_service import VisualRevisionService
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ STYLE = {
     "question": {"stroke": "#2563eb", "background": "#eff6ff", "text": "#1e40af"},
     "assumption": {"stroke": "#64748b", "background": "#f8fafc", "text": "#334155"},
     "unknown": {"stroke": "#b45309", "background": "#fffbeb", "text": "#78350f"},
+    "note": {"stroke": "#d8ded6", "background": "#fbfdfb"},
 }
 
 
@@ -580,6 +582,105 @@ class WorkspaceAtlasService:
             )
             content_bottom = content_y + 120
 
+        # State notes: the memory mirror. The free canvas above belongs to
+        # the agent; below it, one card per remembered item, grouped by
+        # section. No fixed diagram and no restricted format - just project
+        # memory, visible in its own column. Frame height derives from real
+        # content, so it grows as the project learns.
+        state_items = self._state_note_items(state)
+        if state_items:
+            notes_top = content_bottom + 28
+            scene.append({
+                "id": self._id(project.id, "notes-divider"),
+                "type": "line",
+                "x": content_x,
+                "y": notes_top,
+                "width": content_w,
+                "height": 0,
+                "points": [[0, 0], [content_w, 0]],
+                "strokeColor": "#d7ddd6",
+                "backgroundColor": "transparent",
+                "fillStyle": "solid",
+                "strokeWidth": 1,
+                "roughness": 0,
+                "opacity": 100,
+                "angle": 0,
+                "isDeleted": False,
+                "customData": {"atlas": {"type": "notes_divider", "project_id": project.id}},
+            })
+            y = notes_top + 18
+            current_section = ""
+            for idx, (section, title, content) in enumerate(state_items):
+                if section != current_section:
+                    current_section = section
+                    scene.append(self._text(
+                        self._id(project.id, f"notes-sec-{section}"),
+                        content_x,
+                        y,
+                        content_w,
+                        20,
+                        section,
+                        10,
+                        "#68756b",
+                        bold=True,
+                        custom_data={"atlas": {"type": "notes_section_label", "project_id": project.id}},
+                    ))
+                    y += 26
+                body_raw = str(content or "")[:280]
+                title_wrapped = _wrap_text(str(title or "Untitled")[:90], content_w - 24, 11)
+                body_wrapped = _wrap_text(body_raw, content_w - 24, 10)
+                body_lines = max(1, len(body_wrapped.split("\n"))) if body_wrapped else 0
+                title_lines = max(1, len(title_wrapped.split("\n")))
+                # Card grows with wrapped lines so text never crosses the border.
+                # Same line-height math as _text (font*1.3*lines+6) plus padding.
+                title_needed = 11 * 1.3 * title_lines + 6
+                body_needed = (10 * 1.3 * body_lines + 6) if body_wrapped else 0
+                card_h = 8 + title_needed + 4 + body_needed + 14
+                card_id = self._id(project.id, f"note-{section}-{idx}")
+                scene.append(self._rect(
+                    card_id,
+                    content_x,
+                    y,
+                    content_w,
+                    card_h,
+                    STYLE["note"],
+                    opacity=100,
+                    roundness=3,
+                ))
+                scene[-1]["customData"] = {
+                    "atlas": {
+                        "type": "knowledge_note",
+                        "project_id": project.id,
+                        "section": section,
+                    }
+                }
+                scene.append(self._text(
+                    card_id + "-title",
+                    content_x + 12,
+                    y + 8,
+                    content_w - 24,
+                    title_needed,
+                    title_wrapped,
+                    11,
+                    "#1f3a24",
+                    bold=True,
+                    custom_data={"atlas": {"type": "knowledge_note_title", "project_id": project.id}},
+                ))
+                if body_wrapped:
+                    scene.append(self._text(
+                        card_id + "-body",
+                        content_x + 12,
+                        y + 8 + title_needed + 4,
+                        content_w - 24,
+                        body_needed,
+                        body_wrapped,
+                        10,
+                        "#506353",
+                        custom_data={"atlas": {"type": "knowledge_note_body", "project_id": project.id}},
+                    ))
+                y += card_h + 12
+            content_bottom = y
+
         column_bottom = content_bottom + 56
         column_height = max(520, int(round(column_bottom - ATLAS_PADDING_Y)))
         frame_rect = self._rect(
@@ -593,6 +694,39 @@ class WorkspaceAtlasService:
             roundness=3,
         )
         return [frame_rect] + scene
+
+    def _state_note_items(self, state) -> List[Tuple[str, str, str]]:
+        """Flatten project memory into (section, title, content) note rows.
+
+        Reads every memory section; the canvas makes no judgment about which
+        sections deserve visibility. Empty items are skipped, nothing else
+        is filtered.
+        """
+        rows: List[Tuple[str, str, str]] = []
+        for section, field in (
+            ("Requirements", "requirements_json"),
+            ("Decisions", "decisions_json"),
+            ("Architecture", "architecture_json"),
+            ("Questions", "open_questions_json"),
+            ("Assumptions", "assumptions_json"),
+            ("Constraints", "constraints_json"),
+        ):
+            for item in self._json_list(getattr(state, field, "[]") if state else "[]"):
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or item.get("text") or item.get("component") or "").strip()
+                content = str(
+                    item.get("content") or item.get("details") or item.get("text") or ""
+                ).strip()
+                if title or content:
+                    # Memory items with only free text reuse it as both title
+                    # and body. Rendering both draws the same sentence twice
+                    # on the card, so the body is dropped when it duplicates
+                    # the title.
+                    if content and content.strip() == (title or "Untitled").strip():
+                        content = ""
+                    rows.append((section, title or "Untitled", content))
+        return rows
 
     def _column_height(self, state: Optional[ProjectState]) -> int:
         reqs = len(self._json_list(state.requirements_json if state else "[]"))
@@ -1650,15 +1784,20 @@ class WorkspaceAtlasService:
         bold: bool = False,
         custom_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # Automatic wrapping: no caller can overflow its border again.
+        # Text is broken to the element width and the box grows to fit.
+        wrapped = _wrap_text(str(text or ""), max(60.0, float(width)), float(font_size))
+        lines = max(1, len(wrapped.split("\n")))
+        needed = float(font_size) * 1.3 * lines + 6
         return {
             "id": element_id,
             "type": "text",
             "x": x,
             "y": y,
             "width": width,
-            "height": height,
-            "text": text,
-            "originalText": text,
+            "height": max(float(height), needed),
+            "text": wrapped,
+            "originalText": wrapped,
             "fontSize": font_size,
             "fontFamily": 1,
             "textAlign": "left",

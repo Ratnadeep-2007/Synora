@@ -371,6 +371,26 @@ export default function Home() {
     }
   };
 
+  const handleDeleteMeeting = async (meetingId: string) => {
+    // Optimistic removal so the list responds instantly; the 5s refreshAll
+    // loop plus an explicit refresh then reconciles with server state.
+    const previous = meetings;
+    setMeetings((prev) => prev.filter((m) => m.id !== meetingId));
+    if (selectedMeetingId === meetingId) {
+      setSelectedMeetingId(null);
+      setMeetingDetail(null);
+      setMeetingCanvas(null);
+    }
+    try {
+      await api.deleteMeeting(meetingId);
+      await refreshAll();
+    } catch (err: any) {
+      // Roll back the optimistic removal so a failed delete never hides data.
+      setMeetings(previous);
+      throw new Error(err.message || "Meeting deletion failed");
+    }
+  };
+
   const requireProject = (): string | null => {
     if (!currentProjectId) {
       alert("Create or select a project first.");
@@ -537,12 +557,31 @@ export default function Home() {
     setVexaCaptureStatus(result);
   };
 
-  const handleStopVexaCapture = async () => {
-    if (!vexaCaptureMeetingId) return;
-    const result = await api.stopVexaCapture(vexaCaptureMeetingId);
+  const handleStopVexaCapture = async (meetingId?: string) => {
+    const target = meetingId || vexaCaptureMeetingId;
+    if (!target) return;
+    const result = await api.stopVexaCapture(target);
     setVexaCaptureStatus(result);
     await pollVexaCapture();
+    await pollActiveCaptures();
   };
+
+  const [activeCaptures, setActiveCaptures] = useState<any[]>([]);
+
+  const pollActiveCaptures = useCallback(async () => {
+    try {
+      const res = await api.getActiveVexaCaptures();
+      setActiveCaptures(res.active || []);
+    } catch {
+      // Non-blocking; an empty list simply hides the section.
+    }
+  }, []);
+
+  useEffect(() => {
+    pollActiveCaptures();
+    const id = setInterval(pollActiveCaptures, 5000);
+    return () => clearInterval(id);
+  }, [pollActiveCaptures]);
 
   const handleSyncLivingWorkspace = async () => {
     const projectId = requireProject();
@@ -742,6 +781,20 @@ export default function Home() {
           connections={connections}
           activeProjectName={activeProject?.name || "Synora Core"}
           projectVersion={state?.current_version || 1}
+          projects={projects}
+          currentProjectId={currentProjectId || undefined}
+          onSelectProject={(pId) => {
+            setSelectedMeetingId(null);
+            if (pId === currentProjectId) return;
+            setCurrentProjectId(pId);
+            setState(null);
+            setExcalArtifact(null);
+            setExcalProposals([]);
+            setCandidates([]);
+            setAllEvidence([]);
+            setHistory([]);
+            refreshAll(pId);
+          }}
           onNavigateToTab={(tab: NavTab) => {
             setSelectedMeetingId(null);
             setCurrentTab(tab);
@@ -783,8 +836,10 @@ export default function Home() {
             autoSyncStatus={autoSyncStatus}
             onSelectMeeting={(mId) => setSelectedMeetingId(mId)}
             vexaCaptureStatus={vexaCaptureStatus}
+            activeCaptures={activeCaptures}
             onStartVexaCapture={handleStartVexaCapture}
             onStopVexaCapture={handleStopVexaCapture}
+            onDeleteMeeting={handleDeleteMeeting}
           />
         ) : (
           <MeetingDetailView
@@ -792,16 +847,24 @@ export default function Home() {
             meetingData={meetingDetail}
             meetingCanvas={meetingCanvas}
             candidates={candidates.filter(
-              (c) => !c.meeting_id || c.meeting_id === selectedMeetingId
+              // Strict meeting scoping: only this meeting's own candidates.
+              // Legacy rows without a meeting_id previously leaked into every
+              // meeting's detail view (e.g. data-pipeline items appearing on
+              // a hospital-queue meeting).
+              (c) => c.meeting_id && c.meeting_id === selectedMeetingId
             )}
             onBack={() => setSelectedMeetingId(null)}
             onOpenEvidence={handleOpenEvidence}
+            onDeleteMeeting={handleDeleteMeeting}
           />
         ))}
 
       {/* Sources Screen */}
       {currentTab === "sources" && (
         <SourcesView
+          projects={projects}
+          unknownPendingCount={unknownPendingCount}
+          onChanged={handleAtlasChanged}
           connections={connections}
           subscriptionsActive={activeSubscriptions.length > 0}
           lastMeetEventAt={lastMeetEventAt}

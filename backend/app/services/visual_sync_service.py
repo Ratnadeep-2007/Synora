@@ -32,8 +32,24 @@ def _scene_fingerprint(elements: List[Dict[str, Any]]) -> str:
 
 def _is_agent_managed(element: Dict[str, Any]) -> bool:
     custom = element.get("customData") or {}
-    visual = custom.get("visual") if isinstance(custom, dict) else None
-    return isinstance(visual, dict) and bool(visual)
+    if isinstance(custom, dict):
+        if isinstance(custom.get("visual"), dict) and bool(custom.get("visual")):
+            return True
+        # The atlas service tags with customData.atlas instead of .visual.
+        if isinstance(custom.get("atlas"), dict) and bool(custom.get("atlas")):
+            return True
+    # Fallback for scenes written before the provenance markers existed:
+    # every compiler/atlas id scheme below is machine-generated, while
+    # human-drawn elements get random ids. Without this, stale pre-fix
+    # elements are mistaken for user drawings and carried forward forever.
+    eid = str(element.get("id") or "")
+    return eid.startswith((
+        "node_", "label_", "annotation_", "edge_", "edge_label_",
+        "group_backdrop_", "group_label_", "conn_",
+        "notes_", "note_", "note_block_", "note_section_",
+        "sticky_text_", "lbl_notes", "legacy_", "legacy_block_",
+        "visual_", "atlas_",
+    ))
 
 
 def _canvas_summary(scene: List[Dict[str, Any]]) -> List[str]:
@@ -174,6 +190,17 @@ class VisualSyncService:
             json.dumps(plan_dump, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
 
+        # Post-render verification (warn-first, never blocking): diff the
+        # compiled scene against memory + evidence so ungrounded sentences
+        # are flagged, badged, and logged — never silently rendered.
+        from app.services.note_verification_service import verify_scene
+
+        verification = verify_scene(
+            merged_scene,
+            [json.dumps(state_summary, default=str, ensure_ascii=False)]
+            + [str(snippet.get("content") or "") for snippet in evidence_snippets],
+        )
+
         revision = revision_service.commit_revision(
             project_id=project_id,
             scene=merged_scene,
@@ -189,6 +216,7 @@ class VisualSyncService:
                     "evidence_ids": [row.id for row in evidence_rows],
                     "notes_sections": len(getattr(plan, "notes_sections", []) or []),
                     "visualizations": len(getattr(plan, "visualizations", []) or []),
+                    "verification": verification,
                 }
             },
             operations=[
@@ -219,6 +247,13 @@ class VisualSyncService:
             plan.canvas_strategy,
             proper_diagram,
         )
+        if verification.get("unverified_total"):
+            logger.warning(
+                "visual_sync_unverified_items: project=%s unverified=%d checked=%d",
+                project_id,
+                verification.get("unverified_total"),
+                verification.get("checked"),
+            )
         return {
             "project_id": project_id,
             "synced": True,
@@ -229,6 +264,7 @@ class VisualSyncService:
             "representation": plan.canvas_strategy,
             "diagram": proper_diagram,
             "state_version": getattr(state_row, "current_version", None),
+            "verification": verification,
         }
 
     def sync_all(

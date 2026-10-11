@@ -5,7 +5,7 @@ import logging
 import re
 import time
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -17,6 +17,10 @@ from app.core.rbac import Permission, enforce_permission
 from app.models.evidence import Evidence
 from app.models.source_event import SourceEvent
 from app.models.user import User
+from pydantic import BaseModel, Field
+from app.schemas.excalidraw import ExcalidrawIngestRequest
+from app.services.direct_input_service import MAX_UPLOAD_BYTES, process_input, extract_upload, validate_target, diagram_text
+from app.services.source_intelligence_pipeline import SourceIntelligencePipeline
 from app.services.ingestion_service import IngestionService
 from app.services.whatsapp_service import WhatsAppIntelligenceService
 from app.services.whatsapp_export_parser import WhatsAppZipParser
@@ -87,34 +91,24 @@ async def slack_events_webhook(
     if payload.get("type") == "url_verification":
         return {"challenge": payload.get("challenge")}
 
-    # 3. Normalize & Ingest (casual chit-chat never reaches the platform).
+    # Signed channel events use the same evidence, knowledge and routing join.
     normalized_events = connector.handle_webhook(payload=payload, headers=headers)
-    from app.services.context_intelligence import ContextIntelligenceService
-
-    ingested_events = []
-    ignored_casual = 0
-    for event_in in normalized_events:
-        _text = (event_in.payload or {}).get("text", "") if isinstance(event_in.payload, dict) else ""
-        if ContextIntelligenceService.is_casual_chatter(_text):
-            ignored_casual += 1
-            metrics.increment("ingestion_events_total", labels={"source": "slack", "status": "ignored_casual"})
-            continue
-        ingested = ingestion_service.ingest_event(event_in, db)
-        ingested_events.append(ingested.event_id)
-        metrics.increment("ingestion_events_total", labels={"source": "slack"})
-
-    return {
-        "ok": True,
-        "events_received": len(normalized_events),
-        "ingested_event_ids": ingested_events,
-        "ignored_casual": ignored_casual,
-    }
+    outcomes = [SourceIntelligencePipeline().process(
+        source="slack", payload=event.payload, db=db,
+        tenant_id="default_tenant", actor_id=event.actor_id,
+        source_event_id=event.source_event_id, event_type=event.event_type,
+        occurred_at=event.occurred_at,
+    ).model_dump() for event in normalized_events]
+    return {"ok": True, "events_received": len(normalized_events),
+            "ingested_event_ids": [o["source_event_id"] for o in outcomes if o["outcome"] != "ignored"],
+            "ignored_casual": sum(o["outcome"] == "ignored" for o in outcomes),
+            "outcomes": outcomes}
 
 
 @router.post("/slack/sync", summary="Synchronize Slack Channel Messages")
 def sync_slack_channel(
     channel: str = Query(..., description="Slack Channel ID (e.g. C012345678)"),
-    project_id: str = Query("proj_default", description="Associated Synesis Project ID"),
+    project_id: Optional[str] = Query(None, description="Optional trusted target project"),
     cursor: Optional[str] = Query(None, description="Optional pagination cursor"),
     limit: int = Query(50, ge=1, le=200, description="Max messages to fetch"),
     db: Session = Depends(get_db),
@@ -128,6 +122,9 @@ def sync_slack_channel(
     if not connector:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Slack connector not registered.")
 
+    validate_target(project_id, db)
+    if not settings.SLACK_BOT_TOKEN:
+        raise HTTPException(503, "Set SLACK_BOT_TOKEN to synchronize a Slack channel.")
     tenant_id = getattr(current_user, "tenant_id", "default_tenant")
     try:
         fetch_result = connector.fetch_events(
@@ -142,34 +139,19 @@ def sync_slack_channel(
         logger.error(f"Slack channel sync failed: {exc}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    ingested_events = []
-    from app.services.context_intelligence import ContextIntelligenceService as _Ctx
-
-    ignored_casual = 0
-    for event_in in fetch_result.events:
-        _text = event_in.payload.get("text", "") if isinstance(event_in.payload, dict) else ""
-        if _Ctx.is_casual_chatter(_text):
-            ignored_casual += 1
-            metrics.increment("ingestion_events_total", labels={"source": "slack", "status": "ignored_casual"})
-            continue
-        ingested = ingestion_service.ingest_event(event_in, db)
-        ingested_events.append(ingested.event_id)
-        ingestion_service.create_evidence_from_event(
-            event=ingested,
-            db=db,
-            content=f"Slack [{channel}] {event_in.actor_id}: {event_in.payload.get('text', '')}",
-            metadata={"channel": channel, "slack_ts": event_in.payload.get("ts")},
-        )
-        metrics.increment("ingestion_events_total", labels={"source": "slack"})
-
+    outcomes = [SourceIntelligencePipeline().process(
+        source="slack", payload=event.payload, db=db, tenant_id=tenant_id,
+        actor_id=event.actor_id, project_id=project_id,
+        source_event_id=event.source_event_id, event_type=event.event_type,
+        occurred_at=event.occurred_at,
+    ).model_dump() for event in fetch_result.events]
     return {
-        "ok": True,
-        "channel": channel,
-        "messages_fetched": len(fetch_result.events),
-        "ingested_event_ids": ingested_events,
-        "ignored_casual": ignored_casual,
-        "has_more": fetch_result.has_more,
-        "next_cursor": fetch_result.next_cursor,
+        "ok": True, "channel": channel, "messages_fetched": len(fetch_result.events),
+        "ingested_event_ids": [o["source_event_id"] for o in outcomes if o["outcome"] != "ignored"],
+        "ignored_casual": sum(o["outcome"] == "ignored" for o in outcomes),
+        "outcomes": outcomes, "has_more": fetch_result.has_more,
+        "next_cursor": fetch_result.next_cursor, "rate_limited": fetch_result.rate_limited,
+        "retry_after_seconds": fetch_result.retry_after_seconds,
     }
 
 
@@ -560,24 +542,44 @@ async def import_whatsapp_export(
     }
 
 
+class DrawingInput(ExcalidrawIngestRequest):
+    project_id: Optional[str] = None
+
+
 @router.post("/excalidraw/ingest", summary="Ingest Excalidraw Diagram via Unified Context Intelligence")
 def ingest_excalidraw_connector(
-    payload: Dict[str, Any],
+    payload: DrawingInput,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    from app.schemas.excalidraw import ExcalidrawIngestRequest
-    from app.services.excalidraw_service import ExcalidrawService
-
-    req = ExcalidrawIngestRequest(
-        name=payload.get("name") or "Imported Architecture Diagram",
-        elements=payload.get("elements") or [],
-        app_state=payload.get("app_state") or {},
-    )
-    excal_service = ExcalidrawService()
-    tenant = getattr(current_user, "tenant_id", None) or "default_tenant"
-    actor = getattr(current_user, "email", None) or "user"
-    return excal_service.ingest_unassociated_diagram(req, db, tenant_id=tenant, actor_id=actor)
+    req = payload
+    text = diagram_text(req.elements)
+    return process_input("excalidraw", {"text": text, "name": req.name,
+                         "elements": req.elements, "app_state": req.app_state}, db,
+                         getattr(current_user, "tenant_id", None) or "default_tenant",
+                         current_user.id, payload.project_id)
 
 
+class ManualTextInput(BaseModel):
+    text: str = Field(min_length=1, max_length=200_000)
+    title: str = Field(default="Manual text", max_length=255)
+    project_id: Optional[str] = None
 
+
+@router.post("/manual/text", summary="Ingest manual text through shared routing")
+def ingest_manual_text(body: ManualTextInput, db: Session = Depends(get_db),
+                       current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    return process_input("manual_text", {"text": body.text, "title": body.title}, db,
+                         getattr(current_user, "tenant_id", None) or "default_tenant",
+                         current_user.id, body.project_id)
+
+
+@router.post("/manual/upload", summary="Ingest a document or Excalidraw scene")
+async def ingest_manual_upload(file: UploadFile = File(...), project_id: Optional[str] = Form(None),
+                               db: Session = Depends(get_db),
+                               current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    source, payload = extract_upload(file.filename or "", data)
+    return process_input(source, payload, db,
+                         getattr(current_user, "tenant_id", None) or "default_tenant",
+                         current_user.id, project_id)

@@ -13,11 +13,15 @@ interface ContextInboxPanelProps {
 
 const SOURCE_LABEL: Record<string, string> = {
   whatsapp: "WhatsApp",
+  slack: "Slack",
+  manual_text: "Manual text",
+  file_upload: "File upload",
   google_meet: "Google Meet",
   excalidraw: "Excalidraw",
 };
 
 export function ContextInboxPanel({ projects, pendingCount, onChanged }: ContextInboxPanelProps) {
+  const [error, setError] = useState("");
   const [items, setItems] = useState<UnknownContextItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -27,13 +31,15 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
 
   const load = async () => {
     setLoading(true);
+    setError("");
     try {
-      const data = await api.listUnknownContext("pending", 8);
+      const data = await api.listUnknownContext("pending", 100);
       setItems(data);
       if (selectedId && !data.some((item) => item.id === selectedId)) {
         setSelectedId(data[0]?.id || null);
       }
-    } catch {
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load context inbox");
       setItems([]);
       setSelectedId(null);
     } finally {
@@ -68,6 +74,8 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
       await api.assignUnknownItem(itemId, projectId);
       await load();
       await onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Context action failed");
     } finally {
       setBusy(false);
     }
@@ -79,6 +87,8 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
       await api.keepUnknownItem(itemId);
       await load();
       await onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Context action failed");
     } finally {
       setBusy(false);
     }
@@ -90,6 +100,8 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
       await api.dismissUnknownItem(itemId);
       await load();
       await onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Context action failed");
     } finally {
       setBusy(false);
     }
@@ -103,6 +115,8 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
       setNewProjectName("");
       await load();
       await onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create project");
     } finally {
       setCreating(false);
     }
@@ -110,6 +124,7 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
 
   return (
     <section className="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden">
+      {error && <p role="alert" className="px-5 py-3 text-sm text-danger">{error}</p>}
       <div className="flex flex-col gap-3 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
