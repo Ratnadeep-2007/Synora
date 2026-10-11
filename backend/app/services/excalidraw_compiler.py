@@ -1421,11 +1421,32 @@ class ExcalidrawCompiler:
     ) -> Dict[str, Any]:
         """Render relationship labels as small readable chips, not paragraphs."""
         points = arrow.get("points") or [[0, 0], [0, 0]]
-        end = points[-1] if isinstance(points[-1], list) else [0, 0]
-        dx = float(end[0] or 0)
-        dy = float(end[1] or 0)
-        x = float(arrow.get("x") or 0) + dx / 2 - 48
-        y = float(arrow.get("y") or 0) + dy / 2 - 12
+        # Geometric midpoint of the polyline, so the chip sits on the wire
+        # for straight and elbow-routed arrows alike.
+        seg_lengths: List[float] = []
+        total = 0.0
+        for first, second in zip(points, points[1:]):
+            try:
+                length = ((float(second[0]) - float(first[0])) ** 2 + (float(second[1]) - float(first[1])) ** 2) ** 0.5
+            except (TypeError, ValueError, IndexError):
+                length = 0.0
+            seg_lengths.append(length)
+            total += length
+        mid_x, mid_y = 0.0, 0.0
+        if total > 0:
+            target = total / 2
+            for (first, second), length in zip(zip(points, points[1:]), seg_lengths):
+                if target <= length or length == seg_lengths[-1]:
+                    frac = 0.0 if length <= 0 else min(1.0, target / length)
+                    try:
+                        mid_x = float(first[0]) + (float(second[0]) - float(first[0])) * frac
+                        mid_y = float(first[1]) + (float(second[1]) - float(first[1])) * frac
+                    except (TypeError, ValueError, IndexError):
+                        mid_x, mid_y = 0.0, 0.0
+                    break
+                target -= length
+        x = float(arrow.get("x") or 0) + mid_x - 48
+        y = float(arrow.get("y") or 0) + mid_y - 12
         label = str(rel.label).strip()[:34]
         return {
             "id": f"edge_label_{index}_{rel.source}_{rel.target}",
@@ -1473,26 +1494,54 @@ class ExcalidrawCompiler:
         if source_pos and target_pos:
             src_x, src_y = source_pos
             dst_x, dst_y = target_pos
-            if dst_x > src_x + 10:
+            src_cx = src_x + NODE_WIDTH / 2
+            src_cy = src_y + NODE_HEIGHT / 2
+            dst_cx = dst_x + NODE_WIDTH / 2
+            dst_cy = dst_y + NODE_HEIGHT / 2
+            same_lane = abs(src_cy - dst_cy) < (NODE_HEIGHT + V_GAP)
+            if dst_x > src_x + 10 and same_lane:
                 start_x = src_x + NODE_WIDTH
                 start_y = src_y + NODE_HEIGHT / 2
                 end_x = dst_x
                 end_y = dst_y + NODE_HEIGHT / 2
-            elif dst_x < src_x - 10:
+                dx = end_x - start_x
+                dy = end_y - start_y
+                points = [[0, 0], [dx, dy]]
+                width = max(1, abs(dx))
+                height = max(1, abs(dy))
+            elif dst_x < src_x - 10 and same_lane:
                 start_x = src_x + NODE_WIDTH / 2
                 start_y = src_y + NODE_HEIGHT
                 end_x = dst_x + NODE_WIDTH / 2
                 end_y = dst_y
+                dx = end_x - start_x
+                dy = end_y - start_y
+                points = [[0, 0], [dx, dy]]
+                width = max(1, abs(dx))
+                height = max(1, abs(dy))
             else:
-                start_x = src_x + NODE_WIDTH / 2
-                start_y = src_y + NODE_HEIGHT
-                end_x = dst_x + NODE_WIDTH / 2
-                end_y = dst_y
-            dx = end_x - start_x
-            dy = end_y - start_y
-            points = [[0, 0], [dx, dy]]
-            width = max(1, abs(dx))
-            height = max(1, abs(dy))
+                # Cross-lane edge: elbow routing (vertical exit, horizontal
+                # run, vertical entry) instead of a diagonal that slashes
+                # across every node between the lanes. The horizontal run
+                # sits at mid-height with a small per-edge offset so
+                # parallel wires never draw exactly on top of each other.
+                downward = dst_cy >= src_cy
+                start_x = src_cx
+                start_y = src_y + NODE_HEIGHT if downward else src_y
+                end_x = dst_cx
+                end_y = dst_y if downward else dst_y + NODE_HEIGHT
+                dx = end_x - start_x
+                dy = end_y - start_y
+                run_rel = dy / 2 + ((index % 5) - 2) * 14
+                # Keep a minimum vertical stub so the wire visibly leaves
+                # the node before turning.
+                if downward:
+                    run_rel = max(24.0, min(run_rel, dy - 24.0 if dy > 48 else dy / 2))
+                else:
+                    run_rel = min(-24.0, max(run_rel, dy + 24.0 if dy < -48 else dy / 2))
+                points = [[0, 0], [0, run_rel], [dx, run_rel], [dx, dy]]
+                width = max(1, abs(dx))
+                height = max(1, abs(dy))
         else:
             start_x = 0
             start_y = 0
