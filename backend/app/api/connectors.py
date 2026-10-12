@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
 from app.connectors.registry import registry
-from app.connectors.slack import SlackConnector
 from app.connectors.baileys import WhatsAppBaileysConnector
 from app.core.config import settings
 from app.core.rbac import Permission, enforce_permission
@@ -18,10 +17,7 @@ from app.models.evidence import Evidence
 from app.models.source_event import SourceEvent
 from app.models.user import User
 from pydantic import BaseModel, Field
-from app.schemas.excalidraw import ExcalidrawIngestRequest
-from app.services.direct_input_service import MAX_UPLOAD_BYTES, process_input, extract_upload, validate_target, diagram_text
-from app.services.source_intelligence_pipeline import SourceIntelligencePipeline
-from app.services.ingestion_service import IngestionService
+from app.services.direct_input_service import MAX_UPLOAD_BYTES, process_input, extract_upload, validate_target
 from app.services.whatsapp_service import WhatsAppIntelligenceService
 from app.services.whatsapp_export_parser import WhatsAppZipParser
 from app.services.whatsapp_batch_service import WhatsAppBatchService
@@ -30,7 +26,6 @@ from app.services.metrics import metrics
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/connectors", tags=["Connectors"])
-ingestion_service = IngestionService()
 whatsapp_service = WhatsAppIntelligenceService()
 whatsapp_batch_service = WhatsAppBatchService()
 
@@ -52,107 +47,6 @@ def list_connectors() -> List[Dict[str, Any]]:
             "details": health.details if health else {},
         })
     return results
-
-
-@router.post("/slack/events", summary="Slack Events API Webhook Receiver")
-async def slack_events_webhook(
-    request: Request,
-    db: Session = Depends(get_db),
-    x_slack_signature: Optional[str] = Header(None),
-    x_slack_request_timestamp: Optional[str] = Header(None),
-) -> Dict[str, Any]:
-    """
-    Slack Events API webhook endpoint.
-    1. Verifies HMAC-SHA256 signature and validates timestamp against replay attacks
-    2. Handles Slack url_verification challenge
-    3. Normalizes message events into standard SourceEvents
-    4. Idempotently ingests events into the database
-    """
-    raw_body = await request.body()
-    headers = dict(request.headers)
-
-    connector: Optional[SlackConnector] = registry.get("slack")  # type: ignore
-    if not connector:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Slack connector not registered.")
-
-    # 1. Signature Verification
-    is_valid = connector.verify_webhook(payload=raw_body, headers=headers)
-    if not is_valid:
-        metrics.increment("connector_api_errors_total", labels={"provider": "slack", "error": "invalid_signature"})
-        logger.warning("Rejected unauthenticated Slack webhook: invalid signature or expired timestamp.")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Slack webhook signature.")
-
-    try:
-        payload = json.loads(raw_body.decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Malformed JSON: {exc}")
-
-    # 2. URL Verification Challenge
-    if payload.get("type") == "url_verification":
-        return {"challenge": payload.get("challenge")}
-
-    # Signed channel events use the same evidence, knowledge and routing join.
-    normalized_events = connector.handle_webhook(payload=payload, headers=headers)
-    outcomes = [SourceIntelligencePipeline().process(
-        source="slack", payload=event.payload, db=db,
-        tenant_id="default_tenant", actor_id=event.actor_id,
-        source_event_id=event.source_event_id, event_type=event.event_type,
-        occurred_at=event.occurred_at,
-    ).model_dump() for event in normalized_events]
-    return {"ok": True, "events_received": len(normalized_events),
-            "ingested_event_ids": [o["source_event_id"] for o in outcomes if o["outcome"] != "ignored"],
-            "ignored_casual": sum(o["outcome"] == "ignored" for o in outcomes),
-            "outcomes": outcomes}
-
-
-@router.post("/slack/sync", summary="Synchronize Slack Channel Messages")
-def sync_slack_channel(
-    channel: str = Query(..., description="Slack Channel ID (e.g. C012345678)"),
-    project_id: Optional[str] = Query(None, description="Optional trusted target project"),
-    cursor: Optional[str] = Query(None, description="Optional pagination cursor"),
-    limit: int = Query(50, ge=1, le=200, description="Max messages to fetch"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """
-    Fetches real conversation history from a Slack channel using the Bot OAuth Token,
-    normalizes all messages into SourceEvents, and ingests them into the Project Evidence store.
-    """
-    connector: Optional[SlackConnector] = registry.get("slack")  # type: ignore
-    if not connector:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Slack connector not registered.")
-
-    validate_target(project_id, db)
-    if not settings.SLACK_BOT_TOKEN:
-        raise HTTPException(503, "Set SLACK_BOT_TOKEN to synchronize a Slack channel.")
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    try:
-        fetch_result = connector.fetch_events(
-            connection_id="slack_default",
-            cursor=cursor,
-            limit=limit,
-            channel=channel,
-            project_id=project_id,
-            tenant_id=tenant_id,
-        )
-    except Exception as exc:
-        logger.error(f"Slack channel sync failed: {exc}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    outcomes = [SourceIntelligencePipeline().process(
-        source="slack", payload=event.payload, db=db, tenant_id=tenant_id,
-        actor_id=event.actor_id, project_id=project_id,
-        source_event_id=event.source_event_id, event_type=event.event_type,
-        occurred_at=event.occurred_at,
-    ).model_dump() for event in fetch_result.events]
-    return {
-        "ok": True, "channel": channel, "messages_fetched": len(fetch_result.events),
-        "ingested_event_ids": [o["source_event_id"] for o in outcomes if o["outcome"] != "ignored"],
-        "ignored_casual": sum(o["outcome"] == "ignored" for o in outcomes),
-        "outcomes": outcomes, "has_more": fetch_result.has_more,
-        "next_cursor": fetch_result.next_cursor, "rate_limited": fetch_result.rate_limited,
-        "retry_after_seconds": fetch_result.retry_after_seconds,
-    }
 
 
 # =========================================================================
@@ -542,24 +436,6 @@ async def import_whatsapp_export(
     }
 
 
-class DrawingInput(ExcalidrawIngestRequest):
-    project_id: Optional[str] = None
-
-
-@router.post("/excalidraw/ingest", summary="Ingest Excalidraw Diagram via Unified Context Intelligence")
-def ingest_excalidraw_connector(
-    payload: DrawingInput,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Dict[str, Any]:
-    req = payload
-    text = diagram_text(req.elements)
-    return process_input("excalidraw", {"text": text, "name": req.name,
-                         "elements": req.elements, "app_state": req.app_state}, db,
-                         getattr(current_user, "tenant_id", None) or "default_tenant",
-                         current_user.id, payload.project_id)
-
-
 class ManualTextInput(BaseModel):
     text: str = Field(min_length=1, max_length=200_000)
     title: str = Field(default="Manual text", max_length=255)
@@ -574,10 +450,11 @@ def ingest_manual_text(body: ManualTextInput, db: Session = Depends(get_db),
                          current_user.id, body.project_id)
 
 
-@router.post("/manual/upload", summary="Ingest a document or Excalidraw scene")
+@router.post("/manual/upload", summary="Ingest a document or image")
 async def ingest_manual_upload(file: UploadFile = File(...), project_id: Optional[str] = Form(None),
                                db: Session = Depends(get_db),
                                current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    validate_target(project_id, db)
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     source, payload = extract_upload(file.filename or "", data)
     return process_input(source, payload, db,

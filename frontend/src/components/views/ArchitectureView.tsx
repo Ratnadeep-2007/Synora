@@ -34,7 +34,6 @@ interface ArchitectureViewProps {
   onRetrySync?: () => Promise<void>;
   onGenerateProposal: (stateVersion?: number) => Promise<void>;
   onReviewProposal: (proposalId: string, action: "approve" | "reject", reason?: string) => Promise<void>;
-  onIngestScene: (scene: { name: string; elements: any[]; app_state?: any }) => Promise<void>;
   onSyncLivingWorkspace?: () => Promise<void>;
   onAiGenerateVisuals?: (focusPrompt?: string, directApply?: boolean) => Promise<void>;
 }
@@ -48,7 +47,6 @@ export function ArchitectureView({
   lastSyncAt = null,
   unknownBoard = null,
   onRetrySync,
-  onIngestScene,
 }: ArchitectureViewProps) {
   const projectId = propProjectId || artifact?.project_id;
   const [revisionCount, setRevisionCount] = useState(0);
@@ -146,7 +144,7 @@ export function ArchitectureView({
             initialElements={artifact?.elements || []}
             initialAppState={artifact?.app_state}
             compareMode={false}
-            onSaveCanvas={onIngestScene}
+            readOnly
             onExportJson={undefined}
           />
         </div>

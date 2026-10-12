@@ -61,11 +61,12 @@ def test_manual_trusted_project_and_invalid_target(client, db_session):
 def test_upload_text_and_bad_files(client, db_session):
     response = client.post("/connectors/manual/upload", files={"file": ("notes.md", TEXT.encode())}, headers=HEADERS)
     assert response.status_code == 200, response.text
-    assert response.json()["outcome"] == "unknown_context"
-    assert db_session.get(Evidence, response.json()["evidence_id"]).source == "file_upload"
+    assert response.json()["outcome"] == "ignored"
+    assert db_session.query(Evidence).count() == 0
+    assert db_session.query(UnknownContextItem).count() == 0
     for name, content, status in [
         ("empty.txt", b"", 400), ("bad.txt", b"\xff", 400),
-        ("program.exe", b"binary", 415), ("scene.json", b"[]", 400),
+        ("program.exe", b"binary", 415), ("scene.json", b"[]", 415),
         ("huge.txt", b"x" * (MAX_UPLOAD_BYTES + 1), 413)
     ]:
         res = client.post("/connectors/manual/upload", files={"file": (name, content)}, headers=HEADERS)
@@ -78,76 +79,52 @@ def test_docx_upload(client):
     content = io.BytesIO(); document.save(content)
     response = client.post("/connectors/manual/upload", files={"file": ("notes.docx", content.getvalue())}, headers=HEADERS)
     assert response.status_code == 200, response.text
-    assert response.json()["outcome"] == "unknown_context"
+    assert response.json()["outcome"] == "ignored"
 
 
-def test_drawing_and_uploaded_scene_preserve_raw_elements(client, db_session):
-    scene = {"name": "Input", "elements": [{"id": "node", "type": "text", "text": TEXT}]}
-    response = client.post("/connectors/excalidraw/ingest", json=scene, headers=HEADERS)
-    assert response.status_code == 200, response.text
-    assert response.json()["outcome"] == "unknown_context"
-    event = db_session.query(SourceEvent).filter_by(source="excalidraw").one()
-    assert json.loads(event.payload_json)["elements"] == scene["elements"]
-    upload = client.post("/connectors/manual/upload", files={"file": ("drawing.excalidraw", json.dumps(scene).encode())}, headers=HEADERS)
-    assert upload.status_code == 200, upload.text
-    assert upload.json()["source"] == "excalidraw"
-    empty = client.post("/connectors/excalidraw/ingest", json={"elements": []}, headers=HEADERS)
-    assert empty.status_code == 400
+def test_removed_input_routes_and_scene_uploads(client):
+    for path in ("/connectors/excalidraw/ingest", "/connectors/slack/events",
+                 "/connectors/slack/sync?channel=C1", "/projects/proj_direct_input/excalidraw/ingest"):
+        assert client.post(path, json={"elements": []}, headers=HEADERS).status_code == 404
+    response = client.post("/connectors/manual/upload", files={"file": ("drawing.excalidraw", b'{"elements": []}')}, headers=HEADERS)
+    assert response.status_code == 415
+    providers = [c["provider"] for c in client.get("/connectors").json()]
+    assert set(providers) == {"google_meet", "whatsapp"}
 
 
-def test_signed_slack_event_routes_to_unknown_and_replays(client, db_session):
-    connector = registry.get("slack")
-    payload = {"type": "event_callback", "team_id": "T1", "event": {
-        "type": "message", "channel": "C1", "ts": "12345.6", "user": "U1", "text": TEXT
-    }}
-    body = json.dumps(payload).encode(); timestamp = str(int(time.time()))
-    signature = "v0=" + hmac.new(b"test-secret", b"v0:" + timestamp.encode() + b":" + body, hashlib.sha256).hexdigest()
-    headers = {"X-Slack-Request-Timestamp": timestamp, "X-Slack-Signature": signature, "Content-Type": "application/json"}
-    with patch.object(connector, "signing_secret", "test-secret"):
-        response = client.post("/connectors/slack/events", content=body, headers=headers)
+def image_bytes(fmt="PNG"):
+    from PIL import Image
+    data = io.BytesIO()
+    Image.new("RGB", (10, 10), "white").save(data, format=fmt)
+    return data.getvalue()
+
+
+def test_image_project_provenance_and_retry(client, db_session):
+    project(db_session)
+    data = image_bytes()
+    analysis = {"processed": True, "ocr_text": TEXT, "summary": "FPGA procurement", "provider": "test"}
+    with patch("app.services.multimodal_service.MultimodalService.extract_from_image", return_value=analysis):
+        response = client.post("/connectors/manual/upload", files={"file": ("notes.png", data)}, data={"project_id": "proj_direct_input"}, headers=HEADERS)
         assert response.status_code == 200, response.text
-        assert response.json()["outcomes"][0]["outcome"] == "unknown_context"
-        replay = client.post("/connectors/slack/events", content=body, headers=headers)
-        assert replay.json()["outcomes"][0]["outcome"] == "duplicate"
-    assert db_session.query(UnknownContextItem).count() == 1
+        assert response.json()["source"] == "image_upload"
+        assert response.json()["outcome"] == "resolved"
+        analysis["summary"] = "A different OCR summary"
+        retry = client.post("/connectors/manual/upload", files={"file": ("notes.png", data)}, data={"project_id": "proj_direct_input"}, headers=HEADERS)
+        assert retry.json()["outcome"] == "duplicate"
+    event = db_session.query(SourceEvent).filter_by(source="image_upload").one()
+    payload = json.loads(event.payload_json)
+    assert payload["image_base64"]
+    assert payload["sha256"] == hashlib.sha256(data).hexdigest()
     assert db_session.query(Evidence).count() == 1
-    assert not SlackConnector(signing_secret="").verify_webhook(body, headers)
 
 
-def test_slack_sync_routes_history_and_reports_pagination(client, db_session):
-    connector = registry.get("slack")
-    event = connector.normalize({"text": TEXT, "ts": "555", "user": "U1"}, "message", channel="C2")
-    with patch("app.api.connectors.settings.SLACK_BOT_TOKEN", "xoxb-test"), patch.object(
-        connector, "fetch_events", return_value=FetchEventsResult(events=[event], next_cursor="next", has_more=True)
-    ):
-        response = client.post("/connectors/slack/sync?channel=C2", headers=HEADERS)
-        assert response.status_code == 200, response.text
-        assert response.json()["outcomes"][0]["outcome"] == "unknown_context"
-        assert response.json()["next_cursor"] == "next"
-    with patch("app.api.connectors.settings.SLACK_BOT_TOKEN", ""):
-        assert client.post("/connectors/slack/sync?channel=C2", headers=HEADERS).status_code == 503
-
-
-def test_diagram_connections_keep_arrow_direction():
-    from app.services.direct_input_service import diagram_text
-    elements = [
-        {"id": "a", "type": "rectangle", "boundElements": [{"id": "ta", "type": "text"}]},
-        {"id": "ta", "type": "text", "text": "Client"},
-        {"id": "b", "type": "rectangle", "boundElements": [{"id": "tb", "type": "text"}]},
-        {"id": "tb", "type": "text", "text": "API"},
-        {"id": "arrow", "type": "arrow", "startBinding": {"elementId": "a"},
-         "endBinding": {"elementId": "b"}, "startArrowhead": None, "endArrowhead": "arrow"},
-    ]
-    assert "Connection: Client -> API" in diagram_text(elements)
-    assert "Connection: API -> Client" not in diagram_text(elements)
-    elements[-1].update(startArrowhead="arrow", endArrowhead=None)
-    assert "Connection: API -> Client" in diagram_text(elements)
-    assert "Connection: Client -> API" not in diagram_text(elements)
-
-
-def test_invalid_drawing_shape_is_validation_error(client):
-    response = client.post("/connectors/excalidraw/ingest", json={"elements": [1]}, headers=HEADERS)
-    assert response.status_code == 422
+def test_image_unavailable_and_invalid_files(client, db_session):
+    with patch("app.services.multimodal_service.MultimodalService.extract_from_image", return_value={"processed": False}):
+        response = client.post("/connectors/manual/upload", files={"file": ("notes.png", image_bytes())}, headers=HEADERS)
+        assert response.status_code == 503
+    for name, data in [("notes.png", b"fake image"), ("notes.jpg", image_bytes())]:
+        assert client.post("/connectors/manual/upload", files={"file": (name, data)}, headers=HEADERS).status_code == 400
+    assert db_session.query(Evidence).count() == 0
 
 
 def test_pdf_upload(client):
@@ -170,4 +147,46 @@ def test_pdf_upload(client):
     pdf += f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode()
     response = client.post("/connectors/manual/upload", files={"file": ("notes.pdf", pdf)}, headers=HEADERS)
     assert response.status_code == 200, response.text
-    assert response.json()["outcome"] == "unknown_context"
+    assert response.json()["outcome"] == "ignored"
+
+
+def test_unmatched_image_is_ignored_without_memory_or_triage(client, db_session):
+    project(db_session)
+    analysis = {"processed": True, "ocr_text": TEXT, "summary": "FPGA procurement"}
+    with patch("app.services.multimodal_service.MultimodalService.extract_from_image", return_value=analysis):
+        response = client.post("/connectors/manual/upload", files={"file": ("notes.png", image_bytes())}, headers=HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "ignored"
+    assert not response.json()["evidence_id"]
+    assert db_session.query(Evidence).count() == 0
+    assert db_session.query(UnknownContextItem).count() == 0
+    assert db_session.query(SourceEvent).count() == 0
+
+
+def test_matching_file_updates_project_memory(client, db_session):
+    project(db_session)
+    text = "Decision: We will use PostgreSQL for storage."
+    response = client.post("/connectors/manual/upload", files={"file": ("notes.txt", text.encode())},
+                           data={"project_id": "proj_direct_input"}, headers=HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "resolved"
+    from app.models.project_state import ProjectState
+    state = db_session.query(ProjectState).filter_by(project_id="proj_direct_input").one()
+    assert "PostgreSQL" in state.decisions_json
+    assert db_session.query(UnknownContextItem).count() == 0
+
+
+def test_image_auto_matches_existing_project_and_updates_memory(client, db_session):
+    project(db_session)
+    analysis = {"processed": True,
+                "ocr_text": "[proj_direct_input] Decision: We will use Redis for session storage.",
+                "summary": "Direct Input architecture"}
+    with patch("app.services.multimodal_service.MultimodalService.extract_from_image", return_value=analysis):
+        response = client.post("/connectors/manual/upload", files={"file": ("architecture.png", image_bytes())}, headers=HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "resolved"
+    assert response.json()["project_id"] == "proj_direct_input"
+    from app.models.project_state import ProjectState
+    state = db_session.query(ProjectState).filter_by(project_id="proj_direct_input").one()
+    assert "Redis" in state.decisions_json
+    assert db_session.query(UnknownContextItem).count() == 0

@@ -24,3 +24,4 @@ faster-whisper==1.2.1
 # Direct document upload extraction
 pypdf>=5.0.0
 python-docx>=1.1.0
+Pillow>=10.0.0

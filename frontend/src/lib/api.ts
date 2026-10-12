@@ -139,19 +139,6 @@ export const api = {
     if (projectId) body.append("project_id", projectId);
     return request<InputOutcome>("/connectors/manual/upload", { method: "POST", body });
   },
-  ingestDrawing: (scene: { name: string; elements: any[]; app_state?: any }, project_id?: string) =>
-    request<InputOutcome>("/connectors/excalidraw/ingest", {
-      method: "POST", body: JSON.stringify({ ...scene, project_id }),
-    }),
-  syncSlackChannel: (channel: string, projectId?: string, cursor?: string) => {
-    const qs = new URLSearchParams({ channel });
-    if (projectId) qs.set("project_id", projectId);
-    if (cursor) qs.set("cursor", cursor);
-    return request<{ outcomes: InputOutcome[]; next_cursor?: string; messages_fetched: number; rate_limited: boolean; retry_after_seconds?: number }>(
-      `/connectors/slack/sync?${qs}`, { method: "POST" }
-    );
-  },
-
   // 1. Project State
   getProjectState: (projectId: string): Promise<ProjectState> =>
     request<ProjectState>(`/projects/${projectId}/state`),
@@ -462,15 +449,6 @@ export const api = {
   // 9. Excalidraw Visual Architecture
   getExcalidrawArtifact: (projectId: string): Promise<ExcalidrawArtifact> =>
     request<ExcalidrawArtifact>(`/projects/${projectId}/excalidraw`),
-
-  ingestExcalidrawDiagram: (
-    projectId: string,
-    payload: { name: string; elements: any[]; app_state?: any }
-  ): Promise<ExcalidrawArtifact> =>
-    request<ExcalidrawArtifact>(`/projects/${projectId}/excalidraw/ingest`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
 
   getExcalidrawProposals: (projectId: string, status?: string): Promise<ExcalidrawProposal[]> =>
     request<ExcalidrawProposal[]>(

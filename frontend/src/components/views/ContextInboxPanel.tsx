@@ -13,11 +13,10 @@ interface ContextInboxPanelProps {
 
 const SOURCE_LABEL: Record<string, string> = {
   whatsapp: "WhatsApp",
-  slack: "Slack",
   manual_text: "Manual text",
   file_upload: "File upload",
+  image_upload: "Image upload",
   google_meet: "Google Meet",
-  excalidraw: "Excalidraw",
 };
 
 export function ContextInboxPanel({ projects, pendingCount, onChanged }: ContextInboxPanelProps) {

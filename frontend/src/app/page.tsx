@@ -485,17 +485,6 @@ export default function Home() {
     }
   };
 
-  const handleIngestScene = async (scene: { name: string; elements: any[]; app_state?: any }) => {
-    const projectId = requireProject();
-    if (!projectId) return;
-    try {
-      await api.ingestExcalidrawDiagram(projectId, scene);
-      await refreshAll();
-    } catch (err: any) {
-      alert(`Ingest failed: ${err.message}`);
-    }
-  };
-
   const handleSyncGoogleMeet = async () => {
     // Manual reconciliation: recovers events missed during outages or failed
     // processing. Automatic sync runs via Workspace Events + Pub/Sub.

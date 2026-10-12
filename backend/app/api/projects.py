@@ -1147,29 +1147,6 @@ async def get_excalidraw_artifact(
     return excal_service.format_artifact_read(artifact)
 
 
-@router.post(
-    "/{project_id}/excalidraw/ingest",
-    response_model=ExcalidrawArtifactRead,
-    summary="Ingest Excalidraw Scene (Role A - Input)",
-    description="Ingests visual diagram elements as authoritative architectural evidence. Emits a SourceEvent and Evidence record.",
-)
-async def ingest_excalidraw_diagram(
-    project_id: str,
-    body: ExcalidrawIngestRequest,
-    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
-    artifact, evidence = excal_service.ingest_diagram(
-        project_id=project_id,
-        req=body,
-        db=db,
-        tenant_id=tenant_id,
-    )
-    return excal_service.format_artifact_read(artifact)
-
-
 @router.get(
     "/{project_id}/excalidraw/proposals",
     response_model=List[ExcalidrawProposalRead],

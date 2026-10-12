@@ -101,6 +101,7 @@ class SourceIntelligencePipeline:
         visual_context: Optional[str] = None,
         authorized_project_ids: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        ignore_unresolved: bool = False,
     ) -> SourceEventOutcome:
         text = self.context_service.extract_text(source, payload)
 
@@ -321,6 +322,20 @@ class SourceIntelligencePipeline:
                 candidates_created=len(candidates),
                 ai_status=extraction.ai_status,
                 reason=context_result.reason,
+            )
+
+        # Uploads are useful only when they match an existing project.
+        # Purge provisional provenance before any unknown item or memory write.
+        if ignore_unresolved:
+            provider_event_id = source_event.source_event_id
+            db.delete(evidence)
+            db.delete(source_event)
+            db.commit()
+            return SourceEventOutcome(
+                outcome=RoutingOutcome.IGNORED.value,
+                source=source,
+                source_event_id=provider_event_id,
+                reason="Upload did not confidently match an existing project; ignored.",
             )
 
         # Strict Authoritative Resolver Policy:

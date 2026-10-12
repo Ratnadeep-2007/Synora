@@ -13,35 +13,25 @@ across projects by receiving project-scoped memory and permissions. WhatsApp and
 completed meeting transcripts are input sources only; they do not create separate
 agents or separate memory stores.
 
-```text
-WhatsApp ─────────────┐
-Completed Meet ───────┤
-                      ▼
-               Normalize → Evidence
-                      │
-                      ▼
-           Unified Context Intelligence
-                      │
-           ┌──────────┴──────────┐
-           ▼                     ▼
-    Project resolved       Project unresolved
-           │                     │
-           ▼                     ▼
-    Shared Project Memory   Unknown Context
-           │                (human attention only)
-           │
-    ┌──────┼─────────┐
-    ▼      ▼         ▼
-  State  Knowledge  Provenance
-    │      │         │
-    └──────┼─────────┘
-           ▼
-      Visual Projection
-           │
-           ▼
-   Deterministic Excalidraw
-        / Project Atlas
+Supported inputs are Google Meet (including Vexa capture followed by Sarvam STT), WhatsApp, and manual text/document/image uploads. Image uploads are validated and analyzed by the configured vision provider before entering the shared evidence pipeline. Matched files and images enter project memory; unmatched uploads are ignored instead of entering Unknown Context. Excalidraw is output only: no canvas-edit or scene-import feedback loop is enabled.
+
+```mermaid
+flowchart TD
+    M["Google Meet / Vexa → Sarvam STT"] --> E["Normalized evidence"]
+    W["WhatsApp"] --> E
+    U["Manual text, documents, images"] --> E
+    E --> C["Context resolution"]
+    E --> K["Knowledge extraction"]
+    C --> R["Join and routing gate"]
+    K --> R
+    R -->|Resolved| P["Shared project memory"]
+    R -->|"Unresolved text or communication"| X["Unknown Context"]
+    R -->|"Unmatched file or image"| I["Ignore upload"]
+    X -->|Human assignment| P
+    P --> V["VisualPlan → Excalidraw compiler"]
+    V --> A["Read-only Project Atlas"]
 ```
+
 
 ### Project Memory Contract
 
