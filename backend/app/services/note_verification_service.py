@@ -27,10 +27,14 @@ SUPPORT_THRESHOLD = 0.4
 #: Cap on reported unverified items (full counts are still returned).
 MAX_REPORTED = 20
 
-#: System chrome that is compiler-written, not a factual claim.
+#: System chrome that is compiler-written, not a factual claim. Titles and
+#: section headers name projects and documents; project codenames rarely
+#: appear in evidence vocabulary, so checking them only produces noise.
 SKIPPED_VISUAL_TYPES = frozenset({
+    "project_notes_title",
     "project_notes_footer",
     "project_notes_subtitle",
+    "note_section_header",
     "freeform_visual_connector_label",
     "architecture_group_label",
 })

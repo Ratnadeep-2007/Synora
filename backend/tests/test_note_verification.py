@@ -39,6 +39,8 @@ def test_invented_text_flagged():
 def test_system_chrome_skipped():
     scene = [
         _text_node("f1", "Maintained automatically from project memory, rechecked every 30 seconds", "project_notes_footer"),
+        _text_node("t1", "CafeLoop-1012-2HR-QT7M", "note_section_header"),
+        _text_node("t2", "Tri-project sync, page 2", "project_notes_title"),
         {"id": "r1", "type": "rectangle", "text": "Kitchen display tickets realtime"},
     ]
     result = verify_scene(scene, ["Kitchen display tickets must reach the screen"])
