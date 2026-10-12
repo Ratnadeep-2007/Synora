@@ -21,6 +21,7 @@ interface WorkspaceAtlasViewProps {
   projects: Project[];
   activeProjectId?: string | null;
   onChanged?: () => Promise<void> | void;
+  onSaveCanvas?: (projectId: string, scene: { name?: string; elements: any[]; app_state?: any }) => Promise<void>;
 }
 
 export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
@@ -28,6 +29,7 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
   projects = [],
   activeProjectId,
   onChanged,
+  onSaveCanvas,
 }: WorkspaceAtlasViewProps) {
   const projectCount = atlas?.projects?.length || projects.length || 0;
   const pending = atlas?.unknown_context?.pending || 0;
@@ -129,9 +131,12 @@ export const WorkspaceAtlasView = React.memo(function WorkspaceAtlasView({
               initialElements={atlas.artifact.elements || []}
               initialAppState={initialAppState}
               compareMode={false}
-              onSaveCanvas={undefined}
+              onSaveCanvas={
+                onSaveCanvas && atlas.artifact.project_id
+                  ? (scene) => onSaveCanvas(atlas.artifact.project_id, scene)
+                  : undefined
+              }
               onExportJson={undefined}
-              readOnly
             />
           ) : (
             <div className="flex min-h-[640px] items-center justify-center rounded-xl border border-border bg-canvas text-xs text-text-muted space-y-2">

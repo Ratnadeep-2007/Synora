@@ -325,6 +325,14 @@ export default function Home() {
     await refreshAll();
   }, [refreshAll]);
 
+  const handleSaveCanvasScene = useCallback(
+    async (projectId: string, scene: { name?: string; elements: any[]; app_state?: any }) => {
+      await api.saveExcalidrawScene(projectId, scene);
+      await refreshAll();
+    },
+    [refreshAll]
+  );
+
   const handleCreateProject = async (name: string, description?: string, sources?: string[]) => {
     try {
       const newProj = await api.createProject(name, description, undefined, sources);
@@ -814,6 +822,7 @@ export default function Home() {
           projects={projects}
           activeProjectId={currentProjectId}
           onChanged={handleAtlasChanged}
+          onSaveCanvas={handleSaveCanvasScene}
         />
       )}
 
@@ -845,6 +854,7 @@ export default function Home() {
             onBack={() => setSelectedMeetingId(null)}
             onOpenEvidence={handleOpenEvidence}
             onDeleteMeeting={handleDeleteMeeting}
+            onSaveCanvas={handleSaveCanvasScene}
           />
         ))}
 

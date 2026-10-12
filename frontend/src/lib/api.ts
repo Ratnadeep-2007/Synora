@@ -450,6 +450,15 @@ export const api = {
   getExcalidrawArtifact: (projectId: string): Promise<ExcalidrawArtifact> =>
     request<ExcalidrawArtifact>(`/projects/${projectId}/excalidraw`),
 
+  saveExcalidrawScene: (
+    projectId: string,
+    scene: { name?: string; elements: any[]; app_state?: any },
+  ): Promise<ExcalidrawArtifact> =>
+    request<ExcalidrawArtifact>(`/projects/${projectId}/excalidraw/scene`, {
+      method: "POST",
+      body: JSON.stringify(scene),
+    }),
+
   getExcalidrawProposals: (projectId: string, status?: string): Promise<ExcalidrawProposal[]> =>
     request<ExcalidrawProposal[]>(
       `/projects/${projectId}/excalidraw/proposals${status ? `?status=${status}` : ""}`

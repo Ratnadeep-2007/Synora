@@ -79,6 +79,7 @@ interface MeetingDetailViewProps {
   onBack: () => void;
   onOpenEvidence: (title: string, contextType: string, evidenceIds: string[]) => void;
   onDeleteMeeting?: (meetingId: string) => Promise<void>;
+  onSaveCanvas?: (projectId: string, scene: { name?: string; elements: any[]; app_state?: any }) => Promise<void>;
 }
 
 export function MeetingDetailView({
@@ -89,6 +90,7 @@ export function MeetingDetailView({
   onBack,
   onOpenEvidence,
   onDeleteMeeting,
+  onSaveCanvas,
 }: MeetingDetailViewProps) {
   const [intelligenceFilter, setIntelligenceFilter] = useState<string>("all");
   const [meetingSurface, setMeetingSurface] = useState<"canvas" | "intelligence">("canvas");
@@ -220,7 +222,11 @@ export function MeetingDetailView({
                 theme: "light",
                 viewBackgroundColor: "#ffffff",
               }}
-              readOnly
+              onSaveCanvas={
+                onSaveCanvas && meetingCanvas.artifact.project_id
+                  ? (scene) => onSaveCanvas(meetingCanvas.artifact.project_id, scene)
+                  : undefined
+              }
             />
           ) : (
             <div className="min-h-[620px] flex items-center justify-center rounded-xl border border-border bg-surface text-xs text-text-muted">

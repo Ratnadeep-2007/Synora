@@ -766,13 +766,21 @@ class MeetingSessionIntelligenceService:
         # Post-render verification (warn-first, never blocking): diff the
         # compiled meeting scene against the meeting evidence.
         from app.services.note_verification_service import verify_scene
+        from app.services.visual_sync_service import _is_agent_managed
 
         verification = verify_scene(
             compiled or [],
             [str(snippet.get("content") or "") for snippet in evidence_snippets],
         )
+        # Preserve user-drawn elements: without this, the next sync would
+        # wipe edits the user saved through the editable canvas.
+        user_scene = [
+            element for element in (current_scene or [])
+            if isinstance(element, dict) and not _is_agent_managed(element)
+        ]
+        merged_scene = list(compiled or []) + user_scene
         scene_fingerprint = hashlib.sha256(
-            json.dumps(compiled or [], sort_keys=True, ensure_ascii=False).encode("utf-8")
+            json.dumps(merged_scene, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
         current_fingerprint = hashlib.sha256(
             json.dumps(current_scene or [], sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -790,7 +798,7 @@ class MeetingSessionIntelligenceService:
 
         revision = VisualRevisionService().commit_revision(
             project_id=canvas_key,
-            scene=compiled,
+            scene=merged_scene,
             db=db,
             tenant_id=tenant_id,
             app_state={

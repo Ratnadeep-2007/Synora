@@ -123,6 +123,20 @@ class WorkspaceAtlasService:
                 workspace_id=workspace_id,
                 slot_map=slot_map,
             )
+            # Preserve user-drawn elements: atlas rebuilds wholesale, so
+            # without this, edits saved through the editable canvas would
+            # be wiped on the next sync.
+            from app.services.visual_sync_service import _is_agent_managed
+
+            try:
+                previous = self._json_list(artifact.elements_json)
+            except Exception:
+                previous = []
+            user_scene = [
+                element for element in previous
+                if isinstance(element, dict) and not _is_agent_managed(element)
+            ]
+            scene = list(scene) + user_scene
             now = datetime.now(timezone.utc)
             artifact.elements_json = json.dumps(scene)
             artifact.extracted_nodes_json = json.dumps([p.name for p in projects])

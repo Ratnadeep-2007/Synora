@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -1143,6 +1144,62 @@ async def get_excalidraw_artifact(
         project_id=project_id,
         db=db,
         tenant_id=tenant_id,
+    )
+    return excal_service.format_artifact_read(artifact)
+
+
+class ExcalidrawSceneSave(BaseModel):
+    name: Optional[str] = None
+    # Any: malformed entries are filtered server-side, never 422 the save.
+    elements: List[Any] = Field(default_factory=list)
+    app_state: Optional[Dict[str, Any]] = None
+
+
+@router.post(
+    "/{project_id}/excalidraw/scene",
+    response_model=ExcalidrawArtifactRead,
+    summary="Save User Canvas Edit",
+    description=(
+        "Persists user-drawn canvas edits as a new visual revision and updates "
+        "the live artifact. Creates no evidence and touches no proposals: "
+        "this is drawing persistence, not knowledge ingest."
+    ),
+)
+async def save_excalidraw_scene(
+    project_id: str,
+    body: ExcalidrawSceneSave,
+    excal_service: ExcalidrawService = Depends(get_excalidraw_service),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from datetime import datetime, timezone
+
+    from app.services.visual_revision_service import VisualRevisionService
+
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
+    artifact = excal_service.get_or_create_artifact(
+        project_id=project_id,
+        db=db,
+        tenant_id=tenant_id,
+    )
+    elements = [el for el in (body.elements or []) if isinstance(el, dict)]
+    artifact.elements_json = json.dumps(elements)
+    if body.app_state is not None:
+        artifact.app_state_json = json.dumps(body.app_state)
+    artifact.version = (artifact.version or 0) + 1
+    artifact.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(artifact)
+    VisualRevisionService().commit_revision(
+        project_id=project_id,
+        scene=elements,
+        db=db,
+        tenant_id=tenant_id,
+        app_state=body.app_state or {},
+        operations=[{"op_type": "update", "payload": {"action": "user_edit"}}],
+        actor_id=current_user.id,
+        reason="User canvas edit",
+        workspace_name=body.name or artifact.name,
     )
     return excal_service.format_artifact_read(artifact)
 
