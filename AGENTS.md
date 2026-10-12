@@ -31,6 +31,7 @@
 - Evidence rows are immutable ground truth: meeting delete nulls links, never deletes rows. Project delete wipes project-scoped rows.
 - Candidates are NOT memory until approved. Memory (`project_states`) is versioned and per-project scoped; cross-project queries must never leak.
 - Canvas text: all text is server-side wrapped to container width (`_wrap_text`), `autoResize` must stay `False`, heights must grow with wrapped lines. Excalidraw never wraps for you.
+- Canvas freedom rule: the agent is free-form on canvas **except project columns**. Project Atlas columns are the only workspace boundary (one column per project, enforced in `workspace_atlas_service.py`); the meeting canvas is fully unconstrained (`constraints=None`) — no columns, no fixed sections.
 - `_is_agent_managed` decides what sync preserves: every compiler/atlas id scheme must be listed there or stale elements live forever.
 - Speakers stay generic (`SPEAKER_00` etc.). No real-name resolution.
 - Auth is per-browser `synesis_user_id`; test user `usr_muj84tlniw01yh5w`. Session identity is localStorage with copy/restore UI (no real OAuth yet).
