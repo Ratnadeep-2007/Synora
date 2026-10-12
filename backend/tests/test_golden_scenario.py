@@ -338,25 +338,24 @@ def test_excalidraw_api_endpoints_and_coordinator_briefing(client: TestClient, d
     assert art["version"] == 1
     assert isinstance(art["elements"], list)
 
-    # 3. Test Ingest Excalidraw Diagram
-    ingest_payload = {
+    # 3. Test Save User Canvas Edit (drawing persistence, not evidence ingest)
+    save_payload = {
         "name": "Updated Visual Scene",
         "elements": [
             {"id": "t1", "type": "text", "text": "Client App"},
             {"id": "t2", "type": "text", "text": "API Gateway"},
         ],
         "app_state": {"gridSize": 10},
-        "tenant_id": "default_tenant",
     }
     resp = client.post(
-        f"/projects/{proj_id}/excalidraw/ingest",
-        json=ingest_payload,
+        f"/projects/{proj_id}/excalidraw/scene",
+        json=save_payload,
         headers={"X-User-ID": "usr_lead_architect_carol"},
     )
     assert resp.status_code == 200
     updated_art = resp.json()
     assert updated_art["version"] == 2
-    assert "Client App" in updated_art["extracted_nodes"]
+    assert "Client App" in json.dumps(updated_art["elements"])
 
     # 4. Test Generate Excalidraw Proposal
     resp = client.post(

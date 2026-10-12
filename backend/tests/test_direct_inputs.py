@@ -83,13 +83,14 @@ def test_docx_upload(client):
 
 
 def test_removed_input_routes_and_scene_uploads(client):
-    for path in ("/connectors/excalidraw/ingest", "/connectors/slack/events",
-                 "/connectors/slack/sync?channel=C1", "/projects/proj_direct_input/excalidraw/ingest"):
+    # Diagram ingest stays removed; Slack input is a live route again.
+    for path in ("/connectors/excalidraw/ingest",
+                 "/projects/proj_direct_input/excalidraw/ingest"):
         assert client.post(path, json={"elements": []}, headers=HEADERS).status_code == 404
     response = client.post("/connectors/manual/upload", files={"file": ("drawing.excalidraw", b'{"elements": []}')}, headers=HEADERS)
     assert response.status_code == 415
     providers = [c["provider"] for c in client.get("/connectors").json()]
-    assert set(providers) == {"google_meet", "whatsapp"}
+    assert set(providers) == {"google_meet", "slack", "whatsapp"}
 
 
 def image_bytes(fmt="PNG"):

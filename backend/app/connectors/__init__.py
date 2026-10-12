@@ -14,8 +14,9 @@ from app.connectors.baileys import WhatsAppBaileysConnector
 from app.connectors.registry import ConnectorRegistry, registry
 from app.core.config import settings
 
-# Supported live input connectors: Google Meet and WhatsApp.
+# Supported live input connectors: Google Meet, Slack and WhatsApp.
 registry.register(GoogleMeetConnector())
+registry.register(SlackConnector(signing_secret=settings.SLACK_SIGNING_SECRET))
 registry.register(WhatsAppBaileysConnector())
 
 __all__ = [
