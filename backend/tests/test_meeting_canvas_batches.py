@@ -45,9 +45,9 @@ def test_merge_namespaces_ids_and_remaps_relationships():
     node_ids = [n.id for n in merged.nodes]
     assert node_ids == ["m0_n1", "m1_n1"]
     assert [(r.source, r.target) for r in merged.relationships] == [("m0_n1", "m0_n1")]
-    assert [s.id for s in merged.notes_sections] == ["m0_s", "m1_s"]
-    # Chronological order preserved across batches.
-    assert [s.order for s in merged.notes_sections] == [2, 10001]
+    # Same-titled sections collapse into one, blocks chronological.
+    assert [s.id for s in merged.notes_sections] == ["m0_s"]
+    assert [s.order for s in merged.notes_sections] == [0]
     assert [blk.id for s in merged.notes_sections for blk in s.blocks] == ["m0_b", "m1_b"]
     assert merged.model == "merged/2-batches"
 

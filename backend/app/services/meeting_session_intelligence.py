@@ -175,6 +175,24 @@ def _merge_meeting_plans(plans: List[Any], meeting_title: str) -> Any:
 
     strategy = "mixed" if "mixed" in strategies else (strategies[0] if strategies else "mixed")
     first = plans[0]
+    # Collapse same-titled sections (e.g. twelve "Notes" sections from
+    # twelve deterministic batches) into one section per title, keeping
+    # blocks chronological. Without this the merged canvas looks like a
+    # fixed template repeated per batch instead of one free document.
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for section_dict in sorted(merged_sections, key=lambda s: s.get("order", 0)):
+        key = str(section_dict.get("title") or "Notes")
+        if key not in grouped:
+            grouped[key] = dict(section_dict)
+            grouped[key]["blocks"] = list(section_dict.get("blocks") or [])
+        else:
+            grouped[key]["blocks"].extend(section_dict.get("blocks") or [])
+            for eid in section_dict.get("evidence_ids") or []:
+                if eid not in grouped[key].get("evidence_ids", []):
+                    grouped[key].setdefault("evidence_ids", []).append(eid)
+    merged_sections = list(grouped.values())
+    for order, section_dict in enumerate(merged_sections):
+        section_dict["order"] = order
     return VisualPlan.model_validate({
         "title": (first.title if first else None) or meeting_title,
         "canvas_strategy": strategy,
