@@ -45,9 +45,16 @@ def guess_source_language(text: str) -> str:
 
 
 def normalize_source_language(code: str, sample: str = "") -> str:
-    """Normalize an STT language tag (hi, hi-IN, unknown, ...) to BCP-47."""
+    """Normalize an STT language tag (hi, hi-IN, unknown, ...) to BCP-47.
+
+    An explicit non-English tag is trusted. But "en"/"unknown"/empty are
+    NOT trusted over script evidence: manual ingest defaults entries to
+    English, so a Devanagari sample with a caller-claimed "en" must still
+    resolve to Hindi — otherwise the API rejects (source == target) and
+    real Hindi goes untranslated.
+    """
     base = str(code or "").strip().lower().split("-")[0].split("_")[0]
-    if base in _BASE_LANGUAGE:
+    if base in _BASE_LANGUAGE and _BASE_LANGUAGE[base] != "en-IN":
         return _BASE_LANGUAGE[base]
     return guess_source_language(sample)
 

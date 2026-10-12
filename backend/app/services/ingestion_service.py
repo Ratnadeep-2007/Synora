@@ -106,6 +106,43 @@ class IngestionService:
         if not raw_content:
             raise IngestionError(f"Cannot create Evidence from event {event.event_id}: missing content.")
 
+        meta = dict(metadata or {})
+        # Shared translation hook: every input path (manual ingest,
+        # WhatsApp, Slack, direct inputs) gets Hindi→English here. Rows
+        # already translated upstream (Vexa capture path) carry
+        # translation_status and are left untouched — never double-pay.
+        if "translation_status" not in meta:
+            from app.services.translation_service import (
+                needs_translation,
+                normalize_source_language,
+                translate_texts,
+            )
+
+            if needs_translation(raw_content):
+                try:
+                    translated, tstatus = translate_texts(
+                        [raw_content],
+                        source_language=str(meta.get("language_code") or ""),
+                    )
+                    text_en = (translated[0] or "").strip()
+                    if text_en and text_en != raw_content.strip():
+                        meta["text_en"] = text_en
+                        meta["translation_status"] = tstatus
+                        meta["translation_source"] = normalize_source_language(
+                            str(meta.get("language_code") or ""), raw_content
+                        )
+                    else:
+                        meta["translation_status"] = "skipped"
+                except Exception as exc:
+                    logger.warning("evidence_translation_failed: %s", exc)
+                    meta["translation_status"] = "unavailable"
+            else:
+                meta["translation_status"] = "skipped"
+
+        content = raw_content
+        if meta.get("text_en"):
+            content = f"{raw_content}\n[EN] {meta['text_en']}"
+
         evidence = Evidence(
             project_id=event.project_id,
             source=event.source,
@@ -115,8 +152,8 @@ class IngestionService:
             transcript_entry_id=transcript_entry_id,
             actor_id=event.actor_id,
             occurred_at=event.occurred_at,
-            content=raw_content,
-            metadata_json=json.dumps(metadata or {}),
+            content=content,
+            metadata_json=json.dumps(meta),
         )
         db.add(evidence)
         event.status = "processed"

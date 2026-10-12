@@ -152,6 +152,15 @@ def test_source_resolution_prefers_stt_then_script():
     assert ts.guess_source_language("plain english") == "hi-IN"
 
 
+def test_script_overrides_default_english_claim():
+    """Manual ingest tags entries 'en' by default. Script evidence wins:
+    Devanagari with a caller-claimed 'en' must resolve to Hindi, or the
+    API rejects (source == target) and real Hindi goes untranslated."""
+    assert ts.normalize_source_language("en", "काम समय पर") == "hi-IN"
+    assert ts.normalize_source_language("en", "plain english") == "hi-IN"
+    assert ts.normalize_source_language("mr", "काम समय पर") == "hi-IN"
+
+
 def test_preferred_text_uses_translation():
     import json
 
