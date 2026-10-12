@@ -33,6 +33,10 @@ from app.models.meeting import Meeting, Transcript, TranscriptEntry
 from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.services.visual_plan_service import VisualPlanService
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 DUE_HINT_PATTERN = re.compile(
     r"\b(?:by|before|due(?:\s+on)?|deadline(?:\s+is)?)\s+"
@@ -765,13 +769,17 @@ class MeetingSessionIntelligenceService:
 
         # Post-render verification (warn-first, never blocking): diff the
         # compiled meeting scene against the meeting evidence.
-        from app.services.note_verification_service import verify_scene
+        from app.services.note_verification_service import (
+            VERIFICATION_VERSION,
+            verify_scene,
+        )
         from app.services.visual_sync_service import _is_agent_managed
 
         verification = verify_scene(
             compiled or [],
             [str(snippet.get("content") or "") for snippet in evidence_snippets],
         )
+        verification["version"] = VERIFICATION_VERSION
         # Preserve user-drawn elements: without this, the next sync would
         # wipe edits the user saved through the editable canvas.
         user_scene = [
@@ -787,6 +795,38 @@ class MeetingSessionIntelligenceService:
         ).hexdigest()
 
         if scene_fingerprint == current_fingerprint:
+            # Scene unchanged — but verification logic may have moved on.
+            # Refresh a stale/missing verification block in place (no new
+            # revision, no recompile) so reads always report current logic.
+            from app.services.note_verification_service import (
+                VERIFICATION_VERSION,
+                verify_scene as _verify,
+            )
+
+            stored = ((excal.format_artifact_read(artifact).model_dump().get("app_state") or {}).get("meeting_canvas") or {})
+            if stored.get("verification", {}).get("version") != VERIFICATION_VERSION:
+                refreshed = _verify(
+                    current_scene or [],
+                    [str(snippet.get("content") or "") for snippet in evidence_snippets],
+                )
+                refreshed["version"] = VERIFICATION_VERSION
+                try:
+                    state_blob = json.loads(artifact.app_state_json or "{}")
+                    state_blob.setdefault("meeting_canvas", {})["verification"] = refreshed
+                    artifact.app_state_json = json.dumps(state_blob)
+                    db.commit()
+                except Exception as exc:
+                    logger.warning("meeting_canvas_verification_refresh_failed: %s", exc)
+                    db.rollback()
+                return {
+                    "meeting_id": meeting_id,
+                    "artifact": excal.format_artifact_read(artifact).model_dump(),
+                    "synced": True,
+                    "reason": "verification_refreshed",
+                    "ai_status": ai_status,
+                    "plan_fingerprint": plan_fingerprint,
+                    "verification": refreshed,
+                }
             return {
                 "meeting_id": meeting_id,
                 "artifact": excal.format_artifact_read(artifact).model_dump(),

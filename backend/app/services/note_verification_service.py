@@ -27,6 +27,11 @@ SUPPORT_THRESHOLD = 0.4
 #: Cap on reported unverified items (full counts are still returned).
 MAX_REPORTED = 20
 
+#: Bump when verification logic changes; stored canvases carrying an older
+#: (or missing) version get their verification recomputed on read without
+#: a full recompile.
+VERIFICATION_VERSION = 2
+
 #: System chrome that is compiler-written, not a factual claim. Titles and
 #: section headers name projects and documents; project codenames rarely
 #: appear in evidence vocabulary, so checking them only produces noise.
