@@ -96,6 +96,71 @@ def test_multimodal_vision_extraction_mock():
     assert "API Gateway" in [c["name"] for c in res["components"]]
 
 
+def test_multimodal_vision_prefers_groq_over_nvidia():
+    """Groq Llama vision is tried first; NVIDIA is only the fallback."""
+    mock_http_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": json.dumps({
+            "summary": "Groq-read architecture.",
+            "ocr_text": "A -> B",
+            "components": [{"name": "A", "type": "service"}],
+            "relationships": [],
+            "decisions": [],
+            "requirements": [],
+        })}}]
+    }
+    mock_http_client.post.return_value = mock_response
+
+    service = MultimodalService(
+        groq_api_key="gsk_test_key",
+        nvidia_api_key="nvapi_test_key",
+        http_client=mock_http_client,
+    )
+    res = service.extract_from_image(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+    assert res["provider"] == "groq_vision"
+    assert res["processed"] is True
+    call_args, call_kwargs = mock_http_client.post.call_args
+    assert "api.groq.com" in call_args[0]
+    from app.core.config import settings
+
+    assert call_kwargs["json"]["model"] == settings.GROQ_VISION_MODEL
+
+
+def test_multimodal_vision_falls_back_to_nvidia_on_groq_429():
+    """A Groq rate limit must not kill vision: NVIDIA serves the fallback."""
+    groq_fail = MagicMock()
+    groq_fail.status_code = 429
+    groq_fail.text = "Rate limit reached"
+    nvidia_ok = MagicMock()
+    nvidia_ok.status_code = 200
+    nvidia_ok.json.return_value = {
+        "choices": [{"message": {"content": json.dumps({
+            "summary": "NVIDIA-read architecture.",
+            "ocr_text": "",
+            "components": [],
+            "relationships": [],
+            "decisions": [],
+            "requirements": [],
+        })}}]
+    }
+    mock_http_client = MagicMock()
+    mock_http_client.post.side_effect = [groq_fail, nvidia_ok]
+
+    service = MultimodalService(
+        groq_api_key="gsk_test_key",
+        nvidia_api_key="nvapi_test_key",
+        http_client=mock_http_client,
+    )
+    res = service.extract_from_image(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+    assert res["provider"] == "nvidia_vision"
+    assert res["processed"] is True
+    assert mock_http_client.post.call_count == 2
+
+
 def test_multimodal_payload_preprocessing_voice_note():
     """Voice note in WhatsApp payload is transcribed and prepended to text."""
     service = MultimodalService()

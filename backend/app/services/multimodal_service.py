@@ -16,7 +16,8 @@ class MultimodalService:
     """
     Multimodal intelligence service handling:
     1. High-speed WhatsApp voice note transcription via Groq Whisper.
-    2. Architecture diagram / whiteboard image analysis via NVIDIA NIM Llama 3.2 Vision.
+    2. Architecture diagram / whiteboard image analysis via Groq Llama vision
+       (NVIDIA NIM Llama 3.2 Vision as fallback).
     """
 
     def __init__(
@@ -182,6 +183,63 @@ class MultimodalService:
             "}"
         )
 
+        # Vision provider order: Groq Llama vision first (same key as the
+        # rest of the stack, no extra account), NVIDIA NIM as fallback.
+        if (self.groq_api_key or "").strip():
+            try:
+                model_name = settings.GROQ_VISION_MODEL
+                payload = {
+                    "model": model_name,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": system_prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": data_uri},
+                                },
+                            ],
+                        }
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 1500,
+                    "response_format": {"type": "json_object"},
+                }
+                client = self._get_client(timeout=60.0)
+                resp = client.post(
+                    f"{self.groq_base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.groq_api_key.strip()}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = (
+                        data.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                        .strip()
+                    )
+                    parsed = self._parse_json_block(content)
+                    if parsed:
+                        logger.info(
+                            f"Groq Vision extracted {len(parsed.get('components', []))} components "
+                            f"and {len(parsed.get('relationships', []))} relationships."
+                        )
+                        parsed["provider"] = "groq_vision"
+                        parsed["model"] = model_name
+                        parsed["processed"] = True
+                        return parsed
+                else:
+                    logger.warning(
+                        f"Groq Vision API returned {resp.status_code}: {resp.text[:200]}"
+                    )
+            except Exception as exc:
+                logger.warning(f"Groq Vision extraction failed: {exc}")
+
         if self.nvidia_api_key:
             try:
                 headers = {
@@ -240,7 +298,7 @@ class MultimodalService:
         # No vision provider available. Report it as UNPROCESSED rather than
         # inventing components/relationships that would become project evidence.
         logger.warning(
-            "vision_analysis_unavailable: NVIDIA_API_KEY not configured or request failed"
+            "vision_analysis_unavailable: GROQ_API_KEY and NVIDIA_API_KEY both missing or failed"
         )
         return {
             "summary": "",
@@ -252,7 +310,7 @@ class MultimodalService:
             "provider": "unavailable",
             "model": "none",
             "processed": False,
-            "error": "Vision provider unavailable (set NVIDIA_API_KEY)",
+            "error": "Vision provider unavailable (set GROQ_API_KEY or NVIDIA_API_KEY)",
         }
 
     # -------------------------------------------------------------------------
