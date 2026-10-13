@@ -14,6 +14,10 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = Field(default="change-me-in-development")
     ENCRYPTION_KEY: str = Field(default="change-me-in-development")
+    AUTH_REQUIRED: bool = False
+    NEON_AUTH_BASE_URL: str = ""
+    NEON_AUTH_JWKS_URL: str = ""
+    WHATSAPP_WEBHOOK_SECRET: str = ""
 
     # PostgreSQL is authoritative in production; SQLite is test/dev convenience.
     DATABASE_URL: str = Field(default=f"sqlite:///{_DEFAULT_DB_FILE.as_posix()}")
@@ -74,6 +78,9 @@ class Settings(BaseSettings):
 
     # Groq high-speed Whisper audio & LLM provider
     GROQ_API_KEY: str = ""
+    # Second Groq account. Quotas are per-key: the client retries here on
+    # 429s before degrading a tier. Never commit a value here.
+    GROQ_API_KEY_FALLBACK: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_WHISPER_MODEL: str = "whisper-large-v3-turbo"
     GROQ_MODEL: str = "openai/gpt-oss-120b"
