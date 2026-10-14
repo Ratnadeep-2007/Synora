@@ -90,12 +90,19 @@ async def get_unknown_item(
 )
 async def get_unknown_suggestions(
     item_id: str,
+    workspace_id: str = Query("ws_default"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     tenant = _tenant(current_user)
     try:
-        service.suggest_matches(item_id, db, tenant_id=tenant, persist=True)
+        service.suggest_matches(
+            item_id,
+            db,
+            tenant_id=tenant,
+            persist=True,
+            authorized_project_ids=service.project_ids_for_workspace(db, workspace_id),
+        )
         item = service.get_item(item_id, db, tenant_id=tenant)
     except UnknownContextError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

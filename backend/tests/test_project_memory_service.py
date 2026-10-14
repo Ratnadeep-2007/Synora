@@ -67,7 +67,7 @@ def test_project_memory_is_project_bounded_and_automatic(db_session):
     assert wrong_project.status == "candidate"
 
 
-def test_existing_concept_is_updated_in_place(db_session):
+def test_existing_concept_replacement_waits_for_review(db_session):
     state = ProjectState(
         project_id="proj_memory_update",
         current_version=1,
@@ -116,9 +116,13 @@ def test_existing_concept_is_updated_in_place(db_session):
     db_session.refresh(state)
     decisions = json.loads(state.decisions_json)
 
-    assert result["applied"] == 1
+    assert result["applied"] == 0
+    assert result["skipped"] == 1
     assert len(decisions) == 1
     assert decisions[0]["id"] == "dec_stable_1"
     assert decisions[0]["title"] == "Authentication"
-    assert decisions[0]["text"] == "Switch to Firebase Auth."
-    assert decisions[0]["evidence_ids"] == ["ev_old", "ev_new"]
+    assert decisions[0]["text"] == "Use JWT"
+    assert decisions[0]["evidence_ids"] == ["ev_old"]
+    from app.models.conflict import Conflict
+    conflict = db_session.query(Conflict).filter_by(candidate_id=candidate.id).one()
+    assert conflict.status == "open"

@@ -24,6 +24,7 @@ import http from "http";
 
 
 const BACKEND_URL = process.env.SYNORA_BACKEND_URL || "http://localhost:8000";
+const WEBHOOK_SECRET = process.env.SYNORA_WHATSAPP_WEBHOOK_SECRET || "";
 const AUTH_DIR = path.join(__dirname, "../baileys_auth_info");
 
 async function reportSessionStatus(
@@ -51,6 +52,7 @@ async function reportSessionStatus(
           headers: {
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(postData),
+            ...(WEBHOOK_SECRET ? { "X-WhatsApp-Token": WEBHOOK_SECRET } : {}),
           },
         },
         (res) => {
@@ -80,6 +82,7 @@ async function forwardMessageToSynora(payload: {
   image_base64?: string;
   media_type?: "audio" | "image";
   mimetype?: string;
+  filename?: string;
   timestamp?: number;
 }) {
 
@@ -97,6 +100,7 @@ async function forwardMessageToSynora(payload: {
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(postData),
+          ...(WEBHOOK_SECRET ? { "X-WhatsApp-Token": WEBHOOK_SECRET } : {}),
         },
       },
       (res) => {
@@ -253,7 +257,7 @@ export async function connectToWhatsApp(): Promise<WASocket> {
         }
       }
 
-      // Handle WhatsApp Whiteboard / Diagram Images
+      // Handle images shared in a group, including photos, screenshots, and diagrams.
       if (msg.message.imageMessage) {
         try {
           const buffer = (await downloadMediaMessage(
@@ -305,8 +309,16 @@ export async function connectToWhatsApp(): Promise<WASocket> {
           audio_base64: audioBase64,
           image_base64: imageBase64,
           media_type: mediaType,
-
           mimetype: (msg.message.audioMessage?.mimetype || msg.message.imageMessage?.mimetype) ?? undefined,
+          filename: mediaType === "audio"
+            ? ({
+                "audio/ogg": "whatsapp_audio.ogg",
+                "audio/mpeg": "whatsapp_audio.mp3",
+                "audio/mp4": "whatsapp_audio.m4a",
+                "audio/aac": "whatsapp_audio.aac",
+                "audio/wav": "whatsapp_audio.wav",
+              }[(msg.message.audioMessage?.mimetype || "audio/ogg").split(";")[0].trim()] || "whatsapp_audio.ogg")
+            : undefined,
           timestamp: typeof msg.messageTimestamp === "number" ? msg.messageTimestamp : Date.now(),
         });
 

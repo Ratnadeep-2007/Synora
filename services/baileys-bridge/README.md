@@ -5,6 +5,7 @@ Daemon using [`@whiskeysockets/baileys`](https://github.com/whiskeysockets/Baile
 ## Features
 - **Baileys WebSocket Client**: Direct connection to WhatsApp Web multi-device protocol without Chromium/Puppeteer.
 - **Group Chat Focus**: Listens to messages in WhatsApp groups (`@g.us`).
+- **Media Inputs**: Downloads voice notes, shared audio, and images from group messages. Synora transcribes audio and analyzes photos, screenshots, whiteboards, and diagrams when providers are available.
 - **Autonomous Project Understanding**: Synora automatically identifies which project the team is discussing (e.g. Healthcare Claims Engine vs Core Architecture).
 - **Live Excalidraw Whiteboard Updates**: Changes discussed in WhatsApp are automatically reflected on the relevant project's visual Excalidraw whiteboard.
 

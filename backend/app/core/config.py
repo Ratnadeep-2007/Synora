@@ -15,6 +15,26 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(default="change-me-in-development")
     ENCRYPTION_KEY: str = Field(default="change-me-in-development")
     AUTH_REQUIRED: bool = False
+    MEMORY_WORKER_ENABLED: bool = True
+    MEMORY_JOB_INTERVAL_SECONDS: int = Field(default=5, ge=1, le=300)
+    MEMORY_JOBS_PER_TICK: int = Field(default=2, ge=1, le=16)
+
+    # Memory retrieval provider (plan.md Mem0 decision): canonical evidence,
+    # claims, and project state always stay in Synora's database. "mem0" is
+    # an optional experiment adapter that only mirrors authorized,
+    # provenance-linked claims; it never becomes an authoritative store,
+    # and the read path falls back to the native provider when unavailable.
+    MEMORY_PROVIDER: str = Field(default="synora", description="synora | mem0 (experiment adapter)")
+    MEM0_API_KEY: str = ""
+    MEM0_BASE_URL: str = Field(default="", description="Optional self-hosted Mem0 host; empty uses Mem0 cloud")
+
+    # Proactive memory (Mem0 proactive patterns): session-start scan,
+    # context-trigger scan with a DEMAND gate, and precomputed reflection
+    # hints. Bounded by cooldowns so retrieval does not fire every turn.
+    PROACTIVE_MEMORY_ENABLED: bool = True
+    PROACTIVE_MIN_INTERVAL_SECONDS: int = Field(default=60, ge=5, le=3600)
+    PROACTIVE_MAX_HINTS: int = Field(default=3, ge=1, le=10)
+    MEMORY_TOKEN_BUDGET: int = Field(default=6000, ge=512, le=32000)
     NEON_AUTH_BASE_URL: str = ""
     NEON_AUTH_JWKS_URL: str = ""
     WHATSAPP_WEBHOOK_SECRET: str = ""

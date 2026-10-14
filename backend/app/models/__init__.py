@@ -57,6 +57,10 @@ from app.models.project_semantic_profile import ProjectSemanticProfile
 from app.models.context_feedback import ContextFeedback
 from app.models.unknown_cluster import UnknownCluster
 from app.models.visual_patch import VisualPatchModel
+from app.models.workspace_membership import WorkspaceMembership
+from app.models.memory_engine import MemoryIndex, MemoryTerm, MemoryClaimRevision, SourceArtifact, TopicWindow
+from app.models.proactive_memory import ProactiveHint, ProactiveEvent
+from app.services import memory_events  # Registers transactional outbox hooks.
 
 __all__ = [
     "ProjectSemanticProfile",
@@ -65,6 +69,7 @@ __all__ = [
     "VisualPatchModel",
 
     "Workspace",
+    "WorkspaceMembership",
     "Project",
     "ProjectAgent",
     "User",

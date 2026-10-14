@@ -1,0 +1,326 @@
+{
+  "dataset_version": "context_eval_v1",
+  "semantic_provider": "stubbed_per_case (routing policy only, not a live LLM)",
+  "metrics": {
+    "cases": 18,
+    "auto_route_precision": 1.0,
+    "routable_recall": 1.0,
+    "abstention_accuracy": 1.0,
+    "wrong_route_rate": 0.0,
+    "expected_calibration_error": 0.1889,
+    "by_scenario": {
+      "deterministic": {
+        "total": 2,
+        "correct_or_safe": 2
+      },
+      "explicit_id": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "explicit_tag": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "semantic": {
+        "total": 8,
+        "correct_or_safe": 8
+      },
+      "strong_match": {
+        "total": 4,
+        "correct_or_safe": 4
+      },
+      "hinglish": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "asr_error": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "media_text": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "duplicate": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "abstain": {
+        "total": 8,
+        "correct_or_safe": 8
+      },
+      "casual": {
+        "total": 2,
+        "correct_or_safe": 2
+      },
+      "low_confidence": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "ambiguous": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "similar_names": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "multi_project": {
+        "total": 1,
+        "correct_or_safe": 1
+      },
+      "short_reply": {
+        "total": 2,
+        "correct_or_safe": 2
+      },
+      "continuity": {
+        "total": 2,
+        "correct_or_safe": 2
+      },
+      "topic_switch": {
+        "total": 1,
+        "correct_or_safe": 1
+      }
+    },
+    "failures": []
+  },
+  "rows": [
+    {
+      "case_id": "det_explicit_id",
+      "scenario": [
+        "deterministic",
+        "explicit_id"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_paani",
+      "actual_decision": "resolved",
+      "actual_project": "proj_paani",
+      "confidence": 1.0,
+      "margin": 1.0
+    },
+    {
+      "case_id": "det_explicit_tag",
+      "scenario": [
+        "deterministic",
+        "explicit_tag"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_solar",
+      "actual_decision": "resolved",
+      "actual_project": "proj_solar",
+      "confidence": 1.0,
+      "margin": 1.0
+    },
+    {
+      "case_id": "sem_kirana_billing",
+      "scenario": [
+        "semantic",
+        "strong_match"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_kirana",
+      "actual_decision": "resolved",
+      "actual_project": "proj_kirana",
+      "confidence": 0.92,
+      "margin": 0.92
+    },
+    {
+      "case_id": "sem_paani_sms",
+      "scenario": [
+        "semantic",
+        "strong_match"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_paani",
+      "actual_decision": "resolved",
+      "actual_project": "proj_paani",
+      "confidence": 0.9,
+      "margin": 0.9
+    },
+    {
+      "case_id": "sem_solar_fleet",
+      "scenario": [
+        "semantic",
+        "strong_match"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_solar",
+      "actual_decision": "resolved",
+      "actual_project": "proj_solar",
+      "confidence": 0.91,
+      "margin": 0.91
+    },
+    {
+      "case_id": "sem_cafe_order",
+      "scenario": [
+        "semantic",
+        "strong_match"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_cafe",
+      "actual_decision": "resolved",
+      "actual_project": "proj_cafe",
+      "confidence": 0.9,
+      "margin": 0.9
+    },
+    {
+      "case_id": "sem_hindi_english",
+      "scenario": [
+        "semantic",
+        "hinglish"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_paani",
+      "actual_decision": "resolved",
+      "actual_project": "proj_paani",
+      "confidence": 0.9,
+      "margin": 0.9
+    },
+    {
+      "case_id": "sem_transcription_error",
+      "scenario": [
+        "semantic",
+        "asr_error"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_paani",
+      "actual_decision": "resolved",
+      "actual_project": "proj_paani",
+      "confidence": 0.84,
+      "margin": 0.84
+    },
+    {
+      "case_id": "sem_diagram_text",
+      "scenario": [
+        "semantic",
+        "media_text"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_solar",
+      "actual_decision": "resolved",
+      "actual_project": "proj_solar",
+      "confidence": 0.87,
+      "margin": 0.87
+    },
+    {
+      "case_id": "sem_duplicate_repost",
+      "scenario": [
+        "semantic",
+        "duplicate"
+      ],
+      "expected_decision": "resolved",
+      "expected_project": "proj_kirana",
+      "actual_decision": "resolved",
+      "actual_project": "proj_kirana",
+      "confidence": 0.92,
+      "margin": 0.92
+    },
+    {
+      "case_id": "unk_lunch_chatter",
+      "scenario": [
+        "abstain",
+        "casual"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "unknown",
+      "actual_project": null,
+      "confidence": 0.3,
+      "margin": 0.3
+    },
+    {
+      "case_id": "unk_weather_smalltalk",
+      "scenario": [
+        "abstain",
+        "casual"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "unknown",
+      "actual_project": null,
+      "confidence": 0.0,
+      "margin": 0.0
+    },
+    {
+      "case_id": "unk_low_confidence_winner",
+      "scenario": [
+        "abstain",
+        "low_confidence"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "unknown",
+      "actual_project": null,
+      "confidence": 0.55,
+      "margin": 0.55
+    },
+    {
+      "case_id": "unk_similar_names_ambiguous",
+      "scenario": [
+        "abstain",
+        "ambiguous",
+        "similar_names"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "ambiguous",
+      "actual_project": null,
+      "confidence": 0.78,
+      "margin": 0.04
+    },
+    {
+      "case_id": "unk_multi_project_span",
+      "scenario": [
+        "abstain",
+        "multi_project"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "ambiguous",
+      "actual_project": null,
+      "confidence": 0.85,
+      "margin": 0.02
+    },
+    {
+      "case_id": "unk_one_word_with_continuity",
+      "scenario": [
+        "abstain",
+        "short_reply",
+        "continuity"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "unknown",
+      "actual_project": null,
+      "confidence": 0.66,
+      "margin": 0.66
+    },
+    {
+      "case_id": "unk_topic_switch",
+      "scenario": [
+        "abstain",
+        "topic_switch",
+        "continuity"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "unknown",
+      "actual_project": null,
+      "confidence": 0.0,
+      "margin": 0.0
+    },
+    {
+      "case_id": "unk_one_word_no_context",
+      "scenario": [
+        "abstain",
+        "short_reply"
+      ],
+      "expected_decision": "unknown",
+      "expected_project": null,
+      "actual_decision": "casual_ignored",
+      "actual_project": null,
+      "confidence": 0.0,
+      "margin": 0.0
+    }
+  ]
+}

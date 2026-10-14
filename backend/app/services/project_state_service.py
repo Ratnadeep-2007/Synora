@@ -275,9 +275,14 @@ class ProjectStateService:
 
         elif section == "decisions":
             decisions = json.loads(state.decisions_json)
+            target_id = value.get("target_id") if isinstance(value, dict) and change.operation in {"update", "supersede"} else None
+            if target_id:
+                decisions = [item for item in decisions if not isinstance(item, dict) or item.get("id") != target_id]
             dec_text = value.get("text") or value.get("content") if isinstance(value, dict) else str(value)
             decisions.append({
-                "id": f"dec_{len(decisions)+1:03d}",
+                "id": target_id or f"dec_{len(decisions)+1:03d}",
+                "title": value.get("title", "Decision") if isinstance(value, dict) else "Decision",
+                "source_candidate_id": change.candidate_id,
                 "text": dec_text,
                 "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "evidence_ids": json.loads(change.evidence_ids_json),
@@ -287,13 +292,26 @@ class ProjectStateService:
 
         elif section == "requirements":
             reqs = json.loads(state.requirements_json)
+            target_id = value.get("target_id") if change.operation in {"update", "supersede"} else None
+            if target_id:
+                reqs = [item for item in reqs if not isinstance(item, dict) or item.get("id") != target_id]
             reqs.append({
-                "id": f"req_{len(reqs)+1:03d}",
+                "id": target_id or f"req_{len(reqs)+1:03d}",
+                "source_candidate_id": change.candidate_id,
                 "title": value.get("title", "Requirement"),
                 "content": value.get("content", str(value)),
                 "evidence_ids": json.loads(change.evidence_ids_json),
             })
             state.requirements_json = json.dumps(reqs)
+
+        elif section in {"architecture", "constraints"}:
+            rows = json.loads(getattr(state, section + "_json") or "[]")
+            target_id = value.get("target_id") if change.operation in {"update", "supersede"} else None
+            rows = [item for item in rows if not target_id or not isinstance(item, dict) or item.get("id") != target_id]
+            rows.append({"id": target_id or f"mem_{change.id}", "title": value.get("title", section),
+                         "content": value.get("content", ""), "evidence_ids": json.loads(change.evidence_ids_json),
+                         "source_candidate_id": change.candidate_id})
+            setattr(state, section + "_json", json.dumps(rows))
 
         elif section == "open_questions":
             questions = json.loads(state.open_questions_json)
@@ -340,6 +358,8 @@ class ProjectStateService:
         # Update candidate knowledge if linked
         if change.candidate:
             change.candidate.status = "approved"
+            from app.services.memory_lifecycle import MemoryLifecycleService
+            MemoryLifecycleService().supersede_prior(change.candidate, db)
 
         db.commit()
         db.refresh(version_record)

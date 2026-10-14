@@ -2,6 +2,7 @@ import hashlib
 import logging
 import math
 import re
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import settings
@@ -40,7 +41,8 @@ class GeminiEmbeddingService:
         self.api_key = (api_key or settings.GEMINI_API_KEY).strip()
         self.model_name = model_name or getattr(settings, "GEMINI_EMBEDDING_MODEL", "gemini-embedding-2")
         self.base_url = (base_url or getattr(settings, "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")).rstrip("/")
-        self._cache: Dict[str, List[float]] = {}
+        self._cache = OrderedDict()
+        self.last_provider = "lexical_hash"
         self._vector_dim = 384  # Standard dense embedding dimension for high-fidelity vector retrieval
 
 
@@ -53,20 +55,29 @@ class GeminiEmbeddingService:
         if not clean_text:
             return [0.0] * self._vector_dim
 
-        cache_key = hashlib.sha256(f"{self.model_name}:{clean_text[:500]}".encode()).hexdigest()
+        cache_key = hashlib.sha256(f"{self.model_name}:{clean_text}".encode()).hexdigest()
         if cache_key in self._cache:
-            return self._cache[cache_key]
+            self._cache.move_to_end(cache_key)
+            vector, self.last_provider = self._cache[cache_key]
+            return vector
 
         if self.api_key and not self.api_key.startswith("your-"):
             vector = self._call_gemini_api(clean_text)
             if vector:
-                self._cache[cache_key] = vector
+                self.last_provider = "gemini"
+                self._remember(cache_key, vector)
                 return vector
 
         # Safe deterministic semantic fallback vector
         vector = self._deterministic_vector(clean_text)
-        self._cache[cache_key] = vector
+        self.last_provider = "lexical_hash"
+        self._remember(cache_key, vector)
         return vector
+
+    def _remember(self, key, vector):
+        self._cache[key] = (vector, self.last_provider)
+        if len(self._cache) > 256:
+            self._cache.popitem(last=False)
 
     def _call_gemini_api(self, text: str) -> Optional[List[float]]:
         import httpx

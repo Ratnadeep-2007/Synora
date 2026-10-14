@@ -27,8 +27,9 @@ RUN groupadd -g 10001 synesis && \
     chown -R synesis:synesis /app/.cache
 
 # Copy Python packages from builder
-COPY --from=builder /root/.local /home/synesis/.local
-ENV PATH=/home/synesis/.local/bin:$PATH
+COPY --from=builder --chown=synesis:synesis /root/.local /app/.local
+ENV PATH=/app/.local/bin:$PATH
+ENV PYTHONPATH=/app/.local/lib/python3.11/site-packages
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV ENVIRONMENT=production
@@ -43,7 +44,7 @@ USER synesis
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health/ready || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=4)" || exit 1
 
 # Render (and most PaaS) injects $PORT; default keeps local docker-compose on 8000.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4 --proxy-headers"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers"]

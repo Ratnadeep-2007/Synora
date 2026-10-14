@@ -1,11 +1,13 @@
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import SynesisException
+from app.core.config import settings
 from app.models.context_resolution import (
     PossibleProjectMatch,
     UnknownContextItem,
@@ -105,6 +107,61 @@ class UnknownContextService:
         )
         return item
 
+    def file_unresolved_meeting_evidence(
+        self,
+        meeting_id: str,
+        evidence_records: List[Evidence],
+        db: Session,
+        tenant_id: str = "default_tenant",
+    ) -> int:
+        """File meeting evidence that stayed in Unknown Context as inbox items.
+
+        Meeting routing parks unresolved evidence under the Unknown Context
+        system project, but without an UnknownContextItem it never reaches
+        the Context Inbox, the Unknown board, or the Atlas Unknown column.
+        One item per evidence row (the board/Atlas render one free note per
+        item). Idempotent: an evidence row that already has an item in any
+        status is never re-filed, and create_item's (source, source_event_id)
+        idempotency is a second guard, so pipeline re-runs do not duplicate.
+        Returns the number of newly filed items.
+        """
+        filed = 0
+        for evidence in evidence_records:
+            content = (evidence.content or "").strip()
+            if not content:
+                continue
+            existing = (
+                db.query(UnknownContextItem)
+                .filter(UnknownContextItem.evidence_id == evidence.id)
+                .first()
+            )
+            if existing:
+                continue
+            self.create_item(
+                source=evidence.source or "google_meet",
+                payload={
+                    "meeting_id": meeting_id,
+                    "evidence_id": evidence.id,
+                    "speaker": evidence.actor_id,
+                },
+                db=db,
+                tenant_id=tenant_id,
+                source_event_id=f"meeting:{meeting_id}:evidence:{evidence.id}",
+                evidence_id=evidence.id,
+                meeting_id=meeting_id,
+                actor_id=evidence.actor_id,
+                content=evidence.content or "",
+                occurred_at=evidence.occurred_at,
+            )
+            filed += 1
+        if filed:
+            logger.info(
+                "unknown_context_meeting_evidence_filed: meeting=%s items=%d",
+                meeting_id,
+                filed,
+            )
+        return filed
+
     def list_items(
         self,
         db: Session,
@@ -136,6 +193,51 @@ class UnknownContextService:
             .count()
         )
 
+    @staticmethod
+    def project_ids_for_workspace(db: Session, workspace_id: str) -> List[str]:
+        return [
+            project_id for (project_id,) in db.query(Project.id)
+            .filter(Project.workspace_id == workspace_id, Project.is_system.is_(False))
+            .all()
+        ]
+
+    def refresh_pending_suggestions(
+        self,
+        db: Session,
+        tenant_id: str = "default_tenant",
+        workspace_id: str = "ws_default",
+    ) -> Dict[str, int]:
+        """Re-rank pending inbox items after a project changes the candidate set."""
+        project_ids = self.project_ids_for_workspace(db, workspace_id)
+        projects = self.context_service._authorized_projects(db, tenant_id, project_ids)
+        corpus = self.context_service._build_corpus(projects, db, tenant_id)
+        pending_items = (
+            db.query(UnknownContextItem)
+            .filter(
+                UnknownContextItem.tenant_id == tenant_id,
+                UnknownContextItem.status == UnknownItemStatus.PENDING.value,
+            )
+            .order_by(UnknownContextItem.created_at.desc())
+            .all()
+        )
+        refreshed = 0
+        suggested = 0
+        for item in pending_items:
+            try:
+                matches = self.suggest_matches(
+                    item.id,
+                    db,
+                    tenant_id=tenant_id,
+                    authorized_project_ids=project_ids,
+                    semantic=False,
+                    project_corpus=corpus,
+                )
+                refreshed += 1
+                suggested += bool(matches)
+            except Exception:
+                logger.exception("unknown_context_suggestion_refresh_failed: item=%s", item.id)
+        return {"items_refreshed": refreshed, "items_with_suggestions": suggested}
+
     def get_item(
         self, item_id: str, db: Session, tenant_id: str = "default_tenant"
     ) -> UnknownContextItem:
@@ -160,6 +262,9 @@ class UnknownContextService:
         db: Session,
         tenant_id: str = "default_tenant",
         persist: bool = True,
+        authorized_project_ids: Optional[List[str]] = None,
+        semantic: bool = True,
+        project_corpus: Optional[List[Dict[str, Any]]] = None,
     ) -> List[PossibleProjectMatch]:
         item = self.get_item(item_id, db, tenant_id)
         payload = self._safe_payload(item.payload_json)
@@ -169,38 +274,64 @@ class UnknownContextService:
         # terse follow-up ("yes, ship it") suggests the project its thread
         # was about.
         continuity = ""
-        try:
-            from app.services.conversation_continuity import (
-                build_continuity_window,
-                build_meet_continuity,
+        resolution: Optional[ContextResolutionResult] = None
+        if semantic:
+            try:
+                from app.services.conversation_continuity import (
+                    build_continuity_window,
+                    build_meet_continuity,
+                )
+
+                if item.source == "whatsapp":
+                    continuity = build_continuity_window(
+                        db=db,
+                        tenant_id=tenant_id,
+                        group_name=payload.get("group_name"),
+                        group_jid=payload.get("group_jid"),
+                        current_text=item.content or "",
+                        actor_jid=payload.get("sender_jid"),
+                    )
+                else:
+                    continuity = build_meet_continuity(
+                        db, tenant_id=tenant_id, meeting_id=item.meeting_id
+                    )
+            except Exception:
+                continuity = ""
+
+            resolution = self.context_service.resolve(
+                source=item.source,
+                payload=payload or {"text": item.content},
+                db=db,
+                tenant_id=tenant_id,
+                actor_id=item.actor_id,
+                source_event_id=item.source_event_id,
+                continuity_context=continuity or None,
+                authorized_project_ids=authorized_project_ids,
+                record=False,
             )
 
-            if item.source == "whatsapp":
-                continuity = build_continuity_window(
-                    db=db,
-                    tenant_id=tenant_id,
-                    group_name=payload.get("group_name"),
-                    group_jid=payload.get("group_jid"),
-                    current_text=item.content or "",
-                    actor_jid=payload.get("sender_jid"),
+        candidates = list(resolution.candidate_projects) if resolution else []
+        # Recommendations remain human-reviewed. When semantic routing is
+        # unavailable, show explainable lexical matches instead of leaving the
+        # inbox blank; this never auto-assigns evidence to a project.
+        if not resolution or not resolution.is_casual:
+            corpus = project_corpus
+            if corpus is None:
+                projects = self.context_service._authorized_projects(
+                    db, tenant_id, authorized_project_ids
                 )
-            else:
-                continuity = build_meet_continuity(
-                    db, tenant_id=tenant_id, meeting_id=item.meeting_id
-                )
-        except Exception:
-            continuity = ""
-
-        resolution: ContextResolutionResult = self.context_service.resolve(
-            source=item.source,
-            payload=payload or {"text": item.content},
-            db=db,
-            tenant_id=tenant_id,
-            actor_id=item.actor_id,
-            source_event_id=item.source_event_id,
-            continuity_context=continuity or None,
-            record=False,
-        )
+                corpus = self.context_service._build_corpus(projects, db, tenant_id)
+            lexical_matches = self._similarity_suggestions(
+                f"{item.content or ''} {continuity or ''}", corpus
+            )
+            by_project = {candidate.project_id: candidate for candidate in candidates}
+            for candidate in lexical_matches:
+                existing = by_project.get(candidate.project_id)
+                if existing is None:
+                    by_project[candidate.project_id] = candidate
+            candidates = sorted(
+                by_project.values(), key=lambda candidate: candidate.confidence, reverse=True
+            )[: settings.CONTEXT_RESOLUTION_CANDIDATE_LIMIT]
 
         # Fresh suggestions replace stale ones (similarity is a suggestion, not state).
         if persist:
@@ -210,7 +341,7 @@ class UnknownContextService:
             db.commit()
 
         matches: List[PossibleProjectMatch] = []
-        for candidate in resolution.candidate_projects:
+        for candidate in candidates:
             conflicts = self._detect_conflicts(candidate, item, db)
             match = PossibleProjectMatch(
                 unknown_item_id=item.id,
@@ -229,6 +360,64 @@ class UnknownContextService:
             for m in matches:
                 db.refresh(m)
         return matches
+
+    @staticmethod
+    def _similarity_suggestions(text: str, corpus: List[Dict[str, Any]]) -> List[CandidateProject]:
+        """Create conservative, explainable suggestions from project/content overlap."""
+        stop_words = {
+            "the", "and", "for", "with", "that", "this", "from", "have", "has",
+            "will", "should", "could", "would", "what", "when", "where", "which",
+            "create", "created", "make", "build", "need", "want", "please", "team",
+            "project", "workspace", "system", "context", "unknown", "source", "item",
+            "software", "architecture", "product", "engineering", "general", "application",
+        }
+        text_terms = {
+            term for term in re.findall(r"[a-z0-9]{3,}", (text or "").lower())
+            if term not in stop_words
+        }
+        if not text_terms:
+            return []
+
+        suggestions: List[CandidateProject] = []
+        for entry in corpus:
+            project_id = str(entry.get("project_id") or "")
+            name = str(entry.get("name") or project_id)
+            name_terms = {
+                term for term in re.findall(r"[a-z0-9]{3,}", name.lower())
+                if term not in stop_words
+            }
+            context_terms = UnknownContextService._project_context_terms(entry) - stop_words
+            name_overlap = text_terms & name_terms
+            context_overlap = text_terms & context_terms
+            if not name_overlap and len(context_overlap) < 2:
+                continue
+
+            reasons = []
+            if name_overlap:
+                reasons.append("Matched project name: " + ", ".join(sorted(name_overlap)))
+            if context_overlap:
+                reasons.append(f"Topical overlap with project details ({len(context_overlap)} terms)")
+            confidence = min(0.95, 0.45 + 0.16 * len(name_overlap) + 0.08 * len(context_overlap))
+            suggestions.append(CandidateProject(
+                project_id=project_id,
+                project_name=name,
+                confidence=confidence,
+                reasons=reasons,
+            ))
+        return sorted(suggestions, key=lambda candidate: candidate.confidence, reverse=True)
+
+    @staticmethod
+    def _project_context_terms(entry: Dict[str, Any]) -> set[str]:
+        text = " ".join((
+            str(entry.get("description") or ""),
+            str(entry.get("domain") or ""),
+            json.dumps(entry.get("business_concepts", []), default=str),
+            json.dumps(entry.get("technical_concepts", []), default=str),
+            json.dumps(entry.get("entities", []), default=str),
+            json.dumps(entry.get("state", {}), default=str),
+            json.dumps(entry.get("recent_evidence", []), default=str),
+        )).lower()
+        return set(re.findall(r"[a-z0-9]{3,}", text))
 
     def _detect_conflicts(
         self,
@@ -317,11 +506,33 @@ class UnknownContextService:
             )
             if evidence:
                 extraction = KnowledgeIntelligenceService().extract_items([evidence], item.source)
-                KnowledgeIntelligenceService().persist_candidates(
+                candidates = KnowledgeIntelligenceService().persist_candidates(
                     extraction,
                     project_id=project.id,
                     db=db,
                     meeting_id=item.meeting_id,
+                )
+                from app.services.conflict_service import ConflictService
+                from app.services.project_memory_service import ProjectMemoryService
+
+                conflict_service = ConflictService()
+                safe_candidates = []
+                for candidate in candidates:
+                    conflict = conflict_service.detect_conflicts_for_candidate(
+                        candidate, db=db, tenant_id=tenant_id, source=item.source
+                    )
+                    if conflict:
+                        candidate.status = "conflict"
+                        db.add(candidate)
+                    else:
+                        safe_candidates.append(candidate)
+                db.commit()
+                ProjectMemoryService().apply_candidates(
+                    project_id=project.id,
+                    candidates=safe_candidates,
+                    db=db,
+                    source=item.source,
+                    actor_id=actor_id,
                 )
         except Exception as exc:
             logger.warning("unknown_context_downstream_knowledge_failed: %s", exc)
@@ -454,13 +665,18 @@ class UnknownContextService:
             name=clean_name,
             description=description or f"Created from Unknown Context item {item.id}",
         )
-        self._move_evidence(item, project.id, db)
-        item.status = UnknownItemStatus.ASSIGNED.value
-        item.assigned_project_id = project.id
-        item.assigned_by = actor_id
-        item.assigned_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(item)
+        self.assign_to_project(
+            item_id=item.id,
+            project_id=project.id,
+            db=db,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            note="Assigned to the project created from this context item.",
+        )
+        self.refresh_pending_suggestions(
+            db, tenant_id=tenant_id, workspace_id=workspace_id
+        )
+        item = self.get_item(item_id, db, tenant_id)
         self.audit_service.record_event(
             action="unknown_context_project_created",
             actor_id=actor_id,

@@ -1,5 +1,6 @@
 from typing import Generator, Optional
-from fastapi import Depends, Header, HTTPException, Query, status
+import hashlib
+from fastapi import Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, settings
@@ -125,6 +126,7 @@ def get_meet_event_worker() -> "MeetEventWorker":
 
 
 def get_current_user(
+    request: Request,
     db: Session = Depends(get_db),
     x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
     user_id: Optional[str] = Query(None, description="Optional user ID"),
@@ -134,6 +136,31 @@ def get_current_user(
     Supports X-User-ID header or query parameter. Rejects unauthenticated requests.
     Automatically provisions new session users to ensure seamless onboarding.
     """
+    if settings.AUTH_REQUIRED:
+        claims = getattr(request.state, "auth_claims", None)
+        if not claims:
+            raise HTTPException(status_code=401, detail="Sign in required.")
+        subject = claims["sub"]
+        digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:32]
+        target_id = getattr(request.state, "synora_user_id", None) or f"usr_neon_{digest}"
+        user = db.query(User).filter(User.id == target_id).first()
+        if user:
+            return user
+        claimed_email = str(claims.get("email") or "").strip().lower()
+        email = claimed_email or f"neon-{digest}@synora.internal"
+        if db.query(User).filter(User.email == email).first():
+            email = f"neon-{digest}@synora.internal"
+        user = User(id=target_id, email=email, name=str(claims.get("name") or claimed_email or "Synora user")[:255])
+        db.add(user)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            user = db.query(User).filter(User.id == target_id).first()
+            if not user:
+                raise
+        return user
+
     target_id = (x_user_id or user_id or "").strip()
     if not target_id:
         raise HTTPException(
@@ -171,3 +198,26 @@ def get_current_user(
                 )
 
     return user
+
+
+def get_accessible_memory_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Check workspace access before reading memory or creating a snapshot."""
+    from app.models.project import Project
+    from app.models.workspace_membership import WorkspaceMembership
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    if settings.AUTH_REQUIRED:
+        membership = db.query(WorkspaceMembership).filter(
+            WorkspaceMembership.workspace_id == project.workspace_id,
+            WorkspaceMembership.user_id == current_user.id,
+            WorkspaceMembership.status == "active",
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="Project workspace access required.")
+    return project

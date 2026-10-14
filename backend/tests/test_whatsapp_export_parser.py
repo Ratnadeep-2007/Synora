@@ -60,6 +60,7 @@ def test_whatsapp_import_export_endpoint(client: TestClient, db_session):
     response = client.post(
         "/connectors/whatsapp/import-export?target_project=proj_default&limit=10",
         files={"file": ("WhatsApp Chat with Trial Project.zip", zip_bytes, "application/zip")},
+        headers={"X-User-ID": "usr_test_user_001"},
     )
 
     assert response.status_code == 200

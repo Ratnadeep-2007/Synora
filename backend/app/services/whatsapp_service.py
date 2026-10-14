@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+import base64
+import binascii
+import hashlib
 import json
 import logging
 import re
@@ -125,29 +128,60 @@ class WhatsAppIntelligenceService:
             "group_name": group_name,
             "sender_jid": sender_jid,
         }
+        source_payload: Dict[str, Any] = {
+            "message_id": message_id,
+            "text": raw_text,
+            "sender_name": sender_name,
+            "sender_jid": sender_jid,
+            "group_name": group_name,
+            "group_jid": group_jid,
+        }
+        media_type = payload.get("media_type") or (
+            "audio" if payload.get("audio_base64") else
+            "image" if payload.get("image_base64") else None
+        )
+        media_key = "audio_base64" if media_type == "audio" else "image_base64" if media_type == "image" else None
+        if media_key and payload.get(media_key):
+            encoded_media = str(payload[media_key]).split(",", 1)[-1]
+            try:
+                media_bytes = base64.b64decode(encoded_media, validate=True)
+                source_payload.update({
+                    "media_type": media_type,
+                    "mimetype": payload.get("mimetype"),
+                    "filename": payload.get("filename"),
+                    media_key: encoded_media,
+                })
+                meta_dict["media_sha256"] = hashlib.sha256(media_bytes).hexdigest()
+                meta_dict["media_type"] = media_type
+                meta_dict["mimetype"] = payload.get("mimetype")
+                meta_dict["filename"] = payload.get("filename")
+            except (ValueError, binascii.Error):
+                logger.warning("WhatsApp media for message %s is not valid base64", message_id)
         if multimodal_meta:
             meta_dict["multimodal"] = multimodal_meta
+            extraction = multimodal_meta.get("audio_transcription") or multimodal_meta.get("vision_analysis") or {}
+            source_payload["media_pending"] = extraction.get("processed") is False and not (payload.get("text") or payload.get("caption"))
 
         outcome = self.pipeline.process(
             source="whatsapp",
-            payload={
-                "message_id": message_id,
-                "text": raw_text,
-                "sender_name": sender_name,
-                "sender_jid": sender_jid,
-                "group_name": group_name,
-                "group_jid": group_jid,
-            },
+            payload=source_payload,
             db=db,
             tenant_id=tenant_id,
             actor_id=sender_name,
             source_event_id=message_id,
-            event_type="group_message",
+            event_type=f"group_{media_type}" if media_type in {"audio", "image"} else "group_message",
             occurred_at=datetime.now(timezone.utc),
             continuity_context=continuity,
             metadata=meta_dict,
         )
 
+
+        if outcome.segments:
+            return {"ok": True, "processed": True, "status": "multi_project", "message_id": message_id,
+                    "project_ids": outcome.project_ids, "segments": outcome.segments,
+                    "candidates_created": outcome.candidates_created, "conflicts_detected": outcome.conflicts_detected,
+                    "excalidraw_updated": False, "multimodal": multimodal_meta or None,
+                    "message": "Each discussion topic was processed separately. Project canvases update from their own memory."}
 
         if outcome.outcome == "unknown_context":
             logger.info(
@@ -363,11 +397,13 @@ class WhatsAppIntelligenceService:
 
                 matched = result.get("matched_project") or {}
                 project_id = matched.get("id")
-                text = str(message.get("text") or message.get("caption") or "").strip()
-                if project_id and text and result.get("status") not in ("ignored",):
-                    project_messages.setdefault(project_id, []).append(text)
-                    evidence_id = result.get("evidence_id")
-                    if evidence_id:
+                evidence_id = result.get("evidence_id")
+                if project_id and evidence_id and result.get("status") not in ("ignored",):
+                    from app.models.evidence import Evidence
+
+                    evidence = db.query(Evidence).filter(Evidence.id == evidence_id).first()
+                    if evidence and evidence.content.strip():
+                        project_messages.setdefault(project_id, []).append(evidence.content[:600])
                         project_evidence.setdefault(project_id, []).append(evidence_id)
             except Exception as exc:
                 logger.exception("whatsapp_batch_message_failed batch=%s", batch_id)

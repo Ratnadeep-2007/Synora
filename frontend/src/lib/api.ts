@@ -9,6 +9,8 @@ import {
   ExcalidrawProposal,
   MeetingItem,
   Project,
+  ProjectMemoryBriefing,
+  SourceArtifactInfo,
   ProjectAgent,
   WorkspaceAgent,
   WorkspaceAtlasData,
@@ -21,6 +23,7 @@ import {
   WhatsAppSimulateResult,
   WhatsAppMessageItem,
 } from "./types";
+import { getAuthToken, isAuthEnabled } from "./auth";
 
 declare global {
   interface Window {
@@ -80,16 +83,20 @@ export function getFrontendBaseUrl(): string {
   if (typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin;
   }
-  return "http://localhost:3000";
+  return "http://localhost:3002";
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(path: string, options?: RequestInit, responseType: "json" | "blob" = "json"): Promise<T> {
   const url = `${apiBaseUrl()}${path}`;
   const headers: Record<string, string> = {
     ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...((options?.headers as Record<string, string>) || {}),
   };
-  if (!headers["X-User-ID"]) {
+  if (isAuthEnabled()) {
+    const token = await getAuthToken();
+    if (!token) throw new Error("Sign in required.");
+    headers.Authorization = `Bearer ${token}`;
+  } else if (!headers["X-User-ID"]) {
     const sessionId = getSessionUserId();
     if (sessionId) headers["X-User-ID"] = sessionId;
   }
@@ -117,7 +124,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(errMsg);
   }
 
-  return res.json();
+  return responseType === "blob" ? await res.blob() as T : res.json();
 }
 
 export interface InputOutcome {
@@ -126,17 +133,36 @@ export interface InputOutcome {
   project_id?: string;
   evidence_id?: string;
   unknown_item_id?: string;
+  candidates_created?: number;
+  conflicts_detected?: number;
   reason: string;
 }
 
 export const api = {
-  ingestManualText: (text: string, project_id?: string) => request<InputOutcome>("/connectors/manual/text", {
-    method: "POST", body: JSON.stringify({ text, project_id }),
+  getWorkspaceAccess: (): Promise<{ status: string; role: string; workspace_id: string }> =>
+    request<{ status: string; role: string; workspace_id: string }>("/auth/workspace-access"),
+  getWorkspaceMembers: (): Promise<Array<{ user_id: string; email: string; name: string | null; role: string; status: string }>> =>
+    request<Array<{ user_id: string; email: string; name: string | null; role: string; status: string }>>("/auth/workspace/members"),
+  assignWorkspaceMember: (userId: string): Promise<{ user_id: string; status: string }> =>
+    request<{ user_id: string; status: string }>(`/auth/workspace/members/${encodeURIComponent(userId)}/assign`, { method: "POST" }),
+  createGoogleConnectionTicket: () => request<{ url: string }>("/auth/google/ticket", { method: "POST" }),
+  ingestManualText: (text: string, project_id?: string, title?: string, artifact_id?: string) => request<InputOutcome>("/connectors/manual/text", {
+    method: "POST", body: JSON.stringify({ text, project_id, title, artifact_id }),
   }),
-  uploadSourceFile: (file: File, projectId?: string) => {
+  transcribeContextAudio: (file: File, projectId?: string, retainOriginal = true): Promise<{
+    success: boolean; filename: string; text: string; provider?: string; model?: string; duration_seconds?: number; artifact_id?: string; error?: string;
+  }> => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("retain_original", String(retainOriginal));
+    if (projectId) body.append("project_id", projectId);
+    return request("/connectors/manual/audio/transcribe", { method: "POST", body });
+  },
+  uploadSourceFile: (file: File, projectId?: string, title?: string) => {
     const body = new FormData();
     body.append("file", file);
     if (projectId) body.append("project_id", projectId);
+    if (title) body.append("title", title);
     return request<InputOutcome>("/connectors/manual/upload", { method: "POST", body });
   },
   // 1. Project State
@@ -439,6 +465,18 @@ export const api = {
     knowledge: CandidateKnowledgeItem[];
     evidence: EvidenceItem[];
   }> => request(`/projects/${projectId}/memory`),
+  getProjectMemoryBriefing: (projectId: string): Promise<ProjectMemoryBriefing> =>
+    request<ProjectMemoryBriefing>(`/projects/${encodeURIComponent(projectId)}/memory/briefing`),
+  getSourceArtifacts: (evidenceId: string): Promise<SourceArtifactInfo[]> =>
+    request(`/sources/evidence/${encodeURIComponent(evidenceId)}/artifacts`),
+  getSourceArtifact: (artifactId: string): Promise<SourceArtifactInfo> =>
+    request(`/sources/artifacts/${encodeURIComponent(artifactId)}`),
+  getSourceOriginal: (artifactId: string): Promise<Blob> =>
+    request(`/sources/artifacts/${encodeURIComponent(artifactId)}/original`, undefined, "blob"),
+  retrySourceArtifact: (artifactId: string): Promise<{ artifact: SourceArtifactInfo }> =>
+    request(`/sources/artifacts/${encodeURIComponent(artifactId)}/retry`, { method: "POST" }),
+  getEvidenceById: (evidenceId: string): Promise<EvidenceItem> =>
+    request(`/sources/evidence/${encodeURIComponent(evidenceId)}`),
   // 8b. Single infinite Project Atlas
   getWorkspaceAtlas: (): Promise<WorkspaceAtlasData> =>
     request<WorkspaceAtlasData>("/workspace/atlas"),
@@ -627,8 +665,14 @@ export const api = {
 
     const url = `${apiBaseUrl()}/connectors/whatsapp/import-export?${query.toString()}`;
     const headers: Record<string, string> = {};
-    const sessionId = getSessionUserId();
-    if (sessionId) headers["X-User-ID"] = sessionId;
+    if (isAuthEnabled()) {
+      const token = await getAuthToken();
+      if (!token) throw new Error("Sign in required.");
+      headers.Authorization = `Bearer ${token}`;
+    } else {
+      const sessionId = getSessionUserId();
+      if (sessionId) headers["X-User-ID"] = sessionId;
+    }
 
     const res = await fetch(url, {
       method: "POST",

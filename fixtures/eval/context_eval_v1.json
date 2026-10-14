@@ -1,0 +1,31 @@
+{
+  "dataset_version": "context_eval_v1",
+  "notes": "Synthetic, privacy-safe labeled cases for Synora context routing (plan.md Phase 0). semantic_candidates stub the semantic provider so the suite is offline and reproducible; it measures routing policy (deterministic signals, thresholds, margins, abstention), not a live LLM. Live-provider evaluation is a separate paced run.",
+  "projects": [
+    {"id": "proj_kirana", "name": "KiranaSetu", "description": "Kirana store stock and billing for small shops"},
+    {"id": "proj_kirana_lite", "name": "KiranaSetu Lite", "description": "Lightweight KiranaSetu companion app for single-counter shops"},
+    {"id": "proj_paani", "name": "PaaniMeter", "description": "Village water tank level sensors and SMS alerts"},
+    {"id": "proj_solar", "name": "SolarRickshaw", "description": "Solar charging e-rickshaw fleet and battery swap stations"},
+    {"id": "proj_cafe", "name": "CafeFlow", "description": "Cafe table ordering and kitchen tickets"}
+  ],
+  "cases": [
+    {"id": "det_explicit_id", "scenario": ["deterministic", "explicit_id"], "source": "whatsapp", "text": "Update for proj_paani please ship the SMS alert change", "semantic": [], "expected_decision": "resolved", "expected_project": "proj_paani"},
+    {"id": "det_explicit_tag", "scenario": ["deterministic", "explicit_tag"], "source": "whatsapp", "text": "[solar] prototype review moved to Friday", "semantic": [], "expected_decision": "resolved", "expected_project": "proj_solar"},
+    {"id": "sem_kirana_billing", "scenario": ["semantic", "strong_match"], "source": "whatsapp", "text": "Dukaan ka stock aur billing kal se band hai, kuch karo", "semantic": [{"project_id": "proj_kirana", "confidence": 0.92}], "expected_decision": "resolved", "expected_project": "proj_kirana"},
+    {"id": "sem_paani_sms", "scenario": ["semantic", "strong_match"], "source": "google_meet", "text": "Tanki khaali hone se pehle sarpanch ko alert bhejna hai", "semantic": [{"project_id": "proj_paani", "confidence": 0.9}], "expected_decision": "resolved", "expected_project": "proj_paani"},
+    {"id": "sem_solar_fleet", "scenario": ["semantic", "strong_match"], "source": "google_meet", "text": "Battery swap station ka live map driver ko dikhna chahiye", "semantic": [{"project_id": "proj_solar", "confidence": 0.91}], "expected_decision": "resolved", "expected_project": "proj_solar"},
+    {"id": "sem_cafe_order", "scenario": ["semantic", "strong_match"], "source": "whatsapp", "text": "Table se order kitchen tak nahi pahunch raha", "semantic": [{"project_id": "proj_cafe", "confidence": 0.9}], "expected_decision": "resolved", "expected_project": "proj_cafe"},
+    {"id": "sem_hindi_english", "scenario": ["semantic", "hinglish"], "source": "google_meet", "text": "PaaniMeter mein tanki ka level gir gaya hai, sensor check karo", "semantic": [{"project_id": "proj_paani", "confidence": 0.9}], "expected_decision": "resolved", "expected_project": "proj_paani"},
+    {"id": "sem_transcription_error", "scenario": ["semantic", "asr_error"], "source": "google_meet", "text": "Paani Meater tanki level sensor phir se band hai", "semantic": [{"project_id": "proj_paani", "confidence": 0.84}], "expected_decision": "resolved", "expected_project": "proj_paani"},
+    {"id": "sem_diagram_text", "scenario": ["semantic", "media_text"], "source": "whatsapp", "text": "[Diagram image attached] SolarRickshaw fleet dashboard sketch with swap stations", "semantic": [{"project_id": "proj_solar", "confidence": 0.87}], "expected_decision": "resolved", "expected_project": "proj_solar"},
+    {"id": "sem_duplicate_repost", "scenario": ["semantic", "duplicate"], "source": "whatsapp", "text": "Dukaan ka stock aur billing kal se band hai, kuch karo", "semantic": [{"project_id": "proj_kirana", "confidence": 0.92}], "expected_decision": "resolved", "expected_project": "proj_kirana"},
+    {"id": "unk_lunch_chatter", "scenario": ["abstain", "casual"], "source": "whatsapp", "text": "Lunch mein aaj kya khaya sabne", "semantic": [{"project_id": "proj_kirana", "confidence": 0.3}], "expected_decision": "unknown", "expected_project": null},
+    {"id": "unk_weather_smalltalk", "scenario": ["abstain", "casual"], "source": "whatsapp", "text": "Mausam bahut kharab hai aaj", "semantic": [], "expected_decision": "unknown", "expected_project": null},
+    {"id": "unk_low_confidence_winner", "scenario": ["abstain", "low_confidence"], "source": "google_meet", "text": "Kuch sensor jaisa lag raha tha us discussion mein", "semantic": [{"project_id": "proj_paani", "confidence": 0.55}], "expected_decision": "unknown", "expected_project": null},
+    {"id": "unk_similar_names_ambiguous", "scenario": ["abstain", "ambiguous", "similar_names"], "source": "whatsapp", "text": "KiranaSetu billing wala fix kab aayega", "semantic": [{"project_id": "proj_kirana", "confidence": 0.78}, {"project_id": "proj_kirana_lite", "confidence": 0.74}], "expected_decision": "unknown", "expected_project": null},
+    {"id": "unk_multi_project_span", "scenario": ["abstain", "multi_project"], "source": "google_meet", "text": "KiranaSetu billing aur PaaniMeter sensor dono Monday ko ship honge", "semantic": [{"project_id": "proj_kirana", "confidence": 0.85}, {"project_id": "proj_paani", "confidence": 0.83}], "expected_decision": "unknown", "expected_project": null},
+    {"id": "unk_one_word_with_continuity", "scenario": ["abstain", "short_reply", "continuity"], "source": "whatsapp", "text": "haan wahi wala", "continuity": "Discussion about SolarRickshaw battery swap stations and fleet dashboard", "semantic": [{"project_id": "proj_solar", "confidence": 0.66}], "expected_decision": "unknown", "expected_project": null},
+    {"id": "unk_topic_switch", "scenario": ["abstain", "topic_switch", "continuity"], "source": "whatsapp", "text": "chalo lunch ka plan banao", "continuity": "Discussion about SolarRickshaw battery swap stations and fleet dashboard", "semantic": [], "expected_decision": "unknown", "expected_project": null},
+    {"id": "unk_one_word_no_context", "scenario": ["abstain", "short_reply"], "source": "whatsapp", "text": "ok", "semantic": [], "expected_decision": "unknown", "expected_project": null}
+  ]
+}

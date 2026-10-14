@@ -18,6 +18,8 @@ envVarGroups:
         generateValue: true
       - key: ENCRYPTION_KEY
         generateValue: true
+      - key: WHATSAPP_WEBHOOK_SECRET
+        generateValue: true
 
 services:
   - type: web
@@ -32,6 +34,14 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: NEON_AUTH_BASE_URL
+        value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth
+      - key: NEON_AUTH_JWKS_URL
+        value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth/.well-known/jwks.json
+      - key: COOKIE_SECURE
+        value: "true"
       - key: DATABASE_URL
         sync: false # Neon pooled connection string, with ?sslmode=require
       - key: FRONTEND_URL
@@ -39,6 +49,8 @@ services:
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: PUBSUB_VERIFICATION_TOKEN
         sync: false
       - key: GOOGLE_REDIRECT_URI
         value: https://synora-backend.onrender.com/auth/google/callback
@@ -82,6 +94,8 @@ services:
     envVars:
       - key: SYNORA_API_URL
         value: https://synora-backend.onrender.com
+      - key: SYNORA_AUTH_URL
+        value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth
       - key: PORT
         value: "3000"
 
@@ -90,7 +104,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: free
+    plan: 0.5c-512mb
     dockerCommand: python -m app.services.whatsapp_batch_worker
     envVarGroups:
       - synora-secrets
@@ -112,7 +126,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: free
+    plan: 0.5c-512mb
     dockerCommand: python -m app.services.visual_sync_worker
     envVarGroups:
       - synora-secrets

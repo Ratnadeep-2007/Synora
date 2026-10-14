@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, Check, CircleX, Inbox, Loader2, Plus, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { Project, UnknownContextItem } from "@/lib/types";
+import { SourceArtifactPreview } from "@/components/common/SourceArtifactPreview";
 
 interface ContextInboxPanelProps {
   projects: Project[];
@@ -25,6 +26,7 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -34,9 +36,7 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
     try {
       const data = await api.listUnknownContext("pending", 100);
       setItems(data);
-      if (selectedId && !data.some((item) => item.id === selectedId)) {
-        setSelectedId(data[0]?.id || null);
-      }
+      setSelectedId((current) => current && data.some((item) => item.id === current) ? current : data[0]?.id || null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load context inbox");
       setItems([]);
@@ -51,7 +51,7 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
     // The Atlas page refreshes on a slower cadence; this panel only reloads when
     // the Atlas is opened or an action completes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingCount]);
+  }, [pendingCount, projects]);
 
   const selected = items.find((item) => item.id === selectedId) || null;
   const selectedProjectMatches = useMemo(
@@ -60,11 +60,18 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
   );
 
   useEffect(() => {
-    if (!selected) return;
-    if (selected.matches?.length) return;
+    if (!selected) {
+      setSuggestionsLoading(false);
+      return;
+    }
+    let active = true;
+    setSuggestionsLoading(true);
     api.getUnknownSuggestions(selected.id).then((resolved) => {
-      setItems((prev) => prev.map((item) => (item.id === resolved.id ? resolved : item)));
-    }).catch(() => {});
+      if (active) setItems((prev) => prev.map((item) => (item.id === resolved.id ? resolved : item)));
+    }).catch(() => {}).finally(() => {
+      if (active) setSuggestionsLoading(false);
+    });
+    return () => { active = false; };
   }, [selected?.id]);
 
   const assign = async (itemId: string, projectId: string) => {
@@ -209,6 +216,7 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
                   Original evidence
                 </div>
                 <p className="mt-2 text-sm leading-6 text-text-main">{selected.content}</p>
+                <SourceArtifactPreview evidenceId={selected.evidence_id} />
               </div>
 
               <div className="rounded-xl border border-warning/20 bg-warning/5 p-3">
@@ -216,11 +224,17 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
                   Why it was held
                 </div>
                 <p className="mt-1 text-[11px] leading-5 text-text-muted">
-                  {selectedProjectMatches.length
+                  {suggestionsLoading
+                    ? "Checking project similarity…"
+                    : selectedProjectMatches.length
                     ? "Multiple plausible project destinations remain, so Synora has paused only the project assignment step."
                     : "No safe project destination was established from the available context."}
                 </p>
               </div>
+
+              {!suggestionsLoading && selectedProjectMatches.length === 0 && (
+                <p className="text-[11px] text-text-muted">No project match yet. Create a project here or from the workspace menu; Synora will check pending items against the updated project list.</p>
+              )}
 
               {selectedProjectMatches.length > 0 && (
                 <div className="space-y-2.5">

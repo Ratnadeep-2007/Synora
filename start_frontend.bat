@@ -32,7 +32,9 @@ if not exist "%~dp0frontend\node_modules" (
     )
 )
 
-:: 3. Check if port 3002 is occupied
+:: 3. Kill stale synora_2 servers (old UI defaults to :3000 and must never
+::    be what the browser lands on), then check if port 3002 is occupied.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -State Listen -LocalPort 3000,3001 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { $w = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_) -ErrorAction SilentlyContinue; if ($w -and $w.CommandLine -match 'synora_2') { Stop-Process -Id $w.ParentProcessId -Force -ErrorAction SilentlyContinue; Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }"
 netstat -ano | findstr /R /C:":3002 .*LISTENING" >nul 2>&1
 if !errorlevel! equ 0 (
     echo [WARNING] Port 3002 is already in use by another process!
@@ -45,7 +47,9 @@ echo Press CTRL+C to stop the frontend server.
 echo ==============================================================================
 echo.
 
-call npm run dev -- --port 3002
+:: package.json pins "dev" to --port 3002 --hostname 127.0.0.1; never rely on
+:: the Next.js default port (3000), which is what the stale clone serves.
+call npm run dev
 
 if !errorlevel! neq 0 (
     echo.

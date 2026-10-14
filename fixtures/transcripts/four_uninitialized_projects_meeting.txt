@@ -1,0 +1,36 @@
+Meeting title: Portfolio discovery — four new project concepts
+Date: 2026-10-13
+Participants: Maya Rao, Jonah Kim, Priya Shah, Leo Martins, Sam Okafor
+
+Maya Rao: Thanks, everyone. This is a discovery conversation about four separate concepts that have not been set up as Synora projects yet. Please name the concept before adding context so the notes stay easy to route.
+
+Maya Rao: First is Cedarline, a cold-chain monitoring service for small clinics. The goal is to detect when vaccine refrigerators drift outside their safe temperature range and keep an auditable record of each excursion.
+Jonah Kim: For Cedarline, the sensor should report temperature every five minutes, but it must buffer readings during network outages. We should never treat a missing reading as proof that the refrigerator was safe.
+Priya Shah: Cedarline needs an escalation policy: notify the clinic first, then the regional coordinator if no one acknowledges within fifteen minutes. The audit record should preserve who acknowledged and when.
+Leo Martins: I can compare low-power sensors that work in clinics with unreliable Wi-Fi. We do not have a hardware vendor chosen, so please keep that as an open question instead of writing a decision.
+Sam Okafor: I will draft the Cedarline pilot checklist with offline behavior, calibration dates, and the escalation test. Let us review that before selecting devices.
+
+Maya Rao: The second concept is LumenLedger. It helps city grant teams reconcile a grant award with invoices, payment milestones, and the final closeout report.
+Priya Shah: LumenLedger should flag an invoice that exceeds the approved budget, but it must show the matching award line and the source document so an analyst can verify the flag.
+Jonah Kim: The first release should support PDF invoices and spreadsheet budgets. We have not decided whether it will connect directly to the city finance system or start with manual imports.
+Sam Okafor: A grant can have several amendments. LumenLedger must keep each amendment in order and show which budget version was used for a reconciliation.
+Leo Martins: I will map the closeout workflow with two grant analysts. That research should answer whether the review queue needs team assignment or just a shared status.
+
+Maya Rao: Third is Harborlight, a passenger information tool for regional ferries. It should help people understand boarding changes and accessible routes when a dock or vessel changes.
+Leo Martins: Harborlight needs a low-bandwidth page that works on an older phone. Riders should be able to see the departure pier, boarding time, elevator status, and a step-free alternative.
+Sam Okafor: If an elevator is out, Harborlight should state the limitation plainly and offer a contact option. It must not label a route accessible unless the full route has been checked.
+Priya Shah: We need to learn which service publishes reliable dock and elevator updates. Until we speak with the ferry operators, the update source is unknown.
+Jonah Kim: I can run a usability session with screen-reader users and riders who have limited connectivity before we decide how the disruption card should be arranged.
+
+Maya Rao: The fourth concept is OrchardOS, a seasonal work planner for small farms that coordinates crews, tasks, equipment, and weather windows.
+Sam Okafor: OrchardOS should let a farm manager move a task when rain closes the field, while keeping the original schedule and the reason for the change.
+Jonah Kim: Crew members need a simple day view with task location, required equipment, and the person to ask for help. Some workers share a device, so we should not assume everyone has an individual smartphone.
+Leo Martins: The planner needs to handle changing harvest estimates without silently replacing the manager’s confirmed plan. We should mark estimates separately from assigned work.
+Priya Shah: I will interview three farm managers about how they handle language preferences and last-minute crew changes. We should not choose a translation workflow until we hear from them.
+
+Maya Rao: To recap, these are four distinct, early-stage concepts: Cedarline for clinic cold-chain monitoring, LumenLedger for grant reconciliation, Harborlight for ferry accessibility information, and OrchardOS for farm work planning.
+Jonah Kim: None of them has an initialized project workspace, an approved architecture, or a chosen vendor. The notes should stay as unassigned context until the team creates each project.
+Priya Shah: Keep the open questions with their own concept. A hardware question for Cedarline should not become a requirement for Harborlight or LumenLedger.
+Leo Martins: Agreed. I will bring the research notes back with the concept name in the title so we can assign each item once the workspaces exist.
+Sam Okafor: I will prepare a one-page discovery brief for each concept. We can then create the projects deliberately and move the confirmed context into the right memory.
+Maya Rao: Great. No project is being created in this meeting. We are capturing discovery evidence for review and later assignment.

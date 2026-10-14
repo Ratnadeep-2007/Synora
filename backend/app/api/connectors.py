@@ -2,11 +2,13 @@ import base64
 import hashlib
 import json
 import logging
+import secrets
 import re
 import time
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user, get_db
 from app.connectors.registry import registry
@@ -16,6 +18,7 @@ from app.core.config import settings
 from app.core.rbac import Permission, enforce_permission
 from app.models.evidence import Evidence
 from app.models.source_event import SourceEvent
+from app.models.meeting import Meeting
 from app.models.user import User
 from pydantic import BaseModel, Field
 from app.services.direct_input_service import MAX_UPLOAD_BYTES, process_input, extract_upload, validate_target
@@ -179,11 +182,19 @@ def get_whatsapp_status(
 
 
 @router.post("/whatsapp/session-status", summary="Update WhatsApp Baileys Session Status")
-def update_whatsapp_session_status(payload: Dict[str, Any]) -> Dict[str, Any]:
+def update_whatsapp_session_status(
+    payload: Dict[str, Any],
+    x_whatsapp_token: Optional[str] = Header(None, alias="X-WhatsApp-Token"),
+) -> Dict[str, Any]:
     """
     Endpoint called by the Baileys daemon to report real connection updates
     (connected, disconnected, reconnecting) and active group counts.
     """
+    if settings.AUTH_REQUIRED and (
+        not settings.WHATSAPP_WEBHOOK_SECRET
+        or not secrets.compare_digest(x_whatsapp_token or "", settings.WHATSAPP_WEBHOOK_SECRET)
+    ):
+        raise HTTPException(status_code=401, detail="Invalid WhatsApp bridge token.")
     connector: Optional[WhatsAppBaileysConnector] = registry.get("whatsapp")  # type: ignore
     if not connector:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="WhatsApp connector not registered.")
@@ -421,7 +432,7 @@ async def import_whatsapp_export(
     limit: Optional[int] = Query(None, ge=1, le=2000, description="Optional limit of messages to process"),
     include_media: bool = Query(True, description="Process voice notes (Whisper) and diagram images (Vision)"),
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Bulk imports an exported WhatsApp chat archive (.zip) into Synora.
@@ -450,11 +461,7 @@ async def import_whatsapp_export(
     if limit and limit > 0:
         parsed_messages = parsed_messages[:limit]
 
-    tenant_id = "default_tenant"
-    if x_user_id:
-        user = db.query(User).filter(User.id == x_user_id).first()
-        if user and hasattr(user, "tenant_id") and user.tenant_id:
-            tenant_id = user.tenant_id
+    tenant_id = getattr(current_user, "tenant_id", "default_tenant")
 
     matched_count = 0
     unknown_count = 0
@@ -545,23 +552,100 @@ class ManualTextInput(BaseModel):
     text: str = Field(min_length=1, max_length=200_000)
     title: str = Field(default="Manual text", max_length=255)
     project_id: Optional[str] = None
+    meeting_id: Optional[str] = None
+    artifact_id: Optional[str] = None
 
 
 @router.post("/manual/text", summary="Ingest manual text through shared routing")
 def ingest_manual_text(body: ManualTextInput, db: Session = Depends(get_db),
                        current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    return process_input("manual_text", {"text": body.text, "title": body.title}, db,
+    if body.meeting_id and not db.query(Meeting).filter(
+        Meeting.id == body.meeting_id, Meeting.user_id == current_user.id
+    ).first():
+        raise HTTPException(404, "Meeting not found for the current user.")
+    if body.artifact_id:
+        from app.api.memory import accessible_artifact
+        artifact = accessible_artifact(body.artifact_id, db, current_user)
+        if body.project_id and artifact.project_id != body.project_id:
+            raise HTTPException(400, "The recording belongs to another project. Select its original project.")
+    return process_input("manual_text", {"text": body.text, "title": body.title, "artifact_id": body.artifact_id}, db,
                          getattr(current_user, "tenant_id", None) or "default_tenant",
-                         current_user.id, body.project_id)
+                         current_user.id, body.project_id, meeting_id=body.meeting_id)
+
+
+@router.post("/manual/audio/transcribe", summary="Transcribe project audio for review, optionally retaining the original")
+async def transcribe_manual_audio(
+    file: UploadFile = File(...),
+    project_id: Optional[str] = Form(None),
+    retain_original: bool = Form(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return an editable transcript; the caller submits approved text separately as evidence."""
+    from pathlib import Path
+    from app.services.multimodal_service import MultimodalService
+
+    validate_target(project_id, db)
+    filename = Path(file.filename or "audio").name
+    suffix = Path(filename).suffix.lower()
+    supported = {".mp3", ".m4a", ".wav", ".ogg", ".opus", ".webm", ".mp4", ".mpeg", ".mpga", ".aac", ".flac"}
+    if suffix not in supported:
+        raise HTTPException(415, "Supported audio: MP3, M4A, WAV, OGG, OPUS, WebM, MP4, AAC or FLAC.")
+    audio = await file.read(MAX_UPLOAD_BYTES + 1)
+    if not audio:
+        raise HTTPException(400, "The audio file is empty.")
+    if len(audio) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Audio uploads are limited to 10 MB.")
+
+    result = await run_in_threadpool(
+        MultimodalService().transcribe_audio,
+        audio,
+        filename,
+        "Transcribe faithfully. Preserve speaker names, project names, numbers, and technical terms. Do not summarize.",
+    )
+    transcript = str(result.get("text") or "").strip()
+    artifact_id = None
+    if retain_original:
+        import base64, hashlib, mimetypes
+        from app.models.evidence import Evidence
+        from app.services.context_intelligence import ContextIntelligenceService
+        from app.services.source_artifact_service import SourceArtifactService
+        tenant = getattr(current_user, "tenant_id", "default_tenant")
+        if not project_id:
+            ContextIntelligenceService().ensure_unknown_context_project(db)
+        source = Evidence(project_id=project_id or "proj_unknown_context", source="manual_audio",
+                          source_event_id=f"audio:{current_user.id}:{hashlib.sha256(audio).hexdigest()}", content=transcript)
+        artifact = SourceArtifactService().capture({"audio_base64": base64.b64encode(audio).decode("ascii"),
+            "filename": filename, "mimetype": mimetypes.guess_type(filename)[0] or "audio/ogg"}, source, tenant, db,
+            {"multimodal": {"audio_transcription": result}})
+        db.commit()
+        artifact_id = artifact.id
+    if not result.get("processed") or not transcript:
+        if artifact_id:
+            return {"success": False, "filename": filename, "text": "", "artifact_id": artifact_id,
+                    "error": result.get("error") or "Transcription unavailable; original recording retained for retry."}
+        raise HTTPException(503, result.get("error") or "Audio transcription is unavailable. Configure GROQ_API_KEY and retry.")
+    return {
+        "success": True,
+        "filename": filename,
+        "text": transcript[:MAX_TEXT_CHARS],
+        "provider": result.get("provider"),
+        "model": result.get("model"),
+        "duration_seconds": result.get("duration"),
+        "artifact_id": artifact_id,
+    }
 
 
 @router.post("/manual/upload", summary="Ingest a document or image")
 async def ingest_manual_upload(file: UploadFile = File(...), project_id: Optional[str] = Form(None),
+                               title: Optional[str] = Form(None),
                                db: Session = Depends(get_db),
                                current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
     validate_target(project_id, db)
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     source, payload = extract_upload(file.filename or "", data)
+    if title and title.strip():
+        payload["title"] = title.strip()[:255]
     return process_input(source, payload, db,
                          getattr(current_user, "tenant_id", None) or "default_tenant",
                          current_user.id, project_id)

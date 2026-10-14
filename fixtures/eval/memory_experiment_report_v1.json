@@ -1,0 +1,88 @@
+{
+  "dataset_version": "memory_retrieval_v1",
+  "gate": "Adopt Mem0 only if it beats native recall/traceability with zero scope violations and lifecycle propagation; otherwise stay native.",
+  "results": {
+    "synora": {
+      "tasks": 5,
+      "recall_at_k": 1.0,
+      "negative_tasks_clean": 1.0,
+      "scope_violations": 0,
+      "traceability": 1.0,
+      "mean_latency_ms": 1.51,
+      "mirrored_claims": null,
+      "rows": [
+        {
+          "task_id": "paraphrase_swap_map",
+          "scenario": [
+            "paraphrase"
+          ],
+          "expected_claim_ids": [
+            "claim_swap_locations"
+          ],
+          "got_claim_ids": [
+            "claim_swap_locations"
+          ],
+          "recall_hit": true,
+          "scope_violation": false
+        },
+        {
+          "task_id": "older_fact_recall",
+          "scenario": [
+            "older_fact"
+          ],
+          "expected_claim_ids": [
+            "claim_dashboard"
+          ],
+          "got_claim_ids": [
+            "claim_dashboard",
+            "claim_swap_locations"
+          ],
+          "recall_hit": true,
+          "scope_violation": false
+        },
+        {
+          "task_id": "exact_decision",
+          "scenario": [
+            "exact"
+          ],
+          "expected_claim_ids": [
+            "claim_sms_alert"
+          ],
+          "got_claim_ids": [
+            "claim_sms_alert"
+          ],
+          "recall_hit": true,
+          "scope_violation": false
+        },
+        {
+          "task_id": "scope_isolation",
+          "scenario": [
+            "scope_isolation"
+          ],
+          "expected_claim_ids": [],
+          "got_claim_ids": [],
+          "recall_hit": true,
+          "scope_violation": false
+        },
+        {
+          "task_id": "inactive_not_surfaced",
+          "scenario": [
+            "lifecycle"
+          ],
+          "expected_claim_ids": [],
+          "got_claim_ids": [],
+          "recall_hit": true,
+          "scope_violation": false
+        }
+      ]
+    },
+    "mem0": {
+      "health": {
+        "provider": "mem0",
+        "available": false,
+        "reason": "MEM0_API_KEY is not configured"
+      },
+      "status": "unavailable_not_evaluated"
+    }
+  }
+}

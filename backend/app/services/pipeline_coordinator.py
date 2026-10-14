@@ -126,15 +126,48 @@ class PipelineCoordinator:
 
         # Group evidence by its already-resolved project. Unknown Context is
         # intentionally excluded from the memory write path.
+        from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+
         grouped: Dict[str, List[Evidence]] = {}
+        unknown_evidence: List[Evidence] = []
         for evidence in evidence_records:
             target_project = evidence.project_id
             if not target_project:
                 continue
-            from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
-            if target_project == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
+            if target_project in (SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID, "proj_unassigned"):
+                unknown_evidence.append(evidence)
                 continue
             grouped.setdefault(target_project, []).append(evidence)
+
+        # GAP 1 fix: unresolved meeting evidence must reach the Context
+        # Inbox. Parking it under the Unknown Context system project alone
+        # left it invisible on the Unknown board and the Atlas Unknown
+        # column, which both read UnknownContextItem rows.
+        if unknown_evidence:
+            try:
+                from app.services.unknown_context_service import UnknownContextService
+
+                filed = UnknownContextService().file_unresolved_meeting_evidence(
+                    meeting_id=meeting_id,
+                    evidence_records=unknown_evidence,
+                    db=db,
+                    tenant_id=tenant_id,
+                )
+                if filed:
+                    try:
+                        from app.services.unknown_context_visual import (
+                            render_unknown_context_board,
+                        )
+
+                        render_unknown_context_board(db, tenant_id=tenant_id)
+                    except Exception as exc:
+                        logger.warning("unknown_board_render_skipped: %s", exc)
+            except Exception as exc:
+                logger.warning(
+                    "unknown_context_meeting_filing_failed: meeting=%s error=%s",
+                    meeting_id,
+                    exc,
+                )
 
         candidates_by_project: Dict[str, List[CandidateKnowledge]] = {}
         proposals_created: List[StateChange] = []
@@ -195,6 +228,10 @@ class PipelineCoordinator:
                 }
 
         all_candidates = [c for items in candidates_by_project.values() for c in items]
+        from app.services.memory_reflection import MemoryReflectionService
+        for target_project_id in grouped:
+            MemoryReflectionService().schedule(meeting_id, target_project_id, tenant_id, db)
+        db.commit()
 
         # Project canvas updates use the same free-form VisualSyncService as the
         # 30-second living worker. This keeps the agent responsible for choosing

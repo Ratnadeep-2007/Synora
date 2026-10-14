@@ -1,0 +1,27 @@
+{
+  "dataset_version": "memory_retrieval_v1",
+  "notes": "Adoption-gate experiment for the memory retrieval provider interface (plan.md). Same labeled claims/tasks run against the native Synora provider and the optional Mem0 adapter; Mem0 is adopted only if it beats native on these metrics with lifecycle guarantees. Synthetic data only.",
+  "projects": [
+    {"id": "proj_solar", "name": "SolarRickshaw", "description": "Solar charging e-rickshaw fleet"},
+    {"id": "proj_paani", "name": "PaaniMeter", "description": "Village water tank level sensors"}
+  ],
+  "claims": [
+    {"id": "claim_swap_locations", "project_id": "proj_solar", "title": "Swap station placement", "content": "Battery exchange station locations are planned near market and bus stand", "status": "approved", "evidence_ids": ["ev_swap_1"]},
+    {"id": "claim_dashboard", "project_id": "proj_solar", "title": "Fleet dashboard", "content": "Fleet dashboard shows rickshaw battery levels to the operator", "status": "approved", "evidence_ids": ["ev_dash_1"]},
+    {"id": "claim_sms_alert", "project_id": "proj_paani", "title": "SMS alert", "content": "SMS alert to sarpanch before the water tank empties", "status": "approved", "evidence_ids": ["ev_sms_1"]},
+    {"id": "claim_old_sensor", "project_id": "proj_paani", "title": "Old sensor vendor", "content": "Ultrasonic sensor vendor was rejected after field failures", "status": "superseded", "evidence_ids": ["ev_sensor_1"]}
+  ],
+  "evidence": [
+    {"id": "ev_swap_1", "project_id": "proj_solar", "content": "Battery exchange station locations are planned near market and bus stand"},
+    {"id": "ev_dash_1", "project_id": "proj_solar", "content": "Fleet dashboard shows rickshaw battery levels to the operator"},
+    {"id": "ev_sms_1", "project_id": "proj_paani", "content": "SMS alert to sarpanch before the water tank empties"},
+    {"id": "ev_sensor_1", "project_id": "proj_paani", "content": "Ultrasonic sensor vendor was rejected after field failures"}
+  ],
+  "tasks": [
+    {"id": "paraphrase_swap_map", "scenario": ["paraphrase"], "project_id": "proj_solar", "query": "swap map locations", "expected_claim_ids": ["claim_swap_locations"]},
+    {"id": "older_fact_recall", "scenario": ["older_fact"], "project_id": "proj_solar", "query": "battery levels operator dashboard", "expected_claim_ids": ["claim_dashboard"]},
+    {"id": "exact_decision", "scenario": ["exact"], "project_id": "proj_paani", "query": "SMS alert sarpanch tank", "expected_claim_ids": ["claim_sms_alert"]},
+    {"id": "scope_isolation", "scenario": ["scope_isolation"], "project_id": "proj_solar", "query": "SMS alert sarpanch tank", "expected_claim_ids": []},
+    {"id": "inactive_not_surfaced", "scenario": ["lifecycle"], "project_id": "proj_paani", "query": "ultrasonic sensor vendor rejected", "expected_claim_ids": []}
+  ]
+}

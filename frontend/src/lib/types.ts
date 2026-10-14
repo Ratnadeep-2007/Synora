@@ -442,3 +442,31 @@ export interface WorkspaceAtlasData {
     updated_at: string | null;
   };
 }
+
+export interface ProjectMemoryBriefing {
+  project_id: string;
+  state_version: number;
+  project_state: {
+    decisions?: Array<string | { title?: string; text?: string; content?: string; evidence_ids?: string[] }>;
+    constraints?: Array<string | { title?: string; text?: string; content?: string; evidence_ids?: string[] }>;
+    open_questions?: Array<string | { title?: string; text?: string; content?: string; evidence_ids?: string[] }>;
+    requirements?: Array<string | { title?: string; text?: string; content?: string; evidence_ids?: string[] }>;
+  };
+  context_metadata: {
+    complete: boolean;
+    omitted_items: Record<string, number>;
+    excerpted_items: number;
+  };
+}
+
+export interface SourceArtifactInfo {
+  id: string;
+  filename: string;
+  mime_type: string;
+  status: "received" | "processing" | "complete" | "failed";
+  error?: string | null;
+  text?: string;
+  provider?: string;
+  model?: string;
+  segments?: Array<{ text?: string; start?: number; end?: number }>;
+}

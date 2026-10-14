@@ -19,6 +19,7 @@ from app.services.knowledge_intelligence import KnowledgeExtraction, KnowledgeIn
 from app.services.metrics import metrics
 from app.services.unknown_context_service import UnknownContextService
 from app.services.project_memory_service import ProjectMemoryService
+from app.services.conflict_service import ConflictService
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +40,12 @@ class SourceEventOutcome(BaseModel):
     meeting_id: Optional[str] = None
     unknown_item_id: Optional[str] = None
     candidates_created: int = 0
+    conflicts_detected: int = 0
     ai_status: str = "ai_unavailable"
     reason: str = ""
+    project_ids: List[str] = []
+    segments: List[Dict[str, Any]] = []
+    artifact_id: Optional[str] = None
 
 
 class SourceIntelligencePipeline:
@@ -73,6 +78,7 @@ class SourceIntelligencePipeline:
         unknown_service: Optional[UnknownContextService] = None,
         ingestion_service: Optional[IngestionService] = None,
         memory_service: Optional[ProjectMemoryService] = None,
+        conflict_service: Optional[ConflictService] = None,
     ):
         self.context_service = context_service or ContextIntelligenceService()
         self.knowledge_service = knowledge_service or KnowledgeIntelligenceService()
@@ -81,6 +87,7 @@ class SourceIntelligencePipeline:
         )
         self.ingestion = ingestion_service or IngestionService()
         self.memory_service = memory_service or ProjectMemoryService()
+        self.conflict_service = conflict_service or ConflictService()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -104,6 +111,31 @@ class SourceIntelligencePipeline:
         ignore_unresolved: bool = False,
     ) -> SourceEventOutcome:
         text = self.context_service.extract_text(source, payload)
+        from app.services.topic_service import TopicService
+        if not project_id and not payload.get("_topic_segment"):
+            spans = TopicService().split_text(text)
+            if len(spans) > 1:
+                results = []
+                for span in spans:
+                    child = {**payload, "text": span["text"], "_topic_segment": True,
+                             "source_span": {"start": span["start"], "end": span["end"]}}
+                    results.append(self.process(
+                        source, child, db, tenant_id=tenant_id, actor_id=actor_id, meeting_id=meeting_id,
+                        source_event_id=f"{source_event_id or self._synthetic_event_id(source, text)}:span:{span['start']}",
+                        event_type=event_type, occurred_at=occurred_at,
+                        authorized_project_ids=authorized_project_ids,
+                        metadata={**(metadata or {}), "source_span": child["source_span"]}, ignore_unresolved=ignore_unresolved,
+                    ))
+                projects = list(dict.fromkeys(result.project_id for result in results if result.project_id and result.outcome == "resolved"))
+                held = next((result for result in results if result.outcome == "unknown_context"), None)
+                outcome = "unknown_context" if held else "resolved" if projects else "duplicate" if all(result.outcome == "duplicate" for result in results) else "ignored"
+                return SourceEventOutcome(outcome=outcome, source=source, source_event_id=source_event_id,
+                    project_id=projects[0] if len(projects) == 1 and not held else None,
+                    project_ids=projects, segments=[result.model_dump() for result in results],
+                    unknown_item_id=held.unknown_item_id if held else None,
+                    candidates_created=sum(result.candidates_created for result in results),
+                    conflicts_detected=sum(result.conflicts_detected for result in results),
+                    ai_status=results[0].ai_status, reason="Source split at explicit topic boundaries; each span routed independently.")
 
         # 0. Casual-chat gate: pure banter never touches the DB and never
         # appears in the platform (no SourceEvent, Evidence, or Unknown item).
@@ -123,6 +155,7 @@ class SourceIntelligencePipeline:
                 db.query(SourceEvent)
                 .filter(
                     SourceEvent.source == source,
+                    SourceEvent.tenant_id == tenant_id,
                     SourceEvent.source_event_id == source_event_id,
                 )
                 .first()
@@ -147,7 +180,11 @@ class SourceIntelligencePipeline:
             det_signals, text, authorized, project_id
         )
 
-        provisional_project_id = det_project_id or SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+        provisional_project_id = SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID if payload.get("media_pending") else det_project_id or SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+        if payload.get("media_pending") and project_id:
+            payload = {**payload, "selected_project_id": project_id}
+        if payload.get("media_pending"):
+            ignore_unresolved = False
 
         # 3. Persist the raw event + evidence (provenance always preserved).
         event_in = SourceEventCreate(
@@ -174,6 +211,9 @@ class SourceIntelligencePipeline:
         db.commit()
         db.refresh(source_event)
         db.refresh(evidence)
+        # Original bytes have moved to durable artifact storage; all later
+        # payloads carry only a scoped reference.
+        payload = json.loads(source_event.payload_json)
         metrics.increment("ingestion_events_total", labels={"source": source})
 
         # 4. Parallel intelligence: Context || Knowledge on a shared snapshot.
@@ -183,7 +223,14 @@ class SourceIntelligencePipeline:
         evidence_snapshot = [evidence]
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            if det_project_id:
+            if payload.get("media_pending"):
+                context_result = ContextResolutionResult(
+                    decision=ContextDecision.UNKNOWN.value, confidence=0.0, margin=0.0,
+                    reason="Original media retained; extraction requires a successful retry.", requires_human_review=True,
+                )
+                from app.services.knowledge_intelligence import KnowledgeExtraction
+                extraction = KnowledgeExtraction(items=[], ai_status="ai_unavailable")
+            elif det_project_id:
                 context_result = ContextResolutionResult(
                     decision=ContextDecision.RESOLVED.value,
                     project_id=det_project_id,
@@ -278,9 +325,27 @@ class SourceIntelligencePipeline:
             candidates = self.knowledge_service.persist_candidates(
                 extraction, project_id=resolved_project_id, db=db, meeting_id=meeting_id
             )
+            from app.services.topic_service import TopicService
+            TopicService().remember(source, payload, evidence, tenant_id, db)
+            # Direct/user uploads share this pipeline with channel ingestion.
+            # Review contradictions before allowing extracted facts to mutate
+            # authoritative memory.
+            applicable_candidates = []
+            conflicts_detected = 0
+            for candidate in candidates:
+                conflict = self.conflict_service.detect_conflicts_for_candidate(
+                    candidate, db=db, tenant_id=tenant_id, source=source
+                )
+                if conflict:
+                    conflicts_detected += 1
+                    candidate.status = "conflict"
+                    db.add(candidate)
+                else:
+                    applicable_candidates.append(candidate)
+            db.commit()
             memory_result = self.memory_service.apply_candidates(
                 project_id=resolved_project_id,
-                candidates=candidates,
+                candidates=applicable_candidates,
                 db=db,
                 source=source,
                 actor_id=actor_id or "synora_agent",
@@ -319,7 +384,9 @@ class SourceIntelligencePipeline:
                 project_id=resolved_project_id,
                 evidence_id=evidence.id,
                 meeting_id=meeting_id,
+                artifact_id=payload.get("artifact_id"),
                 candidates_created=len(candidates),
+                conflicts_detected=conflicts_detected,
                 ai_status=extraction.ai_status,
                 reason=context_result.reason,
             )

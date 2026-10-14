@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Shell, NavTab, NotificationItem } from "@/components/layout/Shell";
 import { ProjectPulseView } from "@/components/views/ProjectPulseView";
+import { ProjectContextView } from "@/components/views/ProjectContextView";
 import { ProjectStateView } from "@/components/views/ProjectStateView";
 import { MeetingsView } from "@/components/views/MeetingsView";
 import { MeetingDetailView } from "@/components/views/MeetingDetailView";
@@ -13,7 +14,9 @@ import { EvidenceDrawer } from "@/components/common/EvidenceDrawer";
 import { CommandPalette } from "@/components/common/CommandPalette";
 import { AgentIntelligenceSheet } from "@/components/common/AgentIntelligenceSheet";
 import { PipelineStorytellingModal } from "@/components/common/PipelineStorytellingModal";
+import { AuthGate } from "@/components/common/AuthGate";
 import { api, getFrontendUserId, getBackendBaseUrl, getFrontendBaseUrl } from "@/lib/api";
+import { isAuthEnabled } from "@/lib/auth";
 import {
   AgentDefinition,
   AgentExecutionRecord,
@@ -30,7 +33,21 @@ import {
   WorkspaceAtlasData,
 } from "@/lib/types";
 
+async function connectGoogleAccount() {
+  if (isAuthEnabled()) {
+    const { url } = await api.createGoogleConnectionTicket();
+    window.location.href = `${getBackendBaseUrl()}${url}`;
+    return;
+  }
+  const uid = getFrontendUserId();
+  window.location.href = `${getBackendBaseUrl()}/auth/google?user_id=${encodeURIComponent(uid)}&return_to=${encodeURIComponent(getFrontendBaseUrl())}`;
+}
+
 export default function Home() {
+  return <AuthGate><HomeWorkspace /></AuthGate>;
+}
+
+function HomeWorkspace() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [workspaceName, setWorkspaceName] = useState<string>("Workspace");
@@ -64,6 +81,7 @@ export default function Home() {
 
   // Evidence Drawer State
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const evidenceRequest = useRef(0);
   const [drawerData, setDrawerData] = useState<{
     title: string;
     contextType: string;
@@ -249,12 +267,13 @@ export default function Home() {
   }, [selectedMeetingId]);
 
   // Handlers
-  const handleOpenEvidence = (
+  const handleOpenEvidence = async (
     title: string,
     contextType: string,
     evidenceIds: string[],
     status = "Authoritative"
   ) => {
+    const requestId = ++evidenceRequest.current;
     const items = allEvidence.filter((e) => evidenceIds.includes(e.id));
 
     setDrawerData({
@@ -265,9 +284,16 @@ export default function Home() {
       relatedChangeRef: evidenceIds.join(", ") || undefined,
     });
     setDrawerOpen(true);
+    const missing = evidenceIds.filter((id) => !items.some((item) => item.id === id)).slice(0, 12);
+    if (missing.length) {
+      const results = await Promise.allSettled(missing.map((id) => api.getEvidenceById(id)));
+      if (requestId !== evidenceRequest.current) return;
+      const loaded = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      setDrawerData((current) => ({ ...current, evidenceItems: [...items, ...loaded] }));
+    }
   };
 
-  // Global hotkeys: Cmd+K (Command Palette), Cmd+P (Story Walkthrough), 1-5 (Nav Tabs)
+  // Global hotkeys: Cmd+K (Command Palette), Cmd+P (Story Walkthrough), 1-6 (Nav Tabs)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -298,11 +324,14 @@ export default function Home() {
           setCurrentTab("state");
         } else if (e.key === "3") {
           setSelectedMeetingId(null);
-          setCurrentTab("excalidraw");
+          setCurrentTab("context");
         } else if (e.key === "4") {
           setSelectedMeetingId(null);
-          setCurrentTab("meetings");
+          setCurrentTab("excalidraw");
         } else if (e.key === "5") {
+          setSelectedMeetingId(null);
+          setCurrentTab("meetings");
+        } else if (e.key === "6") {
           setSelectedMeetingId(null);
           setCurrentTab("sources");
         }
@@ -520,8 +549,7 @@ export default function Home() {
           `Google Meet Authorization Notice:\n\n${msg}\n\nWould you like to authorize Google with Meet permissions now?`
         );
         if (confirmAuth) {
-          const uid = getFrontendUserId();
-          window.location.href = `${getBackendBaseUrl()}/auth/google?user_id=${encodeURIComponent(uid)}&return_to=${encodeURIComponent(getFrontendBaseUrl())}`;
+          await connectGoogleAccount();
         }
       } else {
         alert(`Google Meet reconciliation: ${msg}`);
@@ -796,7 +824,6 @@ export default function Home() {
             setSelectedMeetingId(null);
             setCurrentTab(tab);
           }}
-          onOpenEvidence={handleOpenEvidence}
           onReviewConflict={(conf) =>
             handleReviewConflict(conf.id, "mark_unresolved", "Flagged for human review from Project Pulse")
           }
@@ -812,6 +839,19 @@ export default function Home() {
           history={history}
           onRollback={handleRollback}
           onOpenEvidence={handleOpenEvidence}
+        />
+      )}
+
+      {currentTab === "context" && (
+        <ProjectContextView
+          project={activeProject}
+          projects={projects}
+          evidence={allEvidence}
+          candidates={candidates}
+          conflicts={conflicts.filter((conflict) => conflict.project_id === currentProjectId)}
+          onOpenEvidence={handleOpenEvidence}
+          onChanged={() => refreshAll(currentProjectId)}
+          onReviewConflict={handleReviewConflict}
         />
       )}
 
@@ -868,12 +908,8 @@ export default function Home() {
           subscriptionsActive={activeSubscriptions.length > 0}
           lastMeetEventAt={lastMeetEventAt}
           pendingMeetEvents={pendingMeetEvents.length}
-          onConnectGoogle={() => {
-            const uid = getFrontendUserId();
-            window.location.href = `${getBackendBaseUrl()}/auth/google?user_id=${encodeURIComponent(uid)}&return_to=${encodeURIComponent(getFrontendBaseUrl())}`;
-          }}
+          onConnectGoogle={() => { connectGoogleAccount().catch((error) => alert(error.message)); }}
           onSyncGoogleMeet={handleSyncGoogleMeet}
-          onNavigateToArchitecture={() => setCurrentTab("excalidraw")}
         />
       )}
 
@@ -888,7 +924,7 @@ export default function Home() {
       {/* Slide-over Evidence Drawer ("Why?") */}
       <EvidenceDrawer
         isOpen={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => { evidenceRequest.current += 1; setDrawerOpen(false); }}
         title={drawerData.title}
         contextType={drawerData.contextType}
         status={drawerData.status}

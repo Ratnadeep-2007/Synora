@@ -1,5 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
+import jwt
+from urllib.parse import quote
 from typing import List, Optional
 
 from fastapi import (
@@ -31,6 +33,7 @@ from app.core.exceptions import (
 from app.core.security import OAUTH_NONCE_COOKIE_NAME
 from app.models.source_connection import ConnectionStatus, SourceConnection
 from app.models.user import User
+from app.models.workspace_membership import WorkspaceMembership
 from app.schemas.auth import (
     OAuthCallbackResponse,
     OAuthDisconnectResponse,
@@ -43,6 +46,48 @@ from app.services.google_oauth import GoogleOAuthService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["OAuth & Connections"])
+
+
+@router.get("/workspace-access", summary="Get current workspace membership")
+def workspace_access(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    membership = db.query(WorkspaceMembership).filter_by(workspace_id="ws_default", user_id=current_user.id).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="Workspace membership not found.")
+    return {"status": membership.status, "role": membership.role, "workspace_id": membership.workspace_id}
+
+
+@router.get("/workspace/members", summary="List workspace members (owner only)")
+def workspace_members(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    own = db.query(WorkspaceMembership).filter_by(workspace_id="ws_default", user_id=current_user.id, role="owner", status="active").first()
+    if not own:
+        raise HTTPException(status_code=403, detail="Workspace owner access required.")
+    rows = db.query(WorkspaceMembership, User).join(User, User.id == WorkspaceMembership.user_id).filter(WorkspaceMembership.workspace_id == "ws_default").order_by(WorkspaceMembership.created_at.asc()).all()
+    return [{"user_id": m.user_id, "email": u.email, "name": u.name, "role": m.role, "status": m.status} for m, u in rows]
+
+
+@router.post("/workspace/members/{member_user_id}/assign", summary="Assign a pending user to the workspace")
+def assign_workspace_member(member_user_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    own = db.query(WorkspaceMembership).filter_by(workspace_id="ws_default", user_id=current_user.id, role="owner", status="active").first()
+    if not own:
+        raise HTTPException(status_code=403, detail="Workspace owner access required.")
+    membership = db.query(WorkspaceMembership).filter_by(workspace_id="ws_default", user_id=member_user_id).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="Workspace member not found.")
+    membership.status = "active"
+    db.commit()
+    return {"user_id": member_user_id, "status": membership.status}
+
+
+@router.post("/google/ticket", summary="Create a short-lived Google connection link")
+def google_connection_ticket(current_user: User = Depends(get_current_user)):
+    if not settings.AUTH_REQUIRED:
+        raise HTTPException(status_code=404, detail="Not available in local identity mode.")
+    ticket = jwt.encode(
+        {"sub": current_user.id, "aud": "google-connect", "exp": datetime.now(timezone.utc) + timedelta(seconds=90)},
+        settings.SECRET_KEY,
+        algorithm="HS256",
+    )
+    return {"url": f"/auth/google?ticket={quote(ticket)}&return_to={quote(settings.FRONTEND_URL, safe='')}"}
 
 
 @router.get(
@@ -59,6 +104,7 @@ async def initiate_google_oauth(
     request: Request,
     response: Response,
     user_id: Optional[str] = Query(None, description="Optional Synesis User ID"),
+    ticket: Optional[str] = Query(None, description="Short-lived signed connection ticket"),
     return_to: Optional[str] = Query(None, description="Optional URL to redirect after authorization completes"),
     format: Optional[str] = Query(None, description="Set to 'json' to get authorization URL without 307 redirect"),
     google_service: GoogleOAuthService = Depends(get_google_oauth_service),
@@ -74,6 +120,15 @@ async def initiate_google_oauth(
         # Determine target Synesis user (created or linked at callback time)
         from app.models.user import User as UserModel
         target_user_id = user_id
+        if settings.AUTH_REQUIRED:
+            try:
+                claims = jwt.decode(ticket or "", settings.SECRET_KEY, algorithms=["HS256"], audience="google-connect")
+                target_user_id = claims["sub"]
+            except (jwt.InvalidTokenError, KeyError):
+                raise HTTPException(status_code=401, detail="Invalid or expired Google connection link.")
+            if not db.query(UserModel).filter(UserModel.id == target_user_id).first():
+                raise HTTPException(status_code=401, detail="Unknown signed-in user.")
+            return_to = settings.FRONTEND_URL
         if not target_user_id:
             x_user_id = request.headers.get("X-User-ID")
             if x_user_id:

@@ -13,6 +13,7 @@ import logging
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.api.auth import router as auth_router
 from app.api.connectors import router as connectors_router
@@ -24,11 +25,13 @@ from app.api.system import router as system_router
 from app.api.unknown_context import router as unknown_context_router
 from app.api.vexa_meetings import router as vexa_meetings_router
 from app.api.workspace_atlas import router as workspace_atlas_router
+from app.api.memory import router as memory_router
 from app.connectors import registry  # Auto-initializes default connectors
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import SessionLocal, init_db
 from app.core.exceptions import SynesisException
 from app.core.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
+from app.core.neon_auth import verify_neon_token
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +44,10 @@ logger = logging.getLogger("synesis")
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info("Starting Synesis Backend...")
+    if settings.ENVIRONMENT == "production" and settings.DATABASE_URL.startswith("sqlite"):
+        raise RuntimeError("DATABASE_URL must point to Neon Postgres in production")
+    if settings.AUTH_REQUIRED and not all((settings.NEON_AUTH_BASE_URL, settings.NEON_AUTH_JWKS_URL)):
+        raise RuntimeError("Neon Auth base and JWKS URLs must be set")
     # Initialize database tables
     try:
         init_db()
@@ -101,10 +108,91 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+app.include_router(memory_router)
 
 # Security and Observability Middlewares
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.middleware("http")
+async def require_session(request: Request, call_next):
+    if not settings.AUTH_REQUIRED or request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+    if path.startswith(settings.API_V1_STR + "/"):
+        path = path[len(settings.API_V1_STR):]
+    public_paths = {"/", "/health", "/health/ready", "/auth/google/callback", "/auth/google"}
+    if path in public_paths:
+        return await call_next(request)
+    # These callbacks have their own provider verification. Never accept an
+    # unauthenticated WhatsApp webhook unless its shared secret is configured.
+    if (path == "/meet-events" and settings.PUBSUB_VERIFICATION_TOKEN) or (path == "/connectors/slack/events" and settings.SLACK_SIGNING_SECRET):
+        return await call_next(request)
+    if path in {"/connectors/whatsapp/webhook", "/connectors/whatsapp/session-status"} and settings.WHATSAPP_WEBHOOK_SECRET:
+        return await call_next(request)
+
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return JSONResponse(status_code=401, content={"detail": "Sign in required."})
+    try:
+        request.state.auth_claims = verify_neon_token(token)
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired session."})
+    try:
+        with SessionLocal() as db:
+            auth_user = db.execute(
+                text('SELECT email, "emailVerified", banned, name FROM neon_auth."user" WHERE id = :id'),
+                {"id": request.state.auth_claims["sub"]},
+            ).mappings().first()
+    except Exception:
+        logger.exception("Neon Auth user lookup failed")
+        return JSONResponse(status_code=503, content={"detail": "Authentication database unavailable."})
+    if not auth_user or not auth_user["emailVerified"] or auth_user["banned"]:
+        return JSONResponse(status_code=403, content={"detail": "Verify your email before accessing Synora."})
+    request.state.auth_claims["email"] = auth_user["email"]
+    request.state.auth_claims["name"] = auth_user["name"]
+    try:
+        from app.models import User, Workspace, WorkspaceMembership
+        subject = request.state.auth_claims["sub"]
+        import hashlib
+        digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:32]
+        user_id = f"usr_neon_{digest}"
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                email = auth_user["email"].strip().lower()
+                user = db.query(User).filter(User.email == email).first()
+                if not user:
+                    user = User(id=user_id, email=email, name=auth_user["name"] or email)
+                    db.add(user)
+                    db.flush()
+                elif user.id != user_id:
+                    user_id = user.id
+            workspace = db.query(Workspace).filter(Workspace.id == "ws_default").first()
+            if not workspace:
+                workspace = Workspace(id="ws_default", name="Synora Workspace")
+                db.add(workspace)
+                db.flush()
+            membership = db.query(WorkspaceMembership).filter_by(workspace_id="ws_default", user_id=user_id).first()
+            if not membership:
+                first_member = db.query(WorkspaceMembership).filter_by(workspace_id="ws_default", status="active").first() is None
+                membership = WorkspaceMembership(workspace_id="ws_default", user_id=user_id,
+                    role="owner" if first_member else "member", status="active" if first_member else "pending")
+                db.add(membership)
+            db.commit()
+            request.state.workspace_membership_status = membership.status
+            request.state.workspace_membership_role = membership.role
+            request.state.synora_user_id = user_id
+    except Exception:
+        logger.exception("Workspace membership provisioning failed")
+        return JSONResponse(status_code=503, content={"detail": "Could not provision workspace access."})
+    access_path = path in {"/auth/workspace-access", "/auth/workspace/members"} or path.startswith("/auth/workspace/members/")
+    if request.state.workspace_membership_status != "active" and not access_path:
+        return JSONResponse(status_code=403, content={"detail": "Workspace owner approval is pending.", "code": "workspace_membership_pending"})
+    return await call_next(request)
 
 # CORS Configuration
 origins = [

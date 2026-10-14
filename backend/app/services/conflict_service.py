@@ -66,6 +66,12 @@ class ConflictService:
         existing state are NOT flagged as conflicts.
         """
         state = self.state_service.get_or_create_state(candidate.project_id, db)
+        from app.services.memory_lifecycle import MemoryLifecycleService
+        replacement = MemoryLifecycleService().replacement_conflict(candidate, state, db, tenant_id, source)
+        if replacement:
+            db.commit()
+            db.refresh(replacement)
+            return replacement
         content_lower = candidate.content.lower()
         title_lower = candidate.title.lower()
         combined_text = f"{title_lower} {content_lower}"
@@ -375,9 +381,26 @@ class ConflictService:
 
         elif conflict.type == ConflictType.DECISION.value:
             decs = json.loads(state.decisions_json)
+            current_decision = json.loads(conflict.current_state_reference or "{}").get("decision")
+            if isinstance(current_decision, dict):
+                current_id = current_decision.get("id")
+                current_text = current_decision.get("text")
+                decs = [
+                    decision for decision in decs
+                    if not (
+                        isinstance(decision, dict)
+                        and ((current_id and decision.get("id") == current_id)
+                             or (not current_id and current_text and decision.get("text") == current_text))
+                    )
+                ]
+            elif isinstance(current_decision, str):
+                decs = [decision for decision in decs if str(decision) != current_decision]
+            candidate = conflict.candidate
             decs.append({
-                "id": f"dec_{len(decs)+1:03d}",
-                "text": conflict.title,
+                "id": current_decision.get("id") if isinstance(current_decision, dict) and current_decision.get("id") else f"dec_{len(decs)+1:03d}",
+                "source_candidate_id": candidate.id if candidate else None,
+                "text": candidate.content if candidate else conflict.title,
+                "title": candidate.title if candidate else conflict.title,
                 "detail": conflict.description,
                 "evidence_ids": evidence_ids,
                 "approved_by": actor_id,
@@ -387,13 +410,44 @@ class ConflictService:
 
         elif conflict.type == ConflictType.REQUIREMENT.value:
             reqs = json.loads(state.requirements_json)
-            reqs.append({
-                "id": f"req_{len(reqs)+1:03d}",
-                "title": conflict.title,
-                "content": conflict.description or conflict.title,
-                "evidence_ids": evidence_ids,
-            })
+            current_requirement = json.loads(conflict.current_state_reference or "{}").get("requirement")
+            if isinstance(current_requirement, dict):
+                current_id = current_requirement.get("id")
+                current_content = current_requirement.get("content")
+                reqs = [
+                    requirement for requirement in reqs
+                    if not (
+                        isinstance(requirement, dict)
+                        and ((current_id and requirement.get("id") == current_id)
+                             or (not current_id and current_content and requirement.get("content") == current_content))
+                    )
+                ]
+            candidate = conflict.candidate
+            proposed_content = (candidate.content if candidate else conflict.description or conflict.title)
+            cancellation = any(phrase in proposed_content.lower() for phrase in (
+                "remove offline", "drop offline", "no offline", "cancel offline"
+            ))
+            if not cancellation:
+                reqs.append({
+                    "id": current_requirement.get("id") if isinstance(current_requirement, dict) and current_requirement.get("id") else f"req_{len(reqs)+1:03d}",
+                    "source_candidate_id": candidate.id if candidate else None,
+                    "title": candidate.title if candidate else conflict.title,
+                    "content": proposed_content,
+                    "evidence_ids": evidence_ids,
+                })
             state.requirements_json = json.dumps(reqs)
+
+        elif conflict.state_change and conflict.state_change.target_section in {"architecture", "constraints"}:
+            section = conflict.state_change.target_section
+            rows = json.loads(getattr(state, section + "_json") or "[]")
+            previous = json.loads(conflict.current_state_reference or "{}")
+            match = previous.get("architecture") or previous.get("constraint") or {}
+            rows = [row for row in rows if not isinstance(row, dict) or row.get("id") != match.get("id")]
+            candidate = conflict.candidate
+            rows.append({"id": match.get("id") or f"mem_{conflict.id}",
+                         "title": candidate.title, "content": candidate.content,
+                         "evidence_ids": evidence_ids, "source_candidate_id": candidate.id})
+            setattr(state, section + "_json", json.dumps(rows))
 
         state.current_version = v_after
         state.updated_at = datetime.now(timezone.utc)
@@ -431,6 +485,8 @@ class ConflictService:
 
         if conflict.candidate:
             conflict.candidate.status = "approved"
+            from app.services.memory_lifecycle import MemoryLifecycleService
+            MemoryLifecycleService().supersede_prior(conflict.candidate, db)
 
         db.commit()
         db.refresh(conflict)

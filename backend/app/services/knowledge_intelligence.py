@@ -121,6 +121,8 @@ class KnowledgeIntelligenceService:
             "Every item MUST reference at least one EVIDENCE id from the list. "
             f"Source: {source_name}."
         )
+        if source_name == "meeting_reflection_completeness":
+            instruction += " Revisit the original discussion for missed owners, deadlines, decisions, blockers, or unresolved questions. Preserve uncertainty; suggestions are not decisions. Only extract details stated in these sources."
         lines = [instruction, "", "--- EVIDENCE LIST ---"]
         for ev in evidence_list:
             speaker = ev.actor_id or "Unknown"
@@ -259,10 +261,14 @@ class KnowledgeIntelligenceService:
                     CandidateKnowledge.project_id == project_id,
                     CandidateKnowledge.category == item.category,
                     CandidateKnowledge.title == item.title,
+                    CandidateKnowledge.content == item.content,
                 )
                 .first()
             )
             if existing:
+                existing.evidence_ids_json = json.dumps(list(dict.fromkeys(
+                    [*json.loads(existing.evidence_ids_json or "[]"), *item.evidence_ids]
+                )))
                 persisted.append(existing)
                 continue
 

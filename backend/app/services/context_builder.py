@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.agent_workforce import AgentExecution
 from app.services.project_memory_service import ProjectMemoryService
 from app.services.project_state_service import ProjectStateService
+from app.services.agent_context_packer import pack_agent_context
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ class ContextBuilder:
         limit_evidence: int = 10,
         limit_prior_runs: int = 5,
         limit_knowledge: int = 20,
+        token_budget: int = 6000,
     ) -> Dict[str, Any]:
         """Assemble a bounded context view; never expose other projects."""
         memory = self.memory_service.build_context(
@@ -45,10 +48,11 @@ class ContextBuilder:
             query=query,
             limit_knowledge=limit_knowledge,
             limit_evidence=limit_evidence,
+            include_pending=False,
         )
 
         state = memory["project_state"]
-        sections_to_include = section_filter or [
+        sections_to_include = section_filter if section_filter is not None else [
             "requirements",
             "decisions",
             "architecture",
@@ -74,7 +78,7 @@ class ContextBuilder:
                 AgentExecution.status == "completed",
             )
             .order_by(AgentExecution.created_at.desc())
-            .limit(limit_prior_runs)
+            .limit(max(0, min(20, limit_prior_runs)))
             .all()
         )
 
@@ -84,7 +88,7 @@ class ContextBuilder:
                 "agent_id": r.agent_id,
                 "output_type": r.output_type,
                 "payload": (
-                    __import__("json").loads(r.output_payload_json)
+                    json.loads(r.output_payload_json)
                     if r.output_payload_json
                     else {}
                 ),
@@ -93,17 +97,27 @@ class ContextBuilder:
             for r in prior_runs
         ]
 
-        return {
+        from app.models.conflict import Conflict
+        conflicts = db.query(Conflict).filter(
+            Conflict.project_id == project_id,
+            Conflict.tenant_id == tenant_id,
+            Conflict.status.in_(["open", "under_review", "unresolved"]),
+        ).order_by(Conflict.created_at.desc()).limit(8).all()
+
+        return pack_agent_context({
             "tenant_id": tenant_id,
             "project_id": project_id,
             "state_version": memory["state_version"],
             "project_state": filtered_state,
-            "project_memory": {
-                "knowledge": memory["knowledge"],
-                "evidence": memory["evidence"],
-            },
             "knowledge": memory["knowledge"],
             "evidence": memory["evidence"],
+            "conflicts": [{
+                "id": item.id, "status": item.status, "title": item.title,
+                "description": item.description,
+                "current_state_reference": item.current_state_reference,
+                "proposed_change_reference": item.proposed_change_reference,
+                "evidence_ids": self.memory_service._json_list(item.evidence_ids_json),
+            } for item in conflicts],
             "prior_agent_outputs": formatted_prior_runs,
             "assembled_for_agent": agent_id,
-        }
+        }, query=query, token_budget=token_budget)

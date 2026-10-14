@@ -201,16 +201,17 @@ def test_multimodal_payload_preprocessing_whiteboard_image():
 
         text, meta = service.process_incoming_payload(payload)
         assert "Check our proposed architecture sketch" in text
-        assert "[Analyzed Whiteboard/Diagram Image]: Microservices diagram" in text
+        assert "[Shared image]: Microservices diagram" in text
         assert "vision_analysis" in meta
 
 
-def test_whiteboard_without_vision_provider_never_fabricates():
+def test_whiteboard_without_vision_provider_never_fabricates(monkeypatch):
     """With no vision provider configured, the image is marked unprocessed only.
 
     It must never invent components/relationships, which would otherwise flow
     into project evidence as if they were real AI output.
     """
+    monkeypatch.setattr("app.core.config.settings.GROQ_API_KEY", "")
     service = MultimodalService(nvidia_api_key="")
     payload = {
         "image_base64": base64.b64encode(b"fake image data").decode("utf-8"),
@@ -219,7 +220,7 @@ def test_whiteboard_without_vision_provider_never_fabricates():
     }
 
     text, meta = service.process_incoming_payload(payload)
-    assert "[Diagram image attached - analysis unavailable]" in text
+    assert "[Image attached - analysis unavailable]" in text
     analysis = meta["vision_analysis"]
     assert analysis["processed"] is False
     assert analysis["provider"] == "unavailable"

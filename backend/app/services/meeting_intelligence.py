@@ -197,6 +197,7 @@ decision_candidate | requirement_candidate | constraint | action_item | question
                     CandidateKnowledge.meeting_id == meeting_id,
                     CandidateKnowledge.category == item.category,
                     CandidateKnowledge.title == item.title,
+                    CandidateKnowledge.content == item.content,
                 )
                 .first()
             )

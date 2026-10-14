@@ -65,7 +65,10 @@ if !errorlevel! neq 0 (
     )
 )
 
-:: 3. Check if port 8000 is already occupied
+:: 3. If a stale synora_2 backend holds port 8000, kill it: the frontend
+::    would otherwise silently talk to the old clone's backend and database.
+::    Any other holder only gets the warning below.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { $w = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_) -ErrorAction SilentlyContinue; if ($w -and $w.CommandLine -match 'synora_2') { Write-Host '[Cleanup] Stopping stale synora_2 backend on :8000...'; Stop-Process -Id $w.ParentProcessId -Force -ErrorAction SilentlyContinue; Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }"
 netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul 2>&1
 if !errorlevel! equ 0 (
     echo [WARNING] Port 8000 is already in use by another process!

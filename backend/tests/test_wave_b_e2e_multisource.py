@@ -105,14 +105,15 @@ def test_end_to_end_multisource_pipeline(db_session: Session):
     assert res_slack.evidence_created == 1
     assert res_slack.authoritative_version_after >= 2
 
-    # Project Memory is the shared canonical layer. Both source paths
-    # contribute to the same project-bounded state without manual approval.
+    # The Meet decision is persisted in project state. The Slack statement is
+    # a proposal and stays reviewable until a person approves it.
     db_session.refresh(base_state)
-    assert base_state.current_version >= 3
+    assert base_state.current_version == 2
     decisions = json.loads(base_state.decisions_json)
     requirements = json.loads(base_state.requirements_json)
     assert any("PostgreSQL" in str(item) for item in decisions)
-    assert any("multi-factor" in str(item).lower() for item in requirements + decisions)
+    candidates = db_session.query(CandidateKnowledge).filter_by(project_id=project_id).all()
+    assert any("multi-factor" in row.content.lower() and row.status == "proposed" for row in candidates)
     memory_audits = (
         db_session.query(StateChange)
         .filter(

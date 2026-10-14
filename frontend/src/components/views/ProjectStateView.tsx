@@ -76,7 +76,7 @@ export function ProjectStateView({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
             <Layers className="h-3.5 w-3.5" />
-            Project Brain & Authoritative Memory
+            Authoritative memory
           </div>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-text-main flex items-center gap-3">
             <span>Project State</span>
@@ -89,11 +89,6 @@ export function ProjectStateView({
           </p>
         </div>
 
-        {/* Live sync pill */}
-        <div className="flex items-center gap-2 bg-surface px-3 py-1.5 rounded-xl border border-border text-xs text-text-muted">
-          <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-          <span>Continuous Intelligence Active</span>
-        </div>
       </header>
 
       {/* Change Replay Scrubber */}
@@ -224,9 +219,6 @@ export function ProjectStateView({
               <Cpu className="w-4 h-4 text-primary" />
               <h2 className="text-sm font-bold text-text-main">System Architecture & Topology</h2>
             </div>
-            <span className="text-[11px] font-mono text-text-muted">
-              Synchronized with Project Atlas
-            </span>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

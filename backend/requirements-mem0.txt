@@ -1,0 +1,6 @@
+# Optional Mem0 experiment adapter (plan.md adoption gate).
+# NOT part of the production install: canonical memory stays in Synora's
+# DB, and the adapter is evaluated behind MEMORY_PROVIDER=mem0 with
+# MEM0_API_KEY set. Install only to run the comparison experiment:
+#   pip install -r requirements.txt -r requirements-mem0.txt
+mem0ai>=0.1.0

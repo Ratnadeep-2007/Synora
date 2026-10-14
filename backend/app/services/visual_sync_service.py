@@ -173,7 +173,9 @@ class VisualSyncService:
         # managed semantic layer. Rebuild only agent-managed content so removed
         # memory items disappear cleanly.
         user_scene = [element for element in base_scene if not _is_agent_managed(element)]
-        merged_scene = user_scene + compiled_agent_scene
+        from app.services.canvas_provenance import enrich_scene, reconcile_managed
+        compiled_agent_scene = enrich_scene(compiled_agent_scene, project_id, tenant_id, db)
+        merged_scene = user_scene + reconcile_managed(base_scene, compiled_agent_scene)
 
         if _scene_fingerprint(merged_scene) == _scene_fingerprint(base_scene):
             return {

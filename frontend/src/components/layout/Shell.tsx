@@ -9,6 +9,7 @@ import {
   Command,
   FolderKanban,
   FolderPlus,
+  Files,
   Home,
   Layers3,
   Menu,
@@ -29,6 +30,7 @@ import { Project } from "@/lib/types";
 export type NavTab =
   | "overview"
   | "state"
+  | "context"
   | "excalidraw"
   | "meetings"
   | "sources"
@@ -77,9 +79,10 @@ const NAV_ITEMS: Array<{
 }> = [
   { id: "overview", label: "Home", hint: "Start here", shortcut: "1", icon: Home },
   { id: "state", label: "State", hint: "Authoritative brain", shortcut: "2", icon: Layers3 },
-  { id: "excalidraw", label: "Atlas", hint: "Living visual brain", shortcut: "3", icon: PenTool },
-  { id: "meetings", label: "Meetings", hint: "Conversation memory", shortcut: "4", icon: Video },
-  { id: "sources", label: "Sources", hint: "Connected streams", shortcut: "5", icon: Plug },
+  { id: "context", label: "Project Context", hint: "Sources & memory", shortcut: "3", icon: Files },
+  { id: "excalidraw", label: "Atlas", hint: "Living visual brain", shortcut: "4", icon: PenTool },
+  { id: "meetings", label: "Meetings", hint: "Conversation memory", shortcut: "5", icon: Video },
+  { id: "sources", label: "Sources", hint: "Connected streams", shortcut: "6", icon: Plug },
 ];
 
 export function Shell({
@@ -287,7 +290,7 @@ export function Shell({
                     <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-danger shadow-[0_0_0_3px_rgba(220,38,38,0.10)]" />
                   )}
 
-                  {item.id === "excalidraw" && unknownContextCount > 0 && railOpen && (
+                  {item.id === "sources" && unknownContextCount > 0 && railOpen && (
                     <span className="rounded-full border border-warning/20 bg-warning/10 px-1.5 py-0.5 font-mono text-[8px] font-semibold text-warning">
                       {unknownContextCount}
                     </span>

@@ -693,20 +693,33 @@ class VisualPlanService:
                     grouped.setdefault(_snippet_project(item) or "Notes", []).append(item)
             sections = []
             for order, (project_name, items) in enumerate(grouped.items()):
-                section_text = " ".join(_snippet_text(item) for item in items).strip()
-                section_text = " ".join(section_text.split())[:5000]
+                # One free note per evidence item, stacked by the compiler.
+                # Items in a project section are never joined into a single
+                # paragraph, so each note keeps its own provenance.
+                blocks = []
+                for item_index, item in enumerate(items):
+                    evidence_id = _evidence_id_of(item)
+                    blocks.append(
+                        NoteBlock(
+                            id=f"notes_content_{order}_{item_index}",
+                            block_type="paragraph",
+                            text=_snippet_text(item).strip(),
+                            evidence_ids=[evidence_id] if evidence_id else [],
+                            support_type="explicit" if evidence_id else "inferred",
+                        )
+                    )
                 sections.append(
                     NoteSection(
                         id=f"notes_{order}",
                         title=project_name if len(grouped) > 1 else "Notes",
                         order=order,
-                        blocks=[
+                        blocks=blocks or [
                             NoteBlock(
                                 id=f"notes_content_{order}",
                                 block_type="paragraph",
-                                text=section_text or "No source content available yet.",
-                                evidence_ids=[_evidence_id_of(item) for item in items if _evidence_id_of(item)][:8],
-                                support_type="explicit" if items else "inferred",
+                                text="No source content available yet.",
+                                evidence_ids=[],
+                                support_type="inferred",
                             )
                         ],
                     )

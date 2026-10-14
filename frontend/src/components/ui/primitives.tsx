@@ -6,7 +6,7 @@ import React from "react";
    Synora design primitives — one place for buttons, sections,
    status language, empty states and overlays. Views compose
    these instead of re-declaring radii, borders and type scale.
-   Light theme: paper surfaces, ink text, single emerald accent.
+   Light theme: Vercel neutral surfaces, ink text, and semantic status accents.
    ============================================================ */
 
 type ButtonTone = "primary" | "quiet" | "danger" | "ghost";

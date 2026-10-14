@@ -156,6 +156,17 @@ class IngestionService:
             metadata_json=json.dumps(meta),
         )
         db.add(evidence)
+        db.flush()
+        payload = json.loads(event.payload_json or "{}")
+        from app.services.source_artifact_service import SourceArtifactService
+        artifact = SourceArtifactService().capture(payload, evidence, event.tenant_id, db, meta)
+        if artifact:
+            meta["artifact_id"] = artifact.id
+            evidence.metadata_json = json.dumps(meta)
+            for key in ("original_base64", "audio_base64", "image_base64"):
+                payload.pop(key, None)
+            payload["artifact_id"] = artifact.id
+            event.payload_json = json.dumps(payload)
         event.status = "processed"
         if commit:
             db.commit()

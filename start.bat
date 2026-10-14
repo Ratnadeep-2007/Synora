@@ -111,6 +111,7 @@ goto opt_all
 
 :opt_all
 echo.
+call :kill_stale_clones
 echo ==============================================================================
 echo [1/3] Launching Backend API in new window (http://localhost:8000)...
 start "Synora Backend (API :8000)" cmd /k call "%~dp0start_backend.bat"
@@ -164,4 +165,13 @@ goto menu
 
 :opt_exit
 echo Exiting Synora Launcher.
+exit /b 0
+
+:kill_stale_clones
+:: The stale synora_2 clone serves its old UI on :3000 (Next default) and can
+:: also hold :8000 with an outdated backend. Kill any listener whose owning
+:: process was launched from synora_2 so this launcher only ever serves the
+:: current UI on :3002 against the current backend on :8000.
+echo [Cleanup] Stopping stale synora_2 servers on :3000/:3001/:3002/:8000 if present...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -State Listen -LocalPort 3000,3001,3002,8000 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { $w = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_) -ErrorAction SilentlyContinue; if ($w -and $w.CommandLine -match 'synora_2') { Stop-Process -Id $w.ParentProcessId -Force -ErrorAction SilentlyContinue; Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }"
 exit /b 0

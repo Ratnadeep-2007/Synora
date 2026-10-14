@@ -10,6 +10,8 @@ from app.api.deps import (
     get_ai_workforce_service,
     get_conflict_service,
     get_current_user,
+    get_accessible_memory_project,
+    get_context_builder,
     get_db,
     get_excalidraw_service,
     get_pipeline_coordinator,
@@ -156,6 +158,22 @@ async def create_project(
         sources=sources,
     )
     agent = project_agent_service.get_or_provision_project_agent(proj.id, db)
+    try:
+        from app.services.unknown_context_service import UnknownContextService
+
+        refreshed = UnknownContextService().refresh_pending_suggestions(
+            db,
+            tenant_id=getattr(current_user, "tenant_id", "default_tenant"),
+            workspace_id=target_workspace,
+        )
+        logger.info(
+            "project_created_unknown_context_rechecked: project=%s items=%d suggestions=%d",
+            proj.id,
+            refreshed["items_refreshed"],
+            refreshed["items_with_suggestions"],
+        )
+    except Exception:
+        logger.exception("project_created_unknown_context_recheck_failed: project=%s", proj.id)
     return ProjectRead(
         id=proj.id,
         workspace_id=proj.workspace_id,
@@ -230,6 +248,8 @@ async def delete_project(
     from app.models.project_state import ProjectState
     from app.models.source_event import SourceEvent
     from app.models.task_job import TaskJob
+    from app.models.memory_engine import MemoryClaimRevision, MemoryIndex, MemoryTerm, SourceArtifact, TopicWindow
+    from app.models.proactive_memory import ProactiveEvent, ProactiveHint
     from app.models.visual_revision import VisualWorkspace
 
     if project_id == "proj_unknown_context":
@@ -275,6 +295,17 @@ async def delete_project(
         db.query(ContextResolution).filter(ContextResolution.project_id == project_id).delete(synchronize_session=False)
         db.query(SourceEvent).filter(SourceEvent.project_id == project_id).delete(synchronize_session=False)
         db.query(TaskJob).filter(TaskJob.project_id == project_id).delete(synchronize_session=False)
+        # Memory-derived rows and retained originals are project scoped too.
+        # Bulk deletes bypass ORM cascades, so remove dependents explicitly.
+        index_ids = [row[0] for row in db.query(MemoryIndex.id).filter(MemoryIndex.project_id == project_id).all()]
+        if index_ids:
+            db.query(MemoryTerm).filter(MemoryTerm.record_id.in_(index_ids)).delete(synchronize_session=False)
+        db.query(MemoryIndex).filter(MemoryIndex.project_id == project_id).delete(synchronize_session=False)
+        db.query(MemoryClaimRevision).filter(MemoryClaimRevision.project_id == project_id).delete(synchronize_session=False)
+        db.query(SourceArtifact).filter(SourceArtifact.project_id == project_id).delete(synchronize_session=False)
+        db.query(TopicWindow).filter(TopicWindow.project_id == project_id).delete(synchronize_session=False)
+        db.query(ProactiveHint).filter(ProactiveHint.project_id == project_id).delete(synchronize_session=False)
+        db.query(ProactiveEvent).filter(ProactiveEvent.project_id == project_id).delete(synchronize_session=False)
         db.query(MeetEventRecord).filter(MeetEventRecord.project_id == project_id).delete(synchronize_session=False)
         db.query(MeetSubscription).filter(MeetSubscription.project_id == project_id).delete(synchronize_session=False)
         db.query(ProjectDomainProfile).filter(ProjectDomainProfile.project_id == project_id).delete(synchronize_session=False)
@@ -868,8 +899,10 @@ async def get_project_memory(
     query: Optional[str] = Query(None),
     limit_knowledge: int = Query(20, ge=1, le=100),
     limit_evidence: int = Query(12, ge=1, le=100),
+    include_history: bool = Query(False, description="Include rejected and superseded claims for history review"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    memory_project: Project = Depends(get_accessible_memory_project),
 ):
     tenant_id = getattr(current_user, "tenant_id", "default_tenant")
     memory = ProjectMemoryService().build_context(
@@ -879,8 +912,31 @@ async def get_project_memory(
         query=query,
         limit_knowledge=limit_knowledge,
         limit_evidence=limit_evidence,
+        include_history=include_history,
     )
     return memory
+
+
+@router.get(
+    "/{project_id}/memory/briefing",
+    summary="Get Current Project Memory Briefing",
+    description="A bounded current-state briefing with approved claims, source links, and unresolved conflicts.",
+)
+async def get_project_memory_briefing(
+    project_id: str,
+    query: Optional[str] = Query(None, max_length=2000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    memory_project: Project = Depends(get_accessible_memory_project),
+    context_builder=Depends(get_context_builder),
+):
+    context = context_builder.build_agent_context(
+        project_id=project_id, agent_id="project_briefing", db=db,
+        tenant_id=getattr(current_user, "tenant_id", "default_tenant"),
+        query=query, limit_prior_runs=0, limit_knowledge=8, limit_evidence=8,
+        section_filter=["constraints", "decisions", "open_questions", "requirements", "architecture"],
+    )
+    return context
 
 
 @router.get(

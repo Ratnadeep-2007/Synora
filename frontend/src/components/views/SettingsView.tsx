@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { BrainCircuit, Copy, Database, KeyRound, Save, ShieldCheck } from "lucide-react";
 import { getFrontendUserId, setFrontendUserId } from "@/lib/api";
+import { getAuthClient, isAuthEnabled } from "@/lib/auth";
+import { api } from "@/lib/api";
 
 export type SettingsSection =
   | "Workspace"
@@ -25,9 +27,24 @@ export function SettingsView({ workspaceName = "Workspace", onSaveWorkspace }: S
   const [restoreId, setRestoreId] = useState("");
   const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [members, setMembers] = useState<Array<{ user_id: string; email: string; name: string | null; role: string; status: string }> | null>(null);
+  const [memberMessage, setMemberMessage] = useState("");
 
   useEffect(() => setName(workspaceName), [workspaceName]);
   useEffect(() => setSessionId(getFrontendUserId()), []);
+  useEffect(() => {
+    if (isAuthEnabled()) api.getWorkspaceMembers().then(setMembers).catch(() => setMembers(null));
+  }, []);
+
+  const assignMember = async (userId: string) => {
+    try {
+      await api.assignWorkspaceMember(userId);
+      setMembers((current) => current?.map((member) => member.user_id === userId ? { ...member, status: "active" } : member) ?? null);
+      setMemberMessage("Workspace access assigned.");
+    } catch (error) {
+      setMemberMessage(error instanceof Error ? error.message : "Could not assign member.");
+    }
+  };
 
   const copySessionId = async () => {
     try {
@@ -105,7 +122,27 @@ export function SettingsView({ workspaceName = "Workspace", onSaveWorkspace }: S
         </form>
       </section>
 
+      {members && <section className="rounded-2xl border border-border bg-surface p-5 shadow-xs">
+        <h2 className="text-sm font-semibold text-text-main">Workspace members</h2>
+        <p className="mt-1 text-xs text-text-muted">New verified accounts appear here as pending. Assign them to grant access to shared projects.</p>
+        {memberMessage && <p role="status" className="mt-3 text-xs text-primary">{memberMessage}</p>}
+        <div className="mt-4 divide-y divide-border">
+          {members.map((member) => <div key={member.user_id} className="flex items-center justify-between gap-3 py-3">
+            <div><p className="text-sm text-text-main">{member.name || member.email}</p><p className="text-xs text-text-muted">{member.email} · {member.role} · {member.status}</p></div>
+            {member.status === "pending" && <button type="button" onClick={() => assignMember(member.user_id)} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white">Assign</button>}
+          </div>)}
+          {!members.length && <p className="py-3 text-xs text-text-muted">No workspace members yet.</p>}
+        </div>
+      </section>}
+
       <section className="grid gap-4 lg:grid-cols-2">
+        {isAuthEnabled() ? (
+          <div className="rounded-2xl border border-border bg-surface p-5 shadow-xs">
+            <h2 className="text-sm font-semibold text-text-main">Account</h2>
+            <p className="mt-3 text-xs text-text-muted">Your projects are linked to your signed-in account across devices.</p>
+            <button type="button" onClick={async () => { await getAuthClient()?.signOut(); window.location.reload(); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-xs font-semibold text-text-main">Sign out</button>
+          </div>
+        ) : (
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-xs">
           <div className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-primary" />
@@ -152,6 +189,7 @@ export function SettingsView({ workspaceName = "Workspace", onSaveWorkspace }: S
           </form>
           {restoreMsg && <p className="mt-2 text-[11px] text-text-muted">{restoreMsg}</p>}
         </div>
+        )}
 
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-xs">
           <div className="flex items-center gap-2">

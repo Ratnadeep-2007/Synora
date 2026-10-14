@@ -25,7 +25,8 @@ def validate_target(project_id: Optional[str], db: Session) -> None:
 
 def process_input(source: str, payload: Dict[str, Any], db: Session, tenant_id: str,
                   actor_id: str, project_id: Optional[str] = None,
-                  source_event_id: Optional[str] = None) -> Dict[str, Any]:
+                  source_event_id: Optional[str] = None,
+                  meeting_id: Optional[str] = None) -> Dict[str, Any]:
     validate_target(project_id, db)
     text = str(payload.get("text", "")).strip()
     if not text:
@@ -33,16 +34,21 @@ def process_input(source: str, payload: Dict[str, Any], db: Session, tenant_id: 
     if len(text) > MAX_TEXT_CHARS:
         raise HTTPException(413, "Extracted text exceeds 200,000 characters.")
     # Content-addressed within actor + tenant + target: safe retry, distinct routing.
+    identity = (
+        {"sha256": payload["sha256"]}
+        if payload.get("sha256")
+        else {"content_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+    )
     digest = hashlib.sha256(json.dumps(
-        [tenant_id, actor_id, project_id,
-         {"filename": payload.get("filename"), "sha256": payload["sha256"]} if payload.get("sha256") else payload],
-        sort_keys=True, default=str
-    ).encode()).hexdigest()
+        [tenant_id, actor_id, project_id, source, identity],
+        sort_keys=True,
+    ).encode("utf-8")).hexdigest()
     outcome = SourceIntelligencePipeline().process(
         source=source, payload=payload, db=db, tenant_id=tenant_id,
         actor_id=actor_id, project_id=project_id,
         source_event_id=source_event_id or f"{source}_{digest}",
         event_type="image_upload" if source == "image_upload" else "manual_submission",
+        meeting_id=meeting_id,
         metadata={"filename": payload.get("filename"), "submitted_by": actor_id},
         visual_context=text if source == "image_upload" else None,
         ignore_unresolved=source in {"file_upload", "image_upload"},
@@ -57,7 +63,8 @@ def extract_upload(filename: str, data: bytes) -> tuple[str, Dict[str, Any]]:
         raise HTTPException(413, "Uploads are limited to 10 MB.")
     suffix = Path(filename).suffix.lower()
     payload: Dict[str, Any] = {"filename": Path(filename).name,
-                              "sha256": hashlib.sha256(data).hexdigest()}
+                              "sha256": hashlib.sha256(data).hexdigest(),
+                              "original_base64": base64.b64encode(data).decode("ascii")}
     source = "file_upload"
     try:
         if suffix in {".txt", ".md", ".csv", ".tsv", ".vtt", ".srt"}:
@@ -90,7 +97,9 @@ def extract_upload(filename: str, data: bytes) -> tuple[str, Dict[str, Any]]:
             mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[image_format]
             analysis = MultimodalService().extract_from_image(data, mime_type=mime)
             if not analysis.get("processed"):
-                raise HTTPException(503, "Image analysis unavailable. Configure NVIDIA_API_KEY and retry.")
+                payload.update(text="[Image attached - analysis unavailable]", vision_analysis=analysis,
+                               mime_type=mime, media_pending=True)
+                return "image_upload", payload
             lines = [str(analysis.get(key) or "") for key in ("ocr_text", "summary")]
             for key in ("decisions", "requirements"):
                 lines.extend(f"{key[:-1].capitalize()}: {item}" for item in analysis.get(key, []) if item)

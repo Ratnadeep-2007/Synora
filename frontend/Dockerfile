@@ -7,7 +7,8 @@ FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json* .npmrc ./
+COPY scripts ./scripts
 RUN npm ci
 
 # Stage 2: Build Next.js application
@@ -31,7 +32,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --chown=nextjs:nodejs entrypoint.sh ./entrypoint.sh

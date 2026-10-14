@@ -199,7 +199,7 @@ class AIWorkforceService:
             db=db,
             tenant_id=tenant_id,
             section_filter=agent_meta["permissions_read"],
-            query=custom_query,
+            query=custom_query or task_description,
         )
 
         input_refs = [

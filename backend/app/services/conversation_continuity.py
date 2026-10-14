@@ -58,6 +58,13 @@ def build_continuity_window(
 ) -> str:
     """Build the continuity window for one incoming WhatsApp message."""
     from app.models.source_event import SourceEvent
+    from app.services.topic_service import TopicService, SWITCH
+    if SWITCH.search(current_text or ""):
+        return ""
+    if group_jid:
+        active = TopicService().continuity("whatsapp", group_jid, current_text, tenant_id, db)
+        if active:
+            return active
 
     group_limit = group_limit or settings.WHATSAPP_CONTEXT_WINDOW_SIZE
     cross_limit = cross_limit or CROSS_SOURCE_LIMIT
@@ -101,7 +108,7 @@ def build_continuity_window(
         else:
             other_group.append(entry)
 
-    for entry in list(reversed(same_group))[:group_limit]:
+    for entry in reversed(same_group[:group_limit]):
         lines.append(entry)
 
     cross = build_cross_source_context(
@@ -113,10 +120,6 @@ def build_continuity_window(
     if cross:
         lines.append("Related Meet discussion:")
         lines.append(cross)
-
-    if not same_group and other_group:
-        for entry in list(reversed(other_group))[:2]:
-            lines.append(entry)
 
     return "\n".join(lines)[:LINE_BUDGET]
 
@@ -151,10 +154,10 @@ def build_cross_source_context(
             if not content:
                 continue
             terms = set(re.findall(r"[a-z0-9]{3,}", content.lower()))
-            overlap = len(query_terms & terms)
+            overlap = len(query_terms & terms) if query_terms else 1
             scored.append((overlap, row))
         scored.sort(key=lambda item: item[0], reverse=True)
-        parts = [f"- Meet: {(row.content or '')[:220]}" for _, row in scored[:limit]]
+        parts = [f"- Meet: {(row.content or '')[:220]}" for score, row in scored[:limit] if score > 0]
         return "\n".join(parts)[:800]
     except Exception:
         return ""

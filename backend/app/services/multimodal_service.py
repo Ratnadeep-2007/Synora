@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import logging
+import mimetypes
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -79,8 +80,9 @@ class MultimodalService:
                     "Authorization": f"Bearer {self.groq_api_key}",
                 }
                 model_name = settings.GROQ_WHISPER_MODEL or "whisper-large-v3-turbo"
+                mime_type = mimetypes.guess_type(filename)[0] or "audio/ogg"
                 files = {
-                    "file": (filename, raw_bytes, "audio/ogg"),
+                    "file": (filename, raw_bytes, mime_type),
                 }
                 data: Dict[str, Any] = {
                     "model": model_name,
@@ -144,8 +146,8 @@ class MultimodalService:
         mime_type: str = "image/png",
     ) -> Dict[str, Any]:
         """
-        Analyze an architectural whiteboard, system diagram, or UI mockup image.
-        Extracts OCR labels, components, connections, and architectural intent.
+        Analyze a shared image, including photos, screenshots, whiteboards, and diagrams.
+        Extract visible text and project-relevant information without inventing intent.
         """
         b64_str: str
         if isinstance(image_data, bytes):
@@ -166,11 +168,13 @@ class MultimodalService:
         data_uri = f"data:{mime_type};base64,{b64_str}"
 
         system_prompt = (
-            "You are an expert software and system architecture diagram analyzer. "
-            "Examine this architectural whiteboard photo, system diagram, or UI sketch.\n"
+            "Describe this image as evidence shared in a project conversation. "
+            "It may be a photo, screenshot, document, whiteboard, or diagram. "
+            "Report only what is visible. Do not invent project decisions, requirements, "
+            "components, or relationships. Leave their lists empty when the image does not show them.\n"
             "Respond strictly with valid JSON with these keys:\n"
             "{\n"
-            '  "summary": "Brief summary of the architecture shown",\n'
+            '  "summary": "Brief factual description of the image",\n'
             '  "ocr_text": "All readable text, titles, labels and annotations",\n'
             '  "components": [\n'
             '     {"name": "Component Name", "type": "client|service|datastore|actor|decision"}\n'
@@ -367,13 +371,13 @@ class MultimodalService:
                 if vision_res.get("processed", True):
                     ocr = vision_res.get("ocr_text", "")
                     summary = vision_res.get("summary", "")
-                    image_notes = f"[Analyzed Whiteboard/Diagram Image]: {summary}"
+                    image_notes = f"[Shared image]: {summary}"
                     if ocr:
                         image_notes += f" | Text: {ocr}"
                     raw_text = f"{raw_text}\n{image_notes}" if raw_text else image_notes
                 else:
                     # Explicit marker only: never fabricate components/relationships.
-                    marker = "[Diagram image attached - analysis unavailable]"
+                    marker = "[Image attached - analysis unavailable]"
                     raw_text = f"{raw_text}\n{marker}" if raw_text else marker
 
         return raw_text, multimodal_meta

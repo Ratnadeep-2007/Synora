@@ -344,7 +344,8 @@ class MeetEventWorker:
         multiple projects. After routing, each project receives its full
         persisted evidence set in the shared intelligence pipeline.
         """
-        return MeetingSessionIntelligenceService.segment_entries(
+        from app.services.topic_service import TopicService
+        return TopicService().split_entries(
             entries=entries,
             window_size=window_size,
             gap_seconds=gap_seconds,

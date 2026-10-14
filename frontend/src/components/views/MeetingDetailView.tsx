@@ -71,6 +71,31 @@ const INTELLIGENCE_FILTERS: { key: string; label: string }[] = [
   { key: "knowledge", label: "other" },
 ];
 
+const SPEAKER_STYLES = [
+  { avatar: "bg-primary-soft text-primary border-primary/20", bubble: "bg-primary-soft/45 border-primary/15" },
+  { avatar: "bg-amber-100 text-amber-800 border-amber-200", bubble: "bg-amber-50 border-amber-100" },
+  { avatar: "bg-emerald-100 text-emerald-800 border-emerald-200", bubble: "bg-emerald-50 border-emerald-100" },
+  { avatar: "bg-violet-100 text-violet-800 border-violet-200", bubble: "bg-violet-50 border-violet-100" },
+  { avatar: "bg-sky-100 text-sky-800 border-sky-200", bubble: "bg-sky-50 border-sky-100" },
+];
+
+function speakerStyle(name: string) {
+  let hash = 0;
+  for (let index = 0; index < name.length; index += 1) {
+    hash = (hash * 31 + name.charCodeAt(index)) >>> 0;
+  }
+  return SPEAKER_STYLES[hash % SPEAKER_STYLES.length];
+}
+
+function speakerInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join("");
+}
+
 interface MeetingDetailViewProps {
   meetingId: string;
   meetingData: any;
@@ -119,6 +144,12 @@ export function MeetingDetailView({
   const entries = ((meetingData?.transcripts || meeting?.transcripts || []) as any[]).flatMap(
     (t: any) => t?.entries || []
   ).sort((a: any, b: any) => String(a?.start_time || "").localeCompare(String(b?.start_time || "")));
+  const conversationEntries = entries.filter((entry: any) => {
+    const speaker = String(entry?.participant_display_name || entry?.participant_name || entry?.speaker || "")
+      .trim()
+      .toLowerCase();
+    return !["meeting title", "date", "participants", "meeting id"].includes(speaker);
+  });
 
   const filteredCandidates = candidates.filter((c) => {
     if (intelligenceFilter === "all") return true;
@@ -373,41 +404,53 @@ export function MeetingDetailView({
 
       {/* Desktop two primary columns: Transcript + Intelligence (independently scrollable) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        {/* LEFT: Transcript — original text, never paraphrased */}
-        <div className="p-6 rounded-xl bg-surface border border-border shadow-xs space-y-4 lg:sticky lg:top-20 lg:max-h-[70vh] lg:overflow-y-auto">
-          <div className="flex items-center justify-between pb-3 border-b border-border">
-            <h3 className="text-sm font-semibold text-text-main uppercase tracking-wider">
-              Transcript ({entries.length})
-            </h3>
-            <span className="text-xs text-text-muted">Direct source record</span>
+        {/* LEFT: Complete speaker-attributed discussion, preserved verbatim. */}
+        <section className="rounded-xl bg-surface border border-border shadow-xs overflow-hidden lg:sticky lg:top-20 lg:max-h-[70vh] flex flex-col">
+          <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border bg-surface">
+            <div>
+              <h3 className="text-sm font-semibold text-text-main flex items-center gap-2">
+                <MessageSquareText className="w-4 h-4 text-primary" />
+                Meeting discussion
+              </h3>
+              <p className="text-[11px] text-text-muted mt-1">Every spoken turn, attributed to its speaker and kept verbatim.</p>
+            </div>
+            <span className="shrink-0 text-[10px] font-mono px-2 py-1 rounded-full bg-primary-soft text-primary border border-primary/20">
+              {conversationEntries.length} messages
+            </span>
           </div>
 
-          <div className="divide-y divide-border/60">
-            {entries.length === 0 ? (
-              <div className="py-6 text-center text-xs text-text-muted">
-                No transcript entries found for this meeting.
+          <div className="min-h-[320px] overflow-y-auto p-4 sm:p-5 bg-canvas/50 space-y-4">
+            {conversationEntries.length === 0 ? (
+              <div className="py-10 text-center text-xs text-text-muted">
+                No discussion messages found for this meeting.
               </div>
             ) : (
-              entries.map((entry: any, idx: number) => (
-                <div key={entry.id || idx} className="py-3.5 space-y-1.5">
-                  <div className="flex items-center justify-between text-xs text-text-muted">
-                    <div className="flex items-center gap-1.5 font-medium text-text-main">
-                      <User className="w-3.5 h-3.5 text-primary" />
-                      <span>{entry.participant_display_name || entry.participant_name || entry.speaker || "Participant"}</span>
+              conversationEntries.map((entry: any, idx: number) => {
+                const name = entry.participant_display_name || entry.participant_name || entry.speaker || "Participant";
+                const style = speakerStyle(name);
+                const time = entry.start_time
+                  ? new Date(entry.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                  : null;
+                return (
+                  <article key={entry.id || idx} className="flex items-start gap-2.5">
+                    <div className={`w-8 h-8 shrink-0 rounded-full border flex items-center justify-center text-[10px] font-bold ${style.avatar}`} aria-hidden="true">
+                      {speakerInitials(name) || <User className="w-3.5 h-3.5" />}
                     </div>
-                    <div className="flex items-center gap-1 font-mono text-[11px]">
-                      <Clock className="w-3 h-3" />
-                      <span>{entry.start_time || "00:00:00"}</span>
+                    <div className="min-w-0 max-w-[92%] sm:max-w-[86%] space-y-1">
+                      <div className="flex items-center gap-2 px-1">
+                        <span className="text-[11px] font-semibold text-text-main">{name}</span>
+                        {time && <span className="text-[10px] text-text-muted font-mono">{time}</span>}
+                      </div>
+                      <div className={`rounded-2xl rounded-tl-md border px-3.5 py-2.5 ${style.bubble}`}>
+                        <p className="text-xs text-text-main leading-relaxed whitespace-pre-wrap break-words">{entry.text}</p>
+                      </div>
                     </div>
-                  </div>
-                  <p className="text-xs text-text-main leading-relaxed pl-5 font-sans">
-                    {entry.text}
-                  </p>
-                </div>
-              ))
+                  </article>
+                );
+              })
             )}
           </div>
-        </div>
+        </section>
 
         {/* RIGHT: Intelligence — type, statement, status, evidence, action */}
         <div className="space-y-4 lg:max-h-[70vh] lg:overflow-y-auto lg:pr-1">

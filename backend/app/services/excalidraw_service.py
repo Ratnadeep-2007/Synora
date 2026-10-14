@@ -314,7 +314,7 @@ class ExcalidrawService:
         plan, ai_status = VisualPlanService().build_plan(
             state_summary=state_summary,
             current_nodes=nodes_before,
-            evidence_snippets=self._recent_evidence_snippets(project_id, db),
+            evidence_snippets=self._recent_evidence_snippets(project_id, db, tenant_id=tenant_id),
             focus_prompt=reason,
         )
         try:
@@ -356,6 +356,8 @@ class ExcalidrawService:
                 "; ".join(critique.issues[:3]),
             )
 
+        from app.services.canvas_provenance import enrich_scene
+        proposed_elements = enrich_scene(proposed_elements, project_id, tenant_id, db)
         nodes_after = [n.label for n in plan.nodes]
         nodes_added = [n for n in nodes_after if n not in nodes_before]
         nodes_removed = [n for n in nodes_before if n not in nodes_after]
@@ -480,7 +482,7 @@ class ExcalidrawService:
             "decisions": self._json_list(state.decisions_json) if state else [],
             "constraints": self._json_list(state.constraints_json) if state else [],
         }
-        evidence_snippets = self._recent_evidence_snippets(project_id, db)
+        evidence_snippets = self._recent_evidence_snippets(project_id, db, query=focus_prompt, tenant_id=tenant_id)
         current_scene = self._json_list(artifact.elements_json)
 
         planner = visual_plan_service or VisualPlanService()
@@ -495,6 +497,8 @@ class ExcalidrawService:
         compiler = ExcalidrawCompiler()
         free = settings.visual_design_free
         proposed_elements = compiler.compile(plan, enforce_grounding=not free)
+        from app.services.canvas_provenance import enrich_scene, reconcile_managed
+        proposed_elements = reconcile_managed(current_scene, enrich_scene(proposed_elements, project_id, tenant_id, db))
 
         critique = VisualCritiqueService().critique(plan, proposed_elements)
         # Critique findings downgrade this to a reviewable proposal instead of
@@ -666,6 +670,8 @@ class ExcalidrawService:
             }
         nodes_after = [n.label for n in plan.nodes]
 
+        from app.services.canvas_provenance import enrich_scene
+        compiled_elements = enrich_scene(compiled_elements, project_id, tenant_id, db)
         # 2b. Critique. This path auto-applies straight to the canvas, so it
         # previously had no critique at all: whatever the planner produced was
         # committed without ever being checked.
@@ -814,24 +820,31 @@ class ExcalidrawService:
                 rels.append(f"{start} -> {end}")
         return rels
 
-    def _recent_evidence_snippets(self, project_id: str, db: Session) -> List[Dict[str, str]]:
+    def _recent_evidence_snippets(
+        self, project_id: str, db: Session,
+        query: Optional[str] = None, tenant_id: str = "default_tenant",
+    ) -> List[Dict[str, Any]]:
         """
-        Recent evidence for the visual planner.
+        Select relevant evidence for a focus, or current approved-claim sources.
 
-        Each entry keeps its Evidence id. The planner must cite that id on
-        every node it proposes and the compiler discards ungrounded nodes,
-        so dropping the id here would make grounding impossible.
+        Entries keep persisted Evidence IDs and excerpt offsets so a plan's
+        citations remain traceable to the original source material.
         """
-        from app.models.evidence import Evidence
+        from app.services.project_memory_service import ProjectMemoryService
+        from app.services.memory_retrieval import excerpt_record
 
-        rows = (
-            db.query(Evidence)
-            .filter(Evidence.project_id == project_id)
-            .order_by(Evidence.created_at.desc())
-            .limit(8)
-            .all()
+        memory = ProjectMemoryService().build_context(
+            project_id, db, tenant_id=tenant_id, query=query,
+            limit_knowledge=8, limit_evidence=8, include_pending=False,
         )
-        return [{"id": r.id, "content": (r.content or "")[:200]} for r in rows if r.content]
+        snippets = []
+        for evidence in memory["evidence"]:
+            record = excerpt_record(evidence, "text", query, 700)
+            record["content"] = record.pop("text")
+            if "excerpt" in record:
+                record["excerpt"]["field"] = "content"
+            snippets.append(record)
+        return snippets
 
     def review_proposal(
         self,
@@ -1637,7 +1650,7 @@ class ExcalidrawService:
 
             card_x = 80
             for idx, d in enumerate(decisions_list[:4]):  # Show up to 4 recent decisions
-                d_title = d.get("title") or d.get("decision") or d.get("text") or f"Decision #{idx+1}"
+                d_title = d.get("decision") or d.get("text") or d.get("title") or f"Decision #{idx+1}"
                 d_source = d.get("source", "Google Meet")
                 evidence_val = d.get("evidence_ref") or d.get("evidence_id")
                 if not evidence_val and d.get("evidence_ids"):

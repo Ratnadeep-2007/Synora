@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { CanvasEvidenceInspector } from "@/components/common/CanvasEvidenceInspector";
 import { AlertTriangle, Check, Eye, Info, Layers, Maximize2, Minimize2, PenTool, Save, ZoomIn } from "lucide-react";
 
 export function sanitizeExcalidrawElements(elements: any[]): any[] {
@@ -276,6 +277,9 @@ export const ExcalidrawCanvas = React.memo(function ExcalidrawCanvas({
   onSaveCanvas,
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
+  const [selectedProvenance, setSelectedProvenance] = useState<any>(null);
+  const selectedProvenanceKey = useRef("");
+  useEffect(() => { setSelectedProvenance(null); selectedProvenanceKey.current = ""; }, [projectId, version]);
   const [isEditable, setIsEditable] = useState(!readOnly);
   const viewportKey = projectId || "workspace_atlas";
   const lastViewportRef = useRef<ViewportState | null>(null);
@@ -413,8 +417,19 @@ export const ExcalidrawCanvas = React.memo(function ExcalidrawCanvas({
   // while click and drag still select and move elements. Forcing a tool
   // would disable exactly the navigation the user expects.
 
-  const handleCanvasChange = useCallback((elements: readonly any[]) => {
+  const handleCanvasChange = useCallback((elements: readonly any[], appState: any) => {
     if (syncingSceneRef.current) return;
+    const selected = elements.find((element) => appState?.selectedElementIds?.[element.id]);
+    const parent = selected?.containerId ? elements.find((element) => element.id === selected.containerId) : selected;
+    const custom = parent?.customData || selected?.customData || {};
+    const provenance = custom.visual || (custom.unknown_context ? {
+      ...custom.unknown_context, evidence_ids: custom.unknown_context.evidence_id ? [custom.unknown_context.evidence_id] : [], record_status: "Unassigned source",
+    } : null);
+    const key = JSON.stringify(provenance);
+    if (key !== selectedProvenanceKey.current) {
+      selectedProvenanceKey.current = key;
+      setSelectedProvenance(provenance);
+    }
     if (isEditable && !readOnly) {
       isDirtyRef.current = true;
     }
@@ -685,6 +700,7 @@ export const ExcalidrawCanvas = React.memo(function ExcalidrawCanvas({
             UIOptions={EXCALIDRAW_UI_OPTIONS}
           />
         </CanvasErrorBoundary>
+        {selectedProvenance && <CanvasEvidenceInspector provenance={selectedProvenance} onClose={() => setSelectedProvenance(null)} />}
       </div>
 
       <div className="flex items-center justify-between gap-4 border-t border-border bg-surface/60 px-4 py-2 text-[10px] text-text-muted">

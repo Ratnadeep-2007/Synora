@@ -15,6 +15,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 import { EvidenceItem } from "@/lib/types";
+import { SourceArtifactPreview } from "./SourceArtifactPreview";
 
 interface EvidenceDrawerProps {
   isOpen: boolean;
@@ -100,8 +101,7 @@ export function EvidenceDrawer({
         {/* Intelligence Explanation Rationale */}
         <div className="px-6 py-4 bg-surface border-b border-border/80">
           <div className="text-xs text-text-muted leading-relaxed">
-            Synora continuously monitors real-time conference transcripts and message streams.
-            The statement above was synthesized directly from the verbatim citations below and confirmed into the project model.
+            Inspect the original source material below. Source citations show where a statement came from; its approval or inference status is shown separately.
           </div>
         </div>
 
@@ -121,9 +121,9 @@ export function EvidenceDrawer({
           {evidenceItems.length === 0 ? (
             <div className="p-8 text-center text-xs text-text-muted border border-dashed border-border rounded-xl bg-canvas/40 space-y-2">
               <FileText className="w-8 h-8 text-text-muted/40 mx-auto" />
-              <p>Direct transcript snippet is being indexed from historical archive.</p>
+              <p>No source record is available for these references.</p>
               <p className="text-[10px] text-text-muted/60">
-                This item is verified by project consensus records.
+                An unavailable citation does not establish that this claim is verified.
               </p>
             </div>
           ) : (
@@ -165,6 +165,7 @@ export function EvidenceDrawer({
                   </div>
 
                   {/* Source Metadata & Impact */}
+                  <SourceArtifactPreview evidenceId={item.id} />
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/50 text-[11px] text-text-muted">
                     <div className="flex items-center gap-1.5">
                       {isMeet ? (

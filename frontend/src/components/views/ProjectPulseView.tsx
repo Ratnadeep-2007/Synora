@@ -2,18 +2,15 @@
 
 import React from "react";
 import {
+  ArrowDownRight,
   ArrowRight,
-  BrainCircuit,
-  CheckCircle2,
-  ChevronDown,
+  BookOpen,
+  FileText,
   Layers3,
-  MessageSquareText,
-  Radio,
-  Settings2,
-  ShieldCheck,
+  Plus,
+  ShieldAlert,
   Sparkles,
   Video,
-  Zap,
 } from "lucide-react";
 import { CandidateKnowledgeItem, Conflict, EvidenceItem, Project, ProjectState } from "@/lib/types";
 import type { NavTab } from "@/components/layout/Shell";
@@ -32,36 +29,32 @@ interface ProjectPulseViewProps {
   currentProjectId?: string;
   onSelectProject?: (projectId: string) => void;
   onNavigateToTab: (tab: NavTab) => void;
-  onOpenEvidence: (title: string, contextType: string, evidenceIds: string[]) => void;
   onSyncAtlas?: () => Promise<void> | void;
   onOpenAgentSheet?: () => void;
   onOpenStoryModal?: () => void;
   onReviewConflict?: (conflict: Conflict) => void;
 }
 
-const FEATURES: Array<{
-  tab: NavTab;
-  title: string;
-  detail: string;
-  icon: React.ComponentType<{ className?: string }>;
-}> = [
-  { tab: "state", title: "Authoritative State", detail: "Every decision approved into versioned memory. Nothing speculative survives.", icon: BrainCircuit },
-  { tab: "excalidraw", title: "Living Atlas", detail: "Memory draws itself — diagrams, notes and canvases that stay in sync.", icon: Layers3 },
-  { tab: "meetings", title: "Meeting Memory", detail: "Vexa captures, Sarvam transcribes, Hindi becomes English, canvases compile.", icon: Video },
-  { tab: "sources", title: "Connected Sources", detail: "WhatsApp and Meet streams file evidence on their own.", icon: MessageSquareText },
-];
+const isOpenConflict = (conflict: Conflict) =>
+  ["open", "under_review"].includes(conflict.status);
 
-const STEPS = [
-  { n: "01", title: "Capture", detail: "The bot joins, records, and diarizes every voice." },
-  { n: "02", title: "Ground", detail: "Each claim is pinned to verbatim evidence." },
-  { n: "03", title: "Approve", detail: "You confirm what enters permanent memory." },
-  { n: "04", title: "Draw", detail: "Memory renders itself as living canvases." },
-];
+function timeAgo(value?: string | null) {
+  if (!value) return "Date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  const hours = Math.max(0, Math.floor((Date.now() - date.getTime()) / 3_600_000));
+  if (hours < 1) return "Just now";
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
 export function ProjectPulseView({
   state,
   conflicts,
   evidence,
+  candidates = [],
   activeProjectName,
   projectVersion,
   projects = [],
@@ -69,215 +62,106 @@ export function ProjectPulseView({
   onSelectProject,
   onNavigateToTab,
 }: ProjectPulseViewProps) {
-  const openConflicts = conflicts.filter(
-    (c) => c.status === "open" || c.status === "unresolved" || c.status === "under_review"
-  ).length;
+  const openConflicts = conflicts.filter(isOpenConflict);
   const version = projectVersion || state?.current_version || 1;
+  const decisionCount = state?.decisions?.length || 0;
+  const title = state?.title || activeProjectName || "Your project workspace";
+  const vision = state?.vision?.trim();
 
   return (
-    <div className="relative mx-auto w-full max-w-6xl px-6 pb-16 pt-8">
-      {/* Page backdrop: soft top glow + faint dotted texture */}
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[480px] bg-[radial-gradient(60%_100%_at_50%_0%,rgb(0_0_0/0.05),transparent)]" />
-      <style>{`
-        @keyframes synora-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes synora-drift { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(30px,-18px) scale(1.08); } }
-        @keyframes synora-ping { 0% { transform: scale(1); opacity: .7; } 80%,100% { transform: scale(2.1); opacity: 0; } }
-        @keyframes synora-flow { to { stroke-dashoffset: -28; } }
-        @keyframes synora-node { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
-        @keyframes synora-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
-        @keyframes synora-float2 { 0%,100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-6px) rotate(1deg); } }
-        .synora-rise { animation: synora-rise .6s cubic-bezier(.22,.8,.3,1) both; }
-        .synora-d1 { animation-delay: .07s; } .synora-d2 { animation-delay: .15s; }
-        .synora-d3 { animation-delay: .23s; } .synora-d4 { animation-delay: .31s; }
-        .synora-d5 { animation-delay: .39s; } .synora-d6 { animation-delay: .47s; }
-        .synora-orb { animation: synora-drift 10s ease-in-out infinite; }
-        .synora-ping { animation: synora-ping 2s cubic-bezier(0,0,.2,1) infinite; }
-        .synora-flow { stroke-dasharray: 7 7; animation: synora-flow 1.4s linear infinite; }
-        .synora-node { animation: synora-node 2.6s ease-in-out infinite; }
-        .synora-float { animation: synora-float 5.5s ease-in-out infinite; }
-        .synora-float2 { animation: synora-float2 7s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) {
-          .synora-rise, .synora-orb, .synora-ping, .synora-flow, .synora-node, .synora-float, .synora-float2 { animation: none; }
-        }
-        .synora-grid-bg {
-          background-image:
-            linear-gradient(to right, rgb(0 0 0 / 0.045) 1px, transparent 1px),
-            linear-gradient(to bottom, rgb(0 0 0 / 0.045) 1px, transparent 1px);
-          background-size: 34px 34px;
-          mask-image: radial-gradient(ellipse 90% 80% at 50% 20%, black 30%, transparent 75%);
-          -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 20%, black 30%, transparent 75%);
-        }
-        .synora-noise {
-          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-        }
-        .synora-ring {
-          background: radial-gradient(circle, transparent 58%, rgb(0 0 0 / 0.05) 59%, transparent 61%);
-        }
-      `}</style>
-
-      {/* Mini nav */}
-      <div className="synora-rise mb-8 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-xl border border-primary/20 bg-primary-soft text-sm font-black text-primary">S</span>
-          <span className="text-sm font-semibold tracking-tight">Synora</span>
+    <main className="mx-auto w-full max-w-7xl px-4 pb-12 pt-6 sm:px-7 sm:pt-9 lg:px-10">
+      <header className="mb-7 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-text-dim">
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface text-text-muted">
+              <Layers3 className="h-3.5 w-3.5" />
+            </span>
+            Workspace overview
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-text-main sm:text-[30px]">Good to have you back.</h1>
+          <p className="mt-1.5 max-w-2xl text-sm text-text-muted">A clear view of what Synora remembers and what needs your attention.</p>
         </div>
-        <div className="hidden items-center gap-1 text-xs sm:flex">
-          {(["state", "excalidraw", "meetings", "sources"] as NavTab[]).map((t) => (
-            <button key={t} onClick={() => onNavigateToTab(t)}
-              className="rounded-lg px-3 py-1.5 font-medium capitalize text-text-muted transition-colors hover:bg-surface-soft hover:text-text-main">
-              {t === "excalidraw" ? "Atlas" : t}
-            </button>
-          ))}
-          <button onClick={() => onNavigateToTab("meetings")}
-            className="ml-2 rounded-xl bg-primary px-4 py-2 font-medium text-white shadow-xs transition-transform hover:-translate-y-px">
-            Start capturing
-          </button>
-        </div>
-      </div>
+        {projects.length > 0 && (
+          <label className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-xs shadow-xs focus-within:border-border-active">
+            <span className="text-text-dim">Project</span>
+            <select
+              value={currentProjectId || ""}
+              onChange={(event) => onSelectProject?.(event.target.value)}
+              className="max-w-[190px] cursor-pointer appearance-none bg-transparent pr-1 font-medium text-text-main outline-none"
+              aria-label="Select project"
+            >
+              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+            <ArrowDownRight className="h-3.5 w-3.5 text-text-dim" />
+          </label>
+        )}
+      </header>
 
-      {/* Hero */}
-      <section className="synora-noise relative overflow-hidden rounded-[2rem] border border-border bg-gradient-to-b from-white to-canvas px-8 py-14 sm:px-14">
-        <div aria-hidden className="synora-grid-bg pointer-events-none absolute inset-0" />
-        <div aria-hidden className="pointer-events-none absolute -top-24 -right-20 h-80 w-80 rounded-full bg-primary/10 blur-3xl synora-orb" />
-        <div aria-hidden className="pointer-events-none absolute -bottom-28 -left-12 h-64 w-64 rounded-full bg-primary/5 blur-3xl synora-orb" />
-        <div aria-hidden className="synora-ring pointer-events-none absolute -right-32 top-1/2 h-[420px] w-[420px] -translate-y-1/2 rounded-full" />
-        <div aria-hidden className="synora-ring pointer-events-none absolute -left-40 -top-24 h-[300px] w-[300px] rounded-full opacity-70" />
-
-        <div className="relative grid items-center gap-12 lg:grid-cols-[1fr_.95fr]">
+      <section className="relative overflow-hidden rounded-xl border border-[#222] bg-[#080808] p-5 text-white shadow-sm sm:p-7 lg:p-8">
+        <div aria-hidden className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-white/[0.07] blur-3xl" />
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+        <div className="relative grid gap-7 lg:grid-cols-[minmax(0,1fr)_290px] lg:items-center">
           <div>
-            <div className="synora-rise inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary-soft px-3 py-1 text-[11px] font-semibold text-primary">
-              <Sparkles className="h-3 w-3" />
-              Meeting memory that keeps moving
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-2.5 py-1 text-[11px] font-medium text-white/75">
+              <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/60" /><span className="relative inline-flex h-2 w-2 rounded-full bg-white" /></span>
+              Synora is keeping project memory up to date
             </div>
-            <h1 className="synora-rise synora-d1 mt-5 text-4xl sm:text-6xl font-semibold leading-[1.04] tracking-tight text-text-main">
-              Every meeting becomes <span className="text-primary">memory.</span>
-            </h1>
-            <p className="synora-rise synora-d2 mt-4 max-w-lg text-[15px] leading-relaxed text-text-muted">
-              Synora joins your calls, transcribes every voice — Hindi included —
-              pins each claim to evidence, and draws living canvases from what it
-              learned. Nothing invented. Everything traceable.
+            <h2 className="mt-4 max-w-3xl text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">{title}</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">
+              {vision || "Bring conversations, decisions, and project evidence together in one source of truth."}
             </p>
-            <div className="synora-rise synora-d3 mt-7 flex flex-wrap gap-3">
-              <button onClick={() => onNavigateToTab("meetings")}
-                className="group inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-medium text-white shadow-sm transition-transform hover:-translate-y-px">
-                Open meetings
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button onClick={() => onNavigateToTab("meetings")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-white px-3.5 text-xs font-semibold text-black transition hover:bg-white/90">
+                <Plus className="h-3.5 w-3.5" /> Open meetings
               </button>
-              <button onClick={() => onNavigateToTab("excalidraw")}
-                className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-5 py-3 text-sm font-medium text-text-main transition-all hover:-translate-y-px hover:border-primary/40">
-                <Layers3 className="h-4 w-4 text-primary" />
-                See the Atlas
+              <button onClick={() => onNavigateToTab("excalidraw")} className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/20 bg-white/[0.05] px-3.5 text-xs font-medium text-white transition hover:bg-white/10">
+                View living atlas <ArrowRight className="h-3.5 w-3.5" />
               </button>
             </div>
-            <div className="synora-rise synora-d4 mt-7 flex flex-wrap gap-x-6 gap-y-2 text-xs text-text-muted">
-              <span><strong className="text-text-main">{evidence.length}</strong> evidence items</span>
-              <span><strong className="text-text-main">v{version}</strong> memory</span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="relative flex h-2 w-2">
-                  <span className="synora-ping absolute inline-flex h-full w-full rounded-full bg-primary" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-                </span>
-                Watching {activeProjectName || "Synora Core"}
-              </span>
-            </div>
-            {projects.length > 0 && (
-              <label className="synora-rise synora-d4 mt-4 inline-flex items-center gap-2 rounded-xl border border-border bg-white px-3 py-2 text-xs shadow-xs">
-                <span className="text-text-dim">Project</span>
-                <span className="relative inline-flex items-center">
-                  <select value={currentProjectId || ""} onChange={(e) => onSelectProject?.(e.target.value)}
-                    className="appearance-none bg-transparent pr-5 font-medium text-text-main outline-none" aria-label="Select project">
-                    {projects.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-text-dim" />
-                </span>
-              </label>
-            )}
           </div>
-
-          {/* Product visual: floating memory cards + pipeline */}
-          <div className="synora-rise synora-d2 relative" aria-hidden>
-            <div className="synora-float rounded-2xl border border-border bg-white/90 p-5 shadow-lg backdrop-blur">
-              <div className="flex items-center gap-2 text-[11px] font-semibold text-primary">
-                <ShieldCheck className="h-3.5 w-3.5" /> DECISION · v{version}
-              </div>
-              <p className="mt-2 text-sm font-medium leading-snug">Kitchen display reaches the screen in realtime during rush.</p>
-              <p className="mt-1 text-[11px] text-text-dim">Pinned to verbatim evidence · 2 citations</p>
+          <div className="grid grid-cols-2 gap-2.5 lg:border-l lg:border-white/10 lg:pl-6">
+            <div className="rounded-lg border border-white/10 bg-white/[0.045] p-3.5">
+              <div className="text-[10px] uppercase tracking-[0.12em] text-white/45">Memory version</div>
+              <div className="mt-2 text-2xl font-semibold tabular-nums">v{version}</div>
+              <div className="mt-1 text-[10px] text-white/45">Current project state</div>
             </div>
-            <div className="synora-float2 ml-10 mt-3 rounded-2xl border border-border bg-white/90 p-5 shadow-md backdrop-blur">
-              <div className="flex items-center gap-2 text-[11px] font-semibold text-primary">
-                <Zap className="h-3.5 w-3.5" /> TRANSLATED · hi → en
-              </div>
-              <p className="mt-2 text-sm font-medium leading-snug">Retention policy draft by Wednesday.</p>
-              <p className="mt-1 text-[11px] text-text-dim">Original Hindi preserved alongside</p>
+            <div className="rounded-lg border border-white/10 bg-white/[0.045] p-3.5">
+              <div className="text-[10px] uppercase tracking-[0.12em] text-white/45">Last update</div>
+              <div className="mt-2 text-sm font-semibold">{timeAgo(state?.updated_at)}</div>
+              <div className="mt-1 text-[10px] text-white/45">Approved project memory</div>
             </div>
-            <svg viewBox="0 0 400 96" className="mt-4 h-auto w-full text-primary" role="presentation">
-              <line x1="40" y1="34" x2="130" y2="34" stroke="currentColor" strokeOpacity=".5" strokeWidth="2.5" className="synora-flow" />
-              <line x1="155" y1="34" x2="245" y2="34" stroke="currentColor" strokeOpacity=".5" strokeWidth="2.5" className="synora-flow" />
-              <line x1="270" y1="34" x2="360" y2="34" stroke="currentColor" strokeOpacity=".5" strokeWidth="2.5" className="synora-flow" />
-              {[25, 142, 258, 372].map((cx, i) => (
-                <g key={cx} className="synora-node" style={{ animationDelay: `${i * 0.4}s` }}>
-                  <circle cx={cx} cy="34" r="11" fill="currentColor" fillOpacity=".12" stroke="currentColor" strokeWidth="2" />
-                  <circle cx={cx} cy="34" r="3.5" fill="currentColor" />
-                </g>
-              ))}
-              {["Capture", "Ground", "Approve", "Draw"].map((s, i) => (
-                <text key={s} x={[25, 142, 258, 372][i]} y="62" textAnchor="middle" fontSize="10" fill="currentColor" opacity=".7">{s}</text>
-              ))}
-            </svg>
+            <div className="col-span-2 flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.045] px-3.5 py-3">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-md bg-white/10"><Sparkles className="h-4 w-4 text-white/75" /></span>
+                <div><div className="text-xs font-medium">Evidence-backed memory</div><div className="mt-0.5 text-[10px] text-white/45">Every decision stays traceable</div></div>
+              </div>
+              <span className="rounded-full border border-white/15 px-2 py-1 text-[9px] font-medium uppercase tracking-wider text-white/60">Active</span>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Integrations strip */}
-      <div className="synora-rise synora-d3 mt-6 flex flex-wrap items-center justify-center gap-2 text-[11px] font-medium text-text-muted">
-        <span className="mr-1 uppercase tracking-[0.16em] text-text-dim">Works with</span>
-        {["Google Meet", "WhatsApp", "Excalidraw", "Hindi + English", "Neon Postgres", "Render"].map((s) => (
-          <span key={s} className="rounded-full border border-border bg-canvas px-3 py-1.5">{s}</span>
-        ))}
-      </div>
-
-      {/* Features */}
-      <section className="mt-10 grid gap-3 sm:grid-cols-2">
-        {FEATURES.map((f, i) => (
-          <button key={f.tab} onClick={() => onNavigateToTab(f.tab)}
-            className={`synora-rise group rounded-2xl border border-border bg-canvas p-6 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md synora-d${Math.min(i + 2, 6)}`}>
-            <f.icon className="h-6 w-6 text-primary" />
-            <div className="mt-3 flex items-center gap-1.5 text-base font-semibold text-text-main">
-              {f.title}
-              <ArrowRight className="h-4 w-4 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+      <section aria-label="Project metrics" className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: "Approved decisions", value: decisionCount, note: "In project memory", icon: BookOpen, tab: "state" as NavTab },
+          { label: "Evidence collected", value: evidence.length, note: "Across connected sources", icon: FileText, tab: "sources" as NavTab },
+          { label: "Needs review", value: openConflicts.length, note: openConflicts.length ? "Review conflicting context" : "You’re all caught up", icon: ShieldAlert, tab: "context" as NavTab },
+          { label: "New insights", value: candidates.length, note: "See extracted context", icon: Sparkles, tab: "context" as NavTab },
+        ].map(({ label, value, note, icon: Icon, tab }) => (
+          <button key={label} onClick={() => onNavigateToTab(tab)} className="group rounded-xl border border-border bg-surface p-4 text-left shadow-xs transition hover:-translate-y-0.5 hover:border-border-active hover:shadow-sm sm:p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-text-muted">{label}</span>
+              <span className="grid h-8 w-8 place-items-center rounded-lg bg-surface-muted text-text-muted transition group-hover:bg-black group-hover:text-white"><Icon className="h-4 w-4" /></span>
             </div>
-            <p className="mt-1.5 text-[13px] leading-relaxed text-text-muted">{f.detail}</p>
+            <div className="mt-4 flex items-end justify-between gap-2">
+              <span className="text-3xl font-semibold tracking-tight tabular-nums text-text-main">{value}</span>
+              <ArrowRight className="mb-1 h-4 w-4 text-text-dim transition group-hover:translate-x-0.5 group-hover:text-text-main" />
+            </div>
+            <div className="mt-1 text-[11px] text-text-dim">{note}</div>
           </button>
         ))}
       </section>
 
-      {/* How it works */}
-      <section className="synora-rise synora-d5 relative mt-10 overflow-hidden rounded-[2rem] border border-border bg-canvas p-8 sm:p-10">
-        <div aria-hidden className="synora-grid-bg pointer-events-none absolute inset-0 opacity-60" />
-        <div aria-hidden className="pointer-events-none absolute -bottom-24 -right-16 h-64 w-64 rounded-full bg-primary/[0.07] blur-3xl synora-orb" />
-        <div className="relative">
-        <h2 className="text-xl font-semibold tracking-tight">From call to canvas in four steps</h2>
-        <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {STEPS.map((s) => (
-            <div key={s.n}>
-              <div className="font-mono text-xs font-bold text-primary">{s.n}</div>
-              <div className="mt-1.5 font-semibold">{s.title}</div>
-              <p className="mt-1 text-xs leading-relaxed text-text-muted">{s.detail}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-8 flex flex-wrap items-center gap-3">
-          <button onClick={() => onNavigateToTab("settings")}
-            className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-4 py-2.5 text-sm font-medium transition-all hover:-translate-y-px hover:border-primary/40">
-            <Settings2 className="h-4 w-4 text-primary" /> Workspace settings
-          </button>
-          <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
-            <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
-            {openConflicts === 0 ? "No open conflicts" : `${openConflicts} items need review in State`}
-          </span>
-        </div>
-        </div>
-      </section>
-    </div>
+    </main>
   );
 }

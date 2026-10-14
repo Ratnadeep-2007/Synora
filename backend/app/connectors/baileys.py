@@ -227,8 +227,10 @@ class WhatsAppBaileysConnector(BaseConnector):
         """
         if not self.webhook_secret:
             return True  # Open local bridge mode
-        token = headers.get("X-WhatsApp-Token") or headers.get("authorization", "").replace("Bearer ", "")
-        return token == self.webhook_secret
+        import secrets
+
+        token = headers.get("x-whatsapp-token") or headers.get("X-WhatsApp-Token") or headers.get("authorization", "").removeprefix("Bearer ")
+        return secrets.compare_digest(token, self.webhook_secret)
 
     def handle_webhook(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[SourceEventCreate]:
         """

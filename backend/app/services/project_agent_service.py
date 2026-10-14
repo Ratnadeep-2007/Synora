@@ -126,6 +126,14 @@ class ProjectAgentService:
             db.commit()
             db.refresh(proj)
             logger.info(f"Created Project '{proj.id}' ('{project_name}') in workspace '{workspace_id}'")
+            # Proactive event (plan.md): a new project may explain pending
+            # Unknown Context items. Suggest only; assignment stays human.
+            try:
+                from app.services.proactive_memory import ProactiveMemoryService
+
+                ProactiveMemoryService().on_project_created(db, proj)
+            except Exception as exc:
+                logger.warning("proactive_project_created_recheck_failed: %s", exc)
 
         # Auto-provision Project Agent if missing using canonical project ID
         self.get_or_provision_project_agent(

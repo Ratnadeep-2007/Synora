@@ -45,7 +45,14 @@ NOTE_H = 286
 MINI_W = NOTE_W - 36
 MINI_H = 150
 
-UNKNOWN_CARD_H = 146
+# Unknown Context free notes: one note per item, raw content wrapped at the
+# note width (the _text builder wraps server-side), height growing with the
+# wrapped line count, notes stacked vertically with a 12px gap. Provenance
+# is never rendered as note text; it lives only in customData.
+UNKNOWN_NOTE_GAP = 12
+UNKNOWN_NOTE_PAD_X = 18
+UNKNOWN_NOTE_PAD_Y = 16
+UNKNOWN_NOTE_FONT_SIZE = 12
 
 STYLE = {
     "frame": {"stroke": "#d8ded6", "background": "#ffffff"},
@@ -297,7 +304,15 @@ class WorkspaceAtlasService:
             .all()
         )
 
+        from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+
+        board = db.query(ExcalidrawArtifact).filter(
+            ExcalidrawArtifact.project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID,
+            ExcalidrawArtifact.tenant_id == tenant_id,
+        ).first()
+
         payload = {
+            "unknown_board_version": int(board.version) if board else 0,
             "projects": [
                 {
                     "id": p.id,
@@ -314,6 +329,10 @@ class WorkspaceAtlasService:
                     "id": item.id,
                     "updated": item.created_at.isoformat() if item.created_at else None,
                     "status": item.status,
+                    "content": item.content,
+                    "source": item.source,
+                    "actor_id": item.actor_id,
+                    "evidence_id": item.evidence_id,
                     "matches": [m.candidate_project_id for m in db.query(PossibleProjectMatch).filter(PossibleProjectMatch.unknown_item_id == item.id).order_by(PossibleProjectMatch.created_at.desc()).limit(2).all()],
                 }
                 for item in unknown
@@ -1559,8 +1578,24 @@ class WorkspaceAtlasService:
         db: Session,
         workspace_id: str,
     ) -> List[Dict[str, Any]]:
+        # When the agent-designed Unknown board already mirrors exactly the
+        # current pending items, show that free-form canvas inside this
+        # column (the column remains the only boundary). Otherwise fall back
+        # to the deterministic raw free notes below.
+        from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+
+        board = db.query(ExcalidrawArtifact).filter(
+            ExcalidrawArtifact.project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID,
+            ExcalidrawArtifact.tenant_id == (items[0].tenant_id if items else "default_tenant"),
+        ).first()
+        if board and self._json_list(board.elements_json):
+            rendered_ids = self._json_dict(board.app_state_json).get("unknown_item_ids")
+            if rendered_ids is not None and set(rendered_ids) == {item.id for item in items}:
+                project = db.query(Project).filter(Project.id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID).first()
+                if project:
+                    return self._project_column(project, db, board.tenant_id, ATLAS_PADDING_X)
         origin_x = ATLAS_PADDING_X
-        card_y = ARCH_Y
+        note_y = ARCH_Y
         cards_scene: List[Dict[str, Any]] = []
 
         for item in items:
@@ -1572,20 +1607,22 @@ class WorkspaceAtlasService:
                 .all()
             )
             suggestion_names: List[str] = []
+            suggestion_ids: List[str] = []
             for match in matches:
+                suggestion_ids.append(match.candidate_project_id)
                 p = db.query(Project).filter(Project.id == match.candidate_project_id).first()
                 if p:
                     suggestion_names.append(p.name)
 
-            cards_scene.extend(
-                self._unknown_card(
-                    item=item,
-                    x=origin_x + ARCH_X_PAD,
-                    y=card_y,
-                    suggestions=suggestion_names,
-                )
+            note_elements, note_h = self._unknown_note(
+                item=item,
+                x=origin_x + ARCH_X_PAD,
+                y=note_y,
+                suggestions=suggestion_names,
+                suggestion_ids=suggestion_ids,
             )
-            card_y += UNKNOWN_CARD_H + 26
+            cards_scene.extend(note_elements)
+            note_y += note_h + UNKNOWN_NOTE_GAP
 
         if not items:
             cards_scene.append(
@@ -1601,9 +1638,9 @@ class WorkspaceAtlasService:
                     custom_data={"atlas": {"type": "unknown_context_empty"}},
                 )
             )
-            card_y = ARCH_Y + 130
+            note_y = ARCH_Y + 130
 
-        column_bottom = card_y + 40
+        column_bottom = note_y + 40
         column_height = max(900, int(round(column_bottom - ATLAS_PADDING_Y)))
 
         frame_rect = self._rect(
@@ -1667,6 +1704,80 @@ class WorkspaceAtlasService:
 
         return [frame_rect] + header_scene + cards_scene
 
+    @staticmethod
+    def _unknown_note_height(content: str, text_width: float) -> int:
+        """Note height for raw content wrapped at ``text_width``.
+
+        Mirrors the _text builder's growth (fontSize * 1.3 per wrapped line
+        + 6) plus vertical padding. Never capped: long content grows the
+        note instead of being truncated.
+        """
+        wrapped = _wrap_text(content, max(60.0, float(text_width)), UNKNOWN_NOTE_FONT_SIZE)
+        lines = max(1, len(wrapped.split("\n")))
+        text_h = float(UNKNOWN_NOTE_FONT_SIZE) * 1.3 * lines + 6
+        return int(round((UNKNOWN_NOTE_PAD_Y * 2) + text_h))
+
+    def _unknown_note(
+        self,
+        item: UnknownContextItem,
+        x: float,
+        y: float,
+        suggestions: List[str],
+        suggestion_ids: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """One free note for one Unknown Context item.
+
+        The only visible text is the item's raw content (server-wrapped by
+        _text). Source, sender, evidence link and suggested projects are
+        provenance, so they are carried in customData only and never
+        rendered as a fixed template (no warning header, no
+        "Possible project:" line, no item id).
+        """
+        content = (item.content or "").strip() or "(no text)"
+        text_width = ARCH_W - (UNKNOWN_NOTE_PAD_X * 2)
+        note_h = self._unknown_note_height(content, text_width)
+        custom = {
+            "atlas": {
+                "type": "unknown_item",
+                "item_id": item.id,
+                "source": item.source,
+                "actor_id": item.actor_id,
+                "evidence_id": item.evidence_id,
+                "meeting_id": item.meeting_id,
+                "source_event_id": item.source_event_id,
+                "suggestions": suggestions[:2],
+                "suggestion_ids": (suggestion_ids or [])[:2],
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+        }
+        note_id = self._id("unknown", f"item:{item.id}")
+        text_id = f"{note_id}:content"
+        rect = self._rect(
+            note_id,
+            x,
+            y,
+            ARCH_W,
+            note_h,
+            STYLE["unknown"],
+            opacity=100,
+            roundness=3,
+            custom_data=custom,
+        )
+        rect["boundElements"] = [{"type": "text", "id": text_id}]
+        text = self._text(
+            text_id,
+            x + UNKNOWN_NOTE_PAD_X,
+            y + UNKNOWN_NOTE_PAD_Y,
+            text_width,
+            note_h - (UNKNOWN_NOTE_PAD_Y * 2),
+            content,
+            UNKNOWN_NOTE_FONT_SIZE,
+            "#3e3426",
+            custom_data=custom,
+        )
+        text["containerId"] = note_id
+        return [rect, text], note_h
+
     def _unknown_card(
         self,
         item: UnknownContextItem,
@@ -1674,75 +1785,11 @@ class WorkspaceAtlasService:
         y: float,
         suggestions: List[str],
     ) -> List[Dict[str, Any]]:
-        content = (item.content or "(no text)").replace("\n", " ").strip()
-        suggestion_text = ", ".join(suggestions[:2]) if suggestions else "No confident match"
-        custom = {
-            "atlas": {
-                "type": "unknown_item",
-                "item_id": item.id,
-                "suggestions": suggestions[:2],
-            }
-        }
-        card_id = self._id("unknown", f"item:{item.id}")
-        return [
-            self._rect(
-                card_id,
-                x,
-                y,
-                ARCH_W,
-                UNKNOWN_CARD_H,
-                STYLE["unknown"],
-                opacity=100,
-                roundness=3,
-                custom_data=custom,
-            ),
-            self._text(
-                f"{card_id}:category",
-                x + 18,
-                y + 16,
-                ARCH_W - 36,
-                18,
-                f"⚠  {item.source.upper()}  •  NEEDS CONTEXT",
-                10,
-                STYLE["unknown"]["text"],
-                bold=True,
-                custom_data=custom,
-            ),
-            self._text(
-                f"{card_id}:content",
-                x + 18,
-                y + 42,
-                ARCH_W - 36,
-                45,
-                content[:220],
-                12,
-                "#3e3426",
-                bold=True,
-                custom_data=custom,
-            ),
-            self._text(
-                f"{card_id}:suggested",
-                x + 18,
-                y + 94,
-                ARCH_W - 36,
-                20,
-                f"Possible project: {suggestion_text}",
-                10,
-                "#7b6650",
-                custom_data=custom,
-            ),
-            self._text(
-                f"{card_id}:id",
-                x + 18,
-                y + 116,
-                ARCH_W - 36,
-                15,
-                f"{item.id}  •  human decides",
-                9,
-                "#98826a",
-                custom_data=custom,
-            ),
-        ]
+        """Backwards-compatible wrapper returning only the note elements."""
+        elements, _ = self._unknown_note(
+            item=item, x=x, y=y, suggestions=suggestions
+        )
+        return elements
 
     # ------------------------------------------------------------------
     # Excalidraw primitive builders
