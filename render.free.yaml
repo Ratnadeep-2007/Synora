@@ -1,0 +1,108 @@
+# FREE-TIER Blueprint (no card): web services only.
+# Background workers have no free plan on Render, so synora-worker and
+# synora-visual-sync are omitted here. Consequences: WhatsApp batch jobs and
+# the 30s visual-sync loop do not run in this deployment (request-path
+# processing and canvas sync on write still work). When you add a payment
+# method, point the Blueprint Path back to render.yaml to add the workers.
+# Deploy: New -> Blueprint -> Branch main -> Blueprint Path: render.free.yaml
+
+# Render blueprint for Synora: backend + frontend + background worker.
+# Database is Neon Postgres (created separately); Redis is intentionally absent
+# (the backend does not use Redis - the local compose entry is unused).
+#
+# Deploy: dashboard.render.com -> New -> Blueprint -> point at this repo.
+# Set the sync:false values below when prompted (DATABASE_URL from Neon, OAuth
+# secrets, LLM/STT keys). Service names determine public URLs:
+#   backend  -> https://synora-backend.onrender.com
+#   frontend -> https://synora-frontend.onrender.com
+
+# Shared secrets live in one env group: Render forbids workers from
+# referencing a web service's generated env vars, so SECRET_KEY and
+# ENCRYPTION_KEY are minted once here and attached to every service.
+envVarGroups:
+  - name: synora-secrets
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: WHATSAPP_WEBHOOK_SECRET
+        generateValue: true
+
+services:
+  - type: web
+    name: synora-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health/ready
+    envVars:
+      - fromGroup: synora-secrets
+      - key: ENVIRONMENT
+        value: production
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: NEON_AUTH_BASE_URL
+        value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth
+      - key: NEON_AUTH_JWKS_URL
+        value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth/.well-known/jwks.json
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: DATABASE_URL
+        sync: false # Neon pooled connection string, with ?sslmode=require
+      - key: FRONTEND_URL
+        value: https://synora-frontend.onrender.com
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: PUBSUB_VERIFICATION_TOKEN
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        value: https://synora-backend.onrender.com/auth/google/callback
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # Meet capture stays OFF in the cloud until Vexa runs on a reachable
+      # host (VPS). Vexa's 13 containers need a real Docker daemon; Render
+      # cannot run them. Keep the local Vexa stack for local dev.
+      - key: VEXA_ENABLED
+        value: "false"
+      - key: VEXA_BASE_URL
+        value: http://localhost:18056
+      # Sarvam is the cloud STT path. Local faster-whisper is disabled here:
+      # the free tier has neither the RAM nor the ephemeral disk for it.
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: WHISPER_ENABLED
+        value: "false"
+      - key: CONTEXT_RESOLUTION_MIN_CONFIDENCE
+        value: "0.72"
+      - key: CONTEXT_RESOLUTION_MIN_MARGIN
+        value: "0.08"
+      - key: WHATSAPP_BATCH_POLL_SECONDS
+        value: "5"
+      - key: VISUAL_SYNC_INTERVAL_SECONDS
+        value: "30"
+
+  - type: web
+    name: synora-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: free
+    # Backend URL is injected at container start (entrypoint.sh writes it
+    # into public/runtime-config.js), so no rebuild is needed to retarget.
+    # Must match the backend service name below.
+    envVars:
+      - key: SYNORA_API_URL
+        value: https://synora-backend.onrender.com
+      - key: SYNORA_AUTH_URL
+        value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth
+      - key: PORT
+        value: "3000"
+
