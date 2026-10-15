@@ -51,6 +51,12 @@ function HomeWorkspace() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [workspaceName, setWorkspaceName] = useState<string>("Workspace");
+  useEffect(() => {
+    if (!isAuthEnabled()) return;
+    api.getWorkspaceAccess().then((access) => {
+      if (access.workspace_name) setWorkspaceName(access.workspace_name);
+    }).catch((error) => console.error("Could not load workspace name:", error));
+  }, []);
   const [currentTab, setCurrentTab] = useState<NavTab>("overview");
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
 

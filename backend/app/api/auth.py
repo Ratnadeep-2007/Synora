@@ -33,6 +33,7 @@ from app.core.exceptions import (
 from app.core.security import OAUTH_NONCE_COOKIE_NAME
 from app.models.source_connection import ConnectionStatus, SourceConnection
 from app.models.user import User
+from app.models.project import Workspace
 from app.models.workspace_membership import WorkspaceMembership
 from app.schemas.auth import (
     OAuthCallbackResponse,
@@ -53,7 +54,9 @@ def workspace_access(request: Request, current_user: User = Depends(get_current_
     membership = db.query(WorkspaceMembership).filter_by(workspace_id="ws_default", user_id=current_user.id).first()
     if not membership:
         raise HTTPException(status_code=404, detail="Workspace membership not found.")
-    return {"status": membership.status, "role": membership.role, "workspace_id": membership.workspace_id}
+    workspace = db.query(Workspace).filter_by(id=membership.workspace_id).first()
+    return {"status": membership.status, "role": membership.role, "workspace_id": membership.workspace_id,
+            "workspace_name": workspace.name if workspace else "Synora Workspace"}
 
 
 @router.get("/workspace/members", summary="List workspace members (owner only)")

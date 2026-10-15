@@ -145,8 +145,8 @@ export interface InputOutcome {
 }
 
 export const api = {
-  getWorkspaceAccess: (): Promise<{ status: string; role: string; workspace_id: string }> =>
-    request<{ status: string; role: string; workspace_id: string }>("/auth/workspace-access"),
+  getWorkspaceAccess: (): Promise<{ status: string; role: string; workspace_id: string; workspace_name?: string }> =>
+    request<{ status: string; role: string; workspace_id: string; workspace_name?: string }>("/auth/workspace-access"),
   getWorkspaceMembers: (): Promise<Array<{ user_id: string; email: string; name: string | null; role: string; status: string }>> =>
     request<Array<{ user_id: string; email: string; name: string | null; role: string; status: string }>>("/auth/workspace/members"),
   assignWorkspaceMember: (userId: string): Promise<{ user_id: string; status: string }> =>

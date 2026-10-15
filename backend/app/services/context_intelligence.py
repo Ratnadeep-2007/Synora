@@ -231,11 +231,16 @@ class ContextIntelligenceService:
                     sections["architecture"] = arch[:3]
             try:
                 from app.models.visual_revision import VisualRevision
-                rev = (
-                    db.query(VisualRevision)
-                    .filter(VisualRevision.project_id == project.id, VisualRevision.is_current == True)
-                    .first()
-                )
+                # is_current is an integer for SQLite/Postgres compatibility.
+                # Comparing it with a boolean aborts PostgreSQL transactions.
+                # Keep this optional enrichment inside a savepoint so a query
+                # failure cannot poison the rest of the routing transaction.
+                with db.begin_nested():
+                    rev = (
+                        db.query(VisualRevision)
+                        .filter(VisualRevision.project_id == project.id, VisualRevision.is_current == 1)
+                        .first()
+                    )
                 if rev and rev.scene_json:
                     data = json.loads(rev.scene_json)
                     elems = data if isinstance(data, list) else data.get("elements", [])
@@ -249,7 +254,7 @@ class ContextIntelligenceService:
                     if comps:
                         sections["whiteboard_components"] = comps[:5]
             except Exception:
-                pass
+                logger.warning("project_visual_context_unavailable: project=%s", project.id, exc_info=True)
             recent_evidence = (
                 db.query(Evidence)
                 .filter(Evidence.project_id == project.id)
