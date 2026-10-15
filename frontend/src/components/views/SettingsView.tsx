@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { BrainCircuit, Copy, Database, KeyRound, Save, ShieldCheck } from "lucide-react";
 import { getFrontendUserId, setFrontendUserId } from "@/lib/api";
-import { getAuthClient, isAuthEnabled } from "@/lib/auth";
+import { clearCachedAuthToken, getAuthClient, isAuthEnabled } from "@/lib/auth";
 import { api } from "@/lib/api";
 
 export type SettingsSection =
@@ -140,7 +140,7 @@ export function SettingsView({ workspaceName = "Workspace", onSaveWorkspace }: S
           <div className="rounded-2xl border border-border bg-surface p-5 shadow-xs">
             <h2 className="text-sm font-semibold text-text-main">Account</h2>
             <p className="mt-3 text-xs text-text-muted">Your projects are linked to your signed-in account across devices.</p>
-            <button type="button" onClick={async () => { await getAuthClient()?.signOut(); window.location.reload(); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-xs font-semibold text-text-main">Sign out</button>
+            <button type="button" onClick={async () => { await getAuthClient()?.signOut(); clearCachedAuthToken(); window.location.reload(); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-xs font-semibold text-text-main">Sign out</button>
           </div>
         ) : (
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-xs">

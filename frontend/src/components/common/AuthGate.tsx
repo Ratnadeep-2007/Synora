@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { getAuthClient, isAuthEnabled } from "@/lib/auth";
+import { clearCachedAuthToken, getAuthClient, isAuthEnabled } from "@/lib/auth";
 import { api } from "@/lib/api";
 
 async function clientResend(email: string): Promise<string> {
@@ -97,7 +97,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold">Synora workspace</p>
         <h1 className="mt-2 text-2xl font-semibold text-text-main">Waiting for workspace assignment</h1>
         <p className="mt-2 text-sm text-text-muted">Your account is verified. A workspace owner needs to assign your account before you can access shared projects.</p>
-        <button type="button" onClick={async () => { await getAuthClient()?.signOut(); window.location.reload(); }} className="mt-5 rounded-lg border border-border px-4 py-2 text-xs font-semibold text-text-main">Sign out</button>
+        <button type="button" onClick={async () => { await getAuthClient()?.signOut(); clearCachedAuthToken(); window.location.reload(); }} className="mt-5 rounded-lg border border-border px-4 py-2 text-xs font-semibold text-text-main">Sign out</button>
       </section>
     </main>
   );

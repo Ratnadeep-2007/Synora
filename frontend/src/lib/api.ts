@@ -23,7 +23,7 @@ import {
   WhatsAppSimulateResult,
   WhatsAppMessageItem,
 } from "./types";
-import { getAuthToken, isAuthEnabled } from "./auth";
+import { clearCachedAuthToken, getAuthToken, isAuthEnabled } from "./auth";
 
 declare global {
   interface Window {
@@ -88,22 +88,28 @@ export function getFrontendBaseUrl(): string {
 
 async function request<T>(path: string, options?: RequestInit, responseType: "json" | "blob" = "json"): Promise<T> {
   const url = `${apiBaseUrl()}${path}`;
-  const headers: Record<string, string> = {
-    ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-    ...((options?.headers as Record<string, string>) || {}),
+  const buildHeaders = async (forceFreshToken: boolean): Promise<Record<string, string>> => {
+    const headers: Record<string, string> = {
+      ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...((options?.headers as Record<string, string>) || {}),
+    };
+    if (isAuthEnabled()) {
+      if (forceFreshToken) clearCachedAuthToken();
+      const token = await getAuthToken();
+      if (!token) throw new Error("Sign in required.");
+      headers.Authorization = `Bearer ${token}`;
+    } else if (!headers["X-User-ID"]) {
+      const sessionId = getSessionUserId();
+      if (sessionId) headers["X-User-ID"] = sessionId;
+    }
+    return headers;
   };
-  if (isAuthEnabled()) {
-    const token = await getAuthToken();
-    if (!token) throw new Error("Sign in required.");
-    headers.Authorization = `Bearer ${token}`;
-  } else if (!headers["X-User-ID"]) {
-    const sessionId = getSessionUserId();
-    if (sessionId) headers["X-User-ID"] = sessionId;
+  let res = await fetch(url, { ...options, headers: await buildHeaders(false) });
+  // A cached token can go stale server-side (revoked session, clock skew):
+  // drop it, mint one fresh token, and retry exactly once.
+  if (res.status === 401 && isAuthEnabled()) {
+    res = await fetch(url, { ...options, headers: await buildHeaders(true) });
   }
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
 
   if (!res.ok) {
     let errMsg = `Request failed: ${res.status} ${res.statusText}`;

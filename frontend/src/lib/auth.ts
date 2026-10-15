@@ -34,10 +34,54 @@ export function getAuthClient() {
   return authClient;
 }
 
+// Session handling: the auth token is cached until shortly before it
+// expires and concurrent callers share ONE in-flight token request. The
+// app polls many endpoints in parallel; minting a token per API call was
+// a network round-trip each (and could surface as failed requests).
+let cachedToken: { token: string; expiresAtMs: number } | null = null;
+let tokenInFlight: Promise<string | null> | null = null;
+const TOKEN_REFRESH_MARGIN_MS = 60_000;
+
+function tokenExpiryMs(token: string): number {
+  try {
+    const payload = token.split(".")[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof json.exp === "number" ? json.exp * 1000 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function clearCachedAuthToken(): void {
+  cachedToken = null;
+  tokenInFlight = null;
+}
+
 export async function getAuthToken(): Promise<string | null> {
-  const client = getAuthClient();
-  if (!client) return null;
-  const { data, error } = await client.token();
-  if (error || !data?.token) return null;
-  return data.token;
+  const now = Date.now();
+  if (cachedToken && cachedToken.expiresAtMs - now > TOKEN_REFRESH_MARGIN_MS) {
+    return cachedToken.token;
+  }
+  if (tokenInFlight) return tokenInFlight;
+  tokenInFlight = (async () => {
+    try {
+      const client = getAuthClient();
+      if (!client) return null;
+      const { data, error } = await client.token();
+      if (error || !data?.token) {
+        cachedToken = null;
+        return null;
+      }
+      const expiresAtMs = tokenExpiryMs(data.token);
+      // Never cache a token we cannot date; treat it as single-use.
+      cachedToken = expiresAtMs > now ? { token: data.token, expiresAtMs } : null;
+      return data.token;
+    } catch {
+      cachedToken = null;
+      return null;
+    } finally {
+      tokenInFlight = null;
+    }
+  })();
+  return tokenInFlight;
 }
