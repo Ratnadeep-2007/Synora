@@ -34,9 +34,10 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV ENVIRONMENT=production
 
-# Copy application source code
+# Copy application source code (context is ./backend; the repo-root
+# run_backend.py launcher is intentionally not in this image - CMD below
+# starts uvicorn directly).
 COPY --chown=synesis:synesis ./app /app/app
-COPY --chown=synesis:synesis ./run_backend.py /app/run_backend.py
 
 # Switch to non-root user
 USER synesis
