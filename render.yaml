@@ -29,9 +29,8 @@ services:
     dockerContext: ./backend
     plan: free
     healthCheckPath: /health/ready
-    envVarGroups:
-      - synora-secrets
     envVars:
+      - fromGroup: synora-secrets
       - key: ENVIRONMENT
         value: production
       - key: AUTH_REQUIRED
@@ -106,9 +105,8 @@ services:
     dockerContext: ./backend
     plan: 0.5c-512mb
     dockerCommand: python -m app.services.whatsapp_batch_worker
-    envVarGroups:
-      - synora-secrets
     envVars:
+      - fromGroup: synora-secrets
       - key: ENVIRONMENT
         value: production
       - key: DATABASE_URL
@@ -128,9 +126,8 @@ services:
     dockerContext: ./backend
     plan: 0.5c-512mb
     dockerCommand: python -m app.services.visual_sync_worker
-    envVarGroups:
-      - synora-secrets
     envVars:
+      - fromGroup: synora-secrets
       - key: ENVIRONMENT
         value: production
       - key: DATABASE_URL
