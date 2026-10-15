@@ -1,11 +1,27 @@
 """Validate short-lived Neon Auth tokens before accessing Synora APIs."""
 
 from functools import lru_cache
+from urllib.parse import urlparse
 
 import jwt
 from jwt import PyJWKClient
 
 from app.core.config import settings
+
+
+def expected_issuer() -> str:
+    """Issuer Neon Auth actually puts in its JWTs.
+
+    Tokens are issued by the auth origin (scheme + host), NOT by the full
+    API base URL: a token minted via ".../neondb/auth" carries
+    iss="https://<host>". Verifying against the full base URL rejected
+    every genuine login token with 401.
+    """
+    base = (settings.NEON_AUTH_BASE_URL or "").rstrip("/")
+    parsed = urlparse(base)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return base
 
 
 @lru_cache(maxsize=1)
@@ -24,7 +40,7 @@ def verify_neon_token(token: str) -> dict:
         token,
         signing_key.key,
         algorithms=["EdDSA"],
-        issuer=settings.NEON_AUTH_BASE_URL.rstrip("/"),
+        issuer=expected_issuer(),
         options={"verify_aud": False, "require": ["exp", "iss", "sub"]},
         leeway=30,
     )
