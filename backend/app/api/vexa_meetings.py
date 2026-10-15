@@ -152,7 +152,7 @@ async def start_vexa_capture(
         "literal path is not swallowed by the parameterized route."
     ),
 )
-async def list_active_captures(
+def list_active_captures(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -193,7 +193,7 @@ async def list_active_captures(
 
 
 @router.get("/meetings/{meeting_id}")
-async def get_vexa_capture_status(
+def get_vexa_capture_status(
     meeting_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -288,7 +288,7 @@ async def stop_vexa_capture(
 
 
 @router.post("/meetings/{meeting_id}/process")
-async def process_vexa_capture(
+def process_vexa_capture(
     meeting_id: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),

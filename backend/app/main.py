@@ -13,6 +13,7 @@ import logging
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import text
 
 from app.api.auth import router as auth_router
@@ -67,18 +68,16 @@ async def lifespan(app: FastAPI):
     # Start WhatsApp background batch worker
     stop_event = asyncio.Event()
 
-    async def _batch_worker():
-        from app.core.database import SessionLocal
+    def _process_whatsapp_batches():
         from app.services.whatsapp_batch_service import WhatsAppBatchService
-        service = WhatsAppBatchService()
+        with SessionLocal() as db:
+            WhatsAppBatchService().process_due_batches(db=db, tenant_id="default_tenant", force=False)
+
+    async def _batch_worker():
         while not stop_event.is_set():
             try:
                 await asyncio.sleep(settings.WHATSAPP_BATCH_POLL_SECONDS or 5)
-                db = SessionLocal()
-                try:
-                    service.process_due_batches(db=db, tenant_id="default_tenant", force=False)
-                finally:
-                    db.close()
+                await run_in_threadpool(_process_whatsapp_batches)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -133,6 +132,14 @@ async def require_session(request: Request, call_next):
     if path in {"/connectors/whatsapp/webhook", "/connectors/whatsapp/session-status"} and settings.WHATSAPP_WEBHOOK_SECRET:
         return await call_next(request)
 
+    rejection = await run_in_threadpool(_resolve_authenticated_request, request, path)
+    if rejection is not None:
+        return rejection
+    return await call_next(request)
+
+
+def _resolve_authenticated_request(request: Request, path: str):
+    """Resolve identity using blocking DB/JWKS clients outside the event loop."""
     authorization = request.headers.get("Authorization", "")
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
@@ -209,7 +216,7 @@ async def require_session(request: Request, call_next):
     access_path = path in {"/auth/workspace-access", "/auth/workspace/members"} or path.startswith("/auth/workspace/members/")
     if request.state.workspace_membership_status != "active" and not access_path:
         return JSONResponse(status_code=403, content={"detail": "Workspace owner approval is pending.", "code": "workspace_membership_pending"})
-    return await call_next(request)
+    return None
 
 # CORS Configuration
 origins = [

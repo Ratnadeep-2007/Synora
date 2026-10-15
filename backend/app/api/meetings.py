@@ -142,7 +142,7 @@ async def sync_google_meetings(
     summary="List Synchronized Meetings",
     description="Lists all synchronized meetings for the authenticated user.",
 )
-async def list_meetings(
+def list_meetings(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -167,7 +167,7 @@ async def list_meetings(
         "a projection over shared Synora memory, not a separate memory store."
     ),
 )
-async def get_meeting_intelligence(
+def get_meeting_intelligence(
     meeting_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -207,7 +207,7 @@ async def get_meeting_intelligence(
         "fixed note or diagram format."
     ),
 )
-async def get_meeting_canvas(
+def get_meeting_canvas(
     meeting_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -279,7 +279,7 @@ async def get_meeting_canvas(
     summary="Get Meeting Details",
     description="Gets detailed information for a specific meeting including participants and transcripts.",
 )
-async def get_meeting(
+def get_meeting(
     meeting_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -321,7 +321,7 @@ async def get_meeting(
         "rows themselves are preserved so project knowledge keeps provenance."
     ),
 )
-async def delete_meeting(
+def delete_meeting(
     meeting_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -383,7 +383,7 @@ async def delete_meeting(
     summary="Get Meeting Transcript and Entries",
     description="Returns the transcript and structured spoken utterances for a meeting.",
 )
-async def get_meeting_transcript(
+def get_meeting_transcript(
     meeting_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -519,7 +519,7 @@ def parse_raw_transcript_text(raw_text: str) -> List[TranscriptEntryInput]:
         "(Google Meet live captions, pasted notes, Zoom/Teams, local Whisper) without Google Cloud API quota limits."
     ),
 )
-async def ingest_transcript_endpoint(
+def ingest_transcript_endpoint(
     payload: TranscriptIngestRequest,
     coordinator: PipelineCoordinator = Depends(get_pipeline_coordinator),
     db: Session = Depends(get_db),
@@ -647,7 +647,7 @@ async def ingest_transcript_endpoint(
         "than guessed at."
     ),
 )
-async def route_meeting_evidence(
+def route_meeting_evidence(
     meeting_id: str,
     payload: MeetingEvidenceRouteRequest,
     db: Session = Depends(get_db),

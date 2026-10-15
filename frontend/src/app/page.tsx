@@ -100,8 +100,12 @@ function HomeWorkspace() {
     evidenceItems: [],
   });
 
-  // Reload everything for the active project
+  const refreshInFlight = useRef(false);
+
+  // Keep slow cloud requests from accumulating overlapping refresh batches.
   const refreshAll = useCallback(async (preferredProjectId?: string | null) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
       const projListData = await api.getProjects().catch(() => [] as Project[]);
       setProjects((prev) => {
@@ -234,6 +238,8 @@ function HomeWorkspace() {
       }
     } catch (err) {
       console.error("Failed to load project context:", err);
+    } finally {
+      refreshInFlight.current = false;
     }
   }, [currentProjectId, currentTab]);
 
@@ -241,7 +247,7 @@ function HomeWorkspace() {
     refreshAll();
     const interval = setInterval(() => {
       refreshAll();
-    }, 5000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [refreshAll]);
 

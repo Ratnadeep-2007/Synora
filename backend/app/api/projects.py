@@ -99,7 +99,7 @@ router = APIRouter(prefix="/projects", tags=["Project State & Knowledge Pipeline
     summary="Create Project & Auto-provision Project Agent",
     description="Creates a new project within a workspace and automatically provisions its dedicated Project Agent and Excalidraw living workspace.",
 )
-async def create_project(
+def create_project(
     body: ProjectCreateRequest,
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
     db: Session = Depends(get_db),
@@ -191,7 +191,7 @@ async def create_project(
     summary="List Projects",
     description="Lists all projects in the workspace with their associated Project Agent ID.",
 )
-async def list_projects(
+def list_projects(
     workspace_id: str = Query("ws_default", description="Workspace ID filter"),
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
     db: Session = Depends(get_db),
@@ -225,7 +225,7 @@ async def list_projects(
     summary="Delete Project and Project Data",
     description="Permanently deletes a user project and its project-scoped database records. The reserved Unknown Context system project cannot be deleted.",
 )
-async def delete_project(
+def delete_project(
     project_id: str,
     workspace_id: str = Query("ws_default", description="Workspace ID"),
     db: Session = Depends(get_db),
@@ -350,7 +350,7 @@ async def delete_project(
     summary="Get Logical Project Agent",
     description="Retrieves the dedicated logical Project Agent for a project, including its isolated working memory, subordinate capabilities, and connected tools.",
 )
-async def get_project_agent(
+def get_project_agent(
     project_id: str,
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
     db: Session = Depends(get_db),
@@ -366,7 +366,7 @@ async def get_project_agent(
     summary="Project Agent Capability Dispatch",
     description="The Project Agent coordinates and executes a specialist capability (BA, Planning, Functional, Tech, Frappe) within the project's isolated context boundary.",
 )
-async def dispatch_project_agent_capability(
+def dispatch_project_agent_capability(
     project_id: str,
     body: ProjectAgentDispatchRequest,
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
@@ -400,7 +400,7 @@ async def dispatch_project_agent_capability(
     summary="Get Project Agent Memory",
     description="Retrieves the isolated working memory, active priorities, and recent milestones for the Project Agent.",
 )
-async def get_project_agent_memory(
+def get_project_agent_memory(
     project_id: str,
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
     db: Session = Depends(get_db),
@@ -420,7 +420,7 @@ async def get_project_agent_memory(
     summary="Update Project Agent Memory",
     description="Updates notes, priorities, or milestones in the Project Agent's isolated context boundary.",
 )
-async def update_project_agent_memory(
+def update_project_agent_memory(
     project_id: str,
     body: ProjectAgentMemoryUpdate,
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
@@ -448,7 +448,7 @@ async def update_project_agent_memory(
     summary="Project Agent Sync Living Visual Workspace",
     description="The Project Agent synchronizes the project's living Excalidraw visual workspace, rendering decisions, evidence references, requirements, and architecture pipeline nodes.",
 )
-async def sync_project_agent_excalidraw(
+def sync_project_agent_excalidraw(
     project_id: str,
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
     excal_service: ExcalidrawService = Depends(get_excalidraw_service),
@@ -474,7 +474,7 @@ async def sync_project_agent_excalidraw(
     summary="Get Authoritative Project State",
     description="Retrieves the current authoritative, evidence-backed Project State.",
 )
-async def get_project_state(
+def get_project_state(
     project_id: str,
     db: Session = Depends(get_db),
     state_service: ProjectStateService = Depends(get_project_state_service),
@@ -490,7 +490,7 @@ async def get_project_state(
     summary="Get Project State Version History",
     description="Retrieves the immutable version history and audit snapshots for a project.",
 )
-async def get_project_state_history(
+def get_project_state_history(
     project_id: str,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -532,7 +532,7 @@ async def get_project_state_history(
     summary="List Pending State Proposals",
     description="Lists all state change proposals currently awaiting human review and approval.",
 )
-async def list_state_proposals(
+def list_state_proposals(
     project_id: str,
     approval_status: str = Query(ApprovalStatus.PROPOSED.value, description="Filter by status"),
     db: Session = Depends(get_db),
@@ -578,7 +578,7 @@ async def list_state_proposals(
     summary="Approve Proposed State Change",
     description="Explicitly approves a proposed change, advancing the Authoritative Project State to a new version.",
 )
-async def approve_proposal(
+def approve_proposal(
     project_id: str,
     proposal_id: str,
     body: ProposalApprovalRequest,
@@ -622,7 +622,7 @@ async def approve_proposal(
     summary="Reject Proposed State Change",
     description="Explicitly rejects a proposed change. Project State remains unmodified.",
 )
-async def reject_proposal(
+def reject_proposal(
     project_id: str,
     proposal_id: str,
     body: ProposalRejectRequest,
@@ -669,7 +669,7 @@ async def reject_proposal(
     summary="Rollback Project State to Previous Version",
     description="Restores Project State to an earlier version, creating a new explicit version snapshot.",
 )
-async def rollback_project_state(
+def rollback_project_state(
     project_id: str,
     body: RollbackRequest,
     state_service: ProjectStateService = Depends(get_project_state_service),
@@ -708,7 +708,7 @@ async def rollback_project_state(
     summary="Get Specific Project State Version",
     description="Retrieves a historical snapshot of Project State at a specific version.",
 )
-async def get_project_state_at_version(
+def get_project_state_at_version(
     project_id: str,
     version: int,
     db: Session = Depends(get_db),
@@ -750,7 +750,7 @@ async def get_project_state_at_version(
     summary="List Project Conflicts",
     description="Lists all detected contradictions, workflow conflicts, and decision reversals.",
 )
-async def list_conflicts(
+def list_conflicts(
     project_id: str,
     status: Optional[str] = Query(None, description="Filter by status: open, under_review, approved, rejected, unresolved"),
     conflict_service: ConflictService = Depends(get_conflict_service),
@@ -773,7 +773,7 @@ async def list_conflicts(
     summary="Get Conflict Detail",
     description="Retrieves a specific conflict by ID with provenance references.",
 )
-async def get_conflict(
+def get_conflict(
     project_id: str,
     conflict_id: str,
     conflict_service: ConflictService = Depends(get_conflict_service),
@@ -796,7 +796,7 @@ async def get_conflict(
     summary="Human Review Conflict",
     description="Approve, reject, or mark unresolved a project conflict. High impact changes require approval.",
 )
-async def review_conflict(
+def review_conflict(
     project_id: str,
     conflict_id: str,
     body: ConflictReviewRequest,
@@ -870,7 +870,7 @@ async def review_conflict(
     summary="List Evidence Records",
     description="Lists all immutable evidence fragments supporting project knowledge for this project.",
 )
-async def list_project_evidence(
+def list_project_evidence(
     project_id: str,
     source: Optional[str] = Query(None, description="Filter by source, e.g. google_meet"),
     meeting_id: Optional[str] = Query(None, description="Filter by meeting ID"),
@@ -894,7 +894,7 @@ async def list_project_evidence(
     summary="Get Shared Project Memory",
     description="Returns the bounded project memory used by the shared Synora Agent.",
 )
-async def get_project_memory(
+def get_project_memory(
     project_id: str,
     query: Optional[str] = Query(None),
     limit_knowledge: int = Query(20, ge=1, le=100),
@@ -922,7 +922,7 @@ async def get_project_memory(
     summary="Get Current Project Memory Briefing",
     description="A bounded current-state briefing with approved claims, source links, and unresolved conflicts.",
 )
-async def get_project_memory_briefing(
+def get_project_memory_briefing(
     project_id: str,
     query: Optional[str] = Query(None, max_length=2000),
     db: Session = Depends(get_db),
@@ -950,7 +950,7 @@ async def get_project_memory_briefing(
     summary="List Candidate Knowledge",
     description="Lists extracted candidate knowledge items (Proposals, Decisions, Requirements, Questions).",
 )
-async def list_candidate_knowledge(
+def list_candidate_knowledge(
     project_id: str,
     category: Optional[str] = Query(None, description="Filter by category: proposal, decision_candidate, etc."),
     candidate_status: Optional[str] = Query(None, alias="status", description="candidate, proposed, approved, rejected"),
@@ -994,7 +994,7 @@ async def list_candidate_knowledge(
     summary="Get Meeting Intelligence & Agent Runs",
     description="Retrieves candidate knowledge and agent runs extracted for a specific meeting.",
 )
-async def get_meeting_intelligence(
+def get_meeting_intelligence(
     project_id: str,
     meeting_id: str,
     db: Session = Depends(get_db),
@@ -1051,7 +1051,7 @@ async def get_meeting_intelligence(
     summary="Process Meeting Knowledge Pipeline",
     description="Ingests meeting transcript entries, creates evidence, extracts candidate knowledge, and creates proposals.",
 )
-async def process_meeting_pipeline(
+def process_meeting_pipeline(
     project_id: str,
     meeting_id: str,
     coordinator: PipelineCoordinator = Depends(get_pipeline_coordinator),
@@ -1084,7 +1084,7 @@ async def process_meeting_pipeline(
     summary="List AI Workforce Agents",
     description="Lists all 5 workforce agents (BA, Project, Functional, Tech, Frappe) and their status.",
 )
-async def list_workforce_agents(
+def list_workforce_agents(
     project_id: str,
     workforce_service: AIWorkforceService = Depends(get_ai_workforce_service),
     db: Session = Depends(get_db),
@@ -1100,7 +1100,7 @@ async def list_workforce_agents(
     summary="Trigger Agent Run",
     description="Executes a specific workforce agent against current authoritative Project State.",
 )
-async def trigger_agent_run(
+def trigger_agent_run(
     project_id: str,
     agent_id: str,
     body: AgentRunTriggerRequest,
@@ -1137,7 +1137,7 @@ async def trigger_agent_run(
     summary="List Agent Executions",
     description="Retrieves audit run history for an agent.",
 )
-async def list_agent_runs(
+def list_agent_runs(
     project_id: str,
     agent_id: str,
     limit: int = Query(20, ge=1, le=50),
@@ -1165,7 +1165,7 @@ async def list_agent_runs(
     summary="Get Project Agent Coordinator Briefing",
     description="Retrieves the holistic coordinator briefing from the logical Project Agent, summarizing state version and 5 specialist agent statuses.",
 )
-async def get_coordinator_briefing(
+def get_coordinator_briefing(
     project_id: str,
     workforce_service: AIWorkforceService = Depends(get_ai_workforce_service),
     db: Session = Depends(get_db),
@@ -1189,7 +1189,7 @@ async def get_coordinator_briefing(
     summary="Get Excalidraw Architecture Artifact",
     description="Retrieves the current authoritative visual architecture diagram artifact for a project.",
 )
-async def get_excalidraw_artifact(
+def get_excalidraw_artifact(
     project_id: str,
     excal_service: ExcalidrawService = Depends(get_excalidraw_service),
     db: Session = Depends(get_db),
@@ -1221,7 +1221,7 @@ class ExcalidrawSceneSave(BaseModel):
         "this is drawing persistence, not knowledge ingest."
     ),
 )
-async def save_excalidraw_scene(
+def save_excalidraw_scene(
     project_id: str,
     body: ExcalidrawSceneSave,
     excal_service: ExcalidrawService = Depends(get_excalidraw_service),
@@ -1266,7 +1266,7 @@ async def save_excalidraw_scene(
     summary="List Excalidraw Proposals",
     description="Lists visual architecture modification proposals and their diff previews.",
 )
-async def list_excalidraw_proposals(
+def list_excalidraw_proposals(
     project_id: str,
     status_filter: Optional[str] = Query(None, alias="status"),
     excal_service: ExcalidrawService = Depends(get_excalidraw_service),
@@ -1289,7 +1289,7 @@ async def list_excalidraw_proposals(
     summary="Generate Excalidraw Change Proposal (Role B - Output)",
     description="Derives a proposed visual architecture modification with structured diff preview from an approved Project State.",
 )
-async def generate_excalidraw_proposal(
+def generate_excalidraw_proposal(
     project_id: str,
     state_version: Optional[int] = Query(None, description="State version to derive diagram from"),
     reason: Optional[str] = Query(None, description="Optional justification"),
@@ -1321,7 +1321,7 @@ async def generate_excalidraw_proposal(
     summary="AI Visual Architecture Generator (Excalidraw)",
     description="Synthesizes an intelligent, multi-tier system architecture diagram with DeepSeek AI, Living Decisions, and Core Services.",
 )
-async def ai_generate_excalidraw_diagram(
+def ai_generate_excalidraw_diagram(
     project_id: str,
     body: Optional[AiGenerateDiagramRequest] = None,
     excal_service: ExcalidrawService = Depends(get_excalidraw_service),
@@ -1353,7 +1353,7 @@ async def ai_generate_excalidraw_diagram(
     summary="Automated Text to Excalidraw Generator",
     description="Direct automated pipeline: Text -> Model Analysis -> Excalidraw Output.",
 )
-async def text_to_excalidraw_diagram(
+def text_to_excalidraw_diagram(
     project_id: str,
     body: TextToDiagramRequest,
     excal_service: ExcalidrawService = Depends(get_excalidraw_service),
@@ -1379,7 +1379,7 @@ async def text_to_excalidraw_diagram(
     summary="Review Excalidraw Proposal (Human Gate)",
     description="Human review gate: Approves or rejects a visual architecture change proposal. Strictly enforces Output Safety.",
 )
-async def review_excalidraw_proposal(
+def review_excalidraw_proposal(
     project_id: str,
     proposal_id: str,
     body: ExcalidrawProposalReviewRequest,
@@ -1418,7 +1418,7 @@ async def review_excalidraw_proposal(
     summary="List visual revisions",
     description="Lists immutable visual revisions for a project's living workspace, newest first.",
 )
-async def list_visual_revisions(
+def list_visual_revisions(
     project_id: str,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -1442,7 +1442,7 @@ async def list_visual_revisions(
     summary="Get the current visual revision",
     description="Returns the latest revision, which IS the current visual workspace.",
 )
-async def get_current_visual_revision(
+def get_current_visual_revision(
     project_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1462,7 +1462,7 @@ async def get_current_visual_revision(
     summary="Compare two visual revisions",
     description="Structured diff: added, removed, changed elements and relationship changes.",
 )
-async def compare_visual_revisions(
+def compare_visual_revisions(
     project_id: str,
     from_revision: int = Query(..., description="Baseline revision number"),
     to_revision: int = Query(..., description="Target revision number"),
@@ -1480,7 +1480,7 @@ async def compare_visual_revisions(
     summary="Get a visual revision",
     description="Returns one immutable historical revision, including its elements and provenance.",
 )
-async def get_visual_revision(
+def get_visual_revision(
     project_id: str,
     revision_number: int,
     db: Session = Depends(get_db),
@@ -1498,7 +1498,7 @@ async def get_visual_revision(
     summary="Restore a previous visual revision",
     description="Restores a historical revision by creating a NEW revision. Never destructive.",
 )
-async def restore_visual_revision(
+def restore_visual_revision(
     project_id: str,
     revision_number: int,
     reason: Optional[str] = Query(None),
@@ -1538,7 +1538,7 @@ workspace_router = APIRouter(tags=["Workspace Central Agent"])
     summary="Get Central Workspace Agent",
     description="Retrieves the single central Workspace Agent that handles and oversees all projects across the organization.",
 )
-async def get_default_workspace_agent(
+def get_default_workspace_agent(
     workspace_id: str = Query("ws_default", description="Workspace ID"),
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
     db: Session = Depends(get_db),
@@ -1554,7 +1554,7 @@ async def get_default_workspace_agent(
     summary="Get Workspace Central Agent by ID",
     description="Retrieves the central Workspace Agent for a specific workspace.",
 )
-async def get_workspace_agent_by_id(
+def get_workspace_agent_by_id(
     workspace_id: str,
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
     db: Session = Depends(get_db),
@@ -1569,7 +1569,7 @@ async def get_workspace_agent_by_id(
     summary="Dispatch Capability via Central Workspace Agent",
     description="Dispatches a specialist capability coordinated by the central Workspace Agent, with optional project target focus.",
 )
-async def dispatch_workspace_agent_capability(
+def dispatch_workspace_agent_capability(
     body: WorkspaceAgentDispatchRequest,
     workspace_id: str = Query("ws_default", description="Workspace ID"),
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),
@@ -1596,7 +1596,7 @@ async def dispatch_workspace_agent_capability(
     summary="Update Central Workspace Agent Portfolio Memory",
     description="Updates portfolio memory context and cross-project priorities for the central Workspace Agent.",
 )
-async def update_workspace_agent_memory(
+def update_workspace_agent_memory(
     body: WorkspaceAgentMemoryUpdate,
     workspace_id: str = Query("ws_default", description="Workspace ID"),
     project_agent_service: ProjectAgentService = Depends(get_project_agent_service),

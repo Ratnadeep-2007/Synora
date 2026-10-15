@@ -22,7 +22,7 @@ def _tenant(current_user: User) -> str:
         "column for Context Inbox and every active project."
     ),
 )
-async def get_project_atlas(
+def get_project_atlas(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -37,7 +37,7 @@ async def get_project_atlas(
     "/atlas/sync",
     summary="Synchronize the Project Atlas",
 )
-async def sync_project_atlas(
+def sync_project_atlas(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     force: bool = True,

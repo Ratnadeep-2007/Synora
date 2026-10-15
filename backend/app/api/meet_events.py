@@ -62,7 +62,7 @@ def _read_dict_to_schema(data: Dict[str, Any]) -> MeetSubscriptionRead:
         "infrastructure only; transcript content is retrieved via Meet REST."
     ),
 )
-async def create_meet_subscription(
+def create_meet_subscription(
     body: MeetSubscriptionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -91,7 +91,7 @@ async def create_meet_subscription(
     response_model=List[MeetSubscriptionRead],
     summary="List Meet subscriptions",
 )
-async def list_meet_subscriptions(
+def list_meet_subscriptions(
     project_id: Optional[str] = Query(None),
     sub_status: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db),
@@ -108,7 +108,7 @@ async def list_meet_subscriptions(
     response_model=List[MeetSubscriptionRead],
     summary="List subscriptions nearing expiration",
 )
-async def list_expiring_subscriptions(
+def list_expiring_subscriptions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -126,7 +126,7 @@ async def list_expiring_subscriptions(
     "/refresh-expirations",
     summary="Scan subscriptions and mark expiring/expired",
 )
-async def refresh_subscription_expirations(
+def refresh_subscription_expirations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -139,7 +139,7 @@ async def refresh_subscription_expirations(
     response_model=MeetSubscriptionRead,
     summary="Renew a Meet subscription",
 )
-async def renew_meet_subscription(
+def renew_meet_subscription(
     subscription_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -162,7 +162,7 @@ async def renew_meet_subscription(
     response_model=MeetSubscriptionRead,
     summary="Suspend a Meet subscription",
 )
-async def suspend_meet_subscription(
+def suspend_meet_subscription(
     subscription_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -213,7 +213,7 @@ async def pubsub_meet_events(
     response_model=List[MeetEventRecordRead],
     summary="List consumed Meet event records",
 )
-async def list_meet_events(
+def list_meet_events(
     event_status: Optional[str] = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -234,7 +234,7 @@ async def list_meet_events(
         "Idempotent: already-processed events return without duplicate work."
     ),
 )
-async def process_meet_event(
+def process_meet_event(
     event_record_id: str,
     subscription_id: Optional[str] = Query(None),
     project_id: Optional[str] = Query(None),
@@ -421,7 +421,7 @@ async def reconcile_meet_transcripts(
     "/meet/unassigned",
     summary="List meetings awaiting project mapping",
 )
-async def list_unassigned_meetings(
+def list_unassigned_meetings(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -446,7 +446,7 @@ async def list_unassigned_meetings(
     "/meet/unassigned/{meeting_id}/assign",
     summary="Assign an unmapped meeting to a project",
 )
-async def assign_unmapped_meeting(
+def assign_unmapped_meeting(
     meeting_id: str,
     project_id: str = Query(..., description="Target Synesis project ID"),
     db: Session = Depends(get_db),

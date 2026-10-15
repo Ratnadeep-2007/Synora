@@ -33,7 +33,7 @@ def _tenant(current_user: User) -> str:
     response_model=List[UnknownContextItemRead],
     summary="List Unknown Context items awaiting triage",
 )
-async def list_unknown_items(
+def list_unknown_items(
     item_status: Optional[str] = Query(None, alias="status"),
     source: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=200),
@@ -56,7 +56,7 @@ async def list_unknown_items(
     "/summary",
     summary="Unknown Context triage counts",
 )
-async def unknown_context_summary(
+def unknown_context_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -71,7 +71,7 @@ async def unknown_context_summary(
     response_model=UnknownContextItemRead,
     summary="Get one Unknown Context item",
 )
-async def get_unknown_item(
+def get_unknown_item(
     item_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -88,7 +88,7 @@ async def get_unknown_item(
     response_model=UnknownContextItemRead,
     summary="Explainable possible project matches for an item",
 )
-async def get_unknown_suggestions(
+def get_unknown_suggestions(
     item_id: str,
     workspace_id: str = Query("ws_default"),
     db: Session = Depends(get_db),
@@ -113,7 +113,7 @@ async def get_unknown_suggestions(
     "/board",
     summary="Unknown Context living board (agent-maintained Excalidraw page)",
 )
-async def unknown_context_board(
+def unknown_context_board(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -138,7 +138,7 @@ async def unknown_context_board(
     response_model=UnknownContextActionResponse,
     summary="Assign an item to an existing project",
 )
-async def assign_unknown_item(
+def assign_unknown_item(
     item_id: str,
     body: UnknownContextAssignRequest,
     db: Session = Depends(get_db),
@@ -168,7 +168,7 @@ async def assign_unknown_item(
     response_model=UnknownContextActionResponse,
     summary="Keep an item in Unknown Context",
 )
-async def keep_unknown_item(
+def keep_unknown_item(
     item_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -190,7 +190,7 @@ async def keep_unknown_item(
     response_model=UnknownContextActionResponse,
     summary="Create a new project from an item",
 )
-async def create_project_from_item(
+def create_project_from_item(
     item_id: str,
     body: UnknownContextCreateProjectRequest,
     db: Session = Depends(get_db),
@@ -223,7 +223,7 @@ async def create_project_from_item(
     response_model=UnknownContextActionResponse,
     summary="Dismiss an item",
 )
-async def dismiss_unknown_item(
+def dismiss_unknown_item(
     item_id: str,
     reason: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -270,7 +270,7 @@ class CreateProjectFromDraftRequest(BaseModel):
     "/clusters",
     summary="List or trigger embedding-based clusters of pending Unknown Context items",
 )
-async def list_or_create_clusters(
+def list_or_create_clusters(
     refresh: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -311,7 +311,7 @@ async def list_or_create_clusters(
     "/clusters/{cluster_id}/assign",
     summary="Atomically assign all items in a cluster to a project",
 )
-async def assign_cluster(
+def assign_cluster(
     cluster_id: str,
     body: ClusterAssignRequest,
     db: Session = Depends(get_db),
@@ -343,7 +343,7 @@ async def assign_cluster(
     "/draft-project",
     summary="Synthesize an intelligent project draft from an unknown item or cluster",
 )
-async def draft_project(
+def draft_project(
     body: ProjectDraftRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -362,7 +362,7 @@ async def draft_project(
     "/create-project-from-draft",
     summary="Create a full enterprise project from a draft with visual workspace and agent",
 )
-async def create_project_from_draft(
+def create_project_from_draft(
     body: CreateProjectFromDraftRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

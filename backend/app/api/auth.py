@@ -103,7 +103,7 @@ def google_connection_ticket(current_user: User = Depends(get_current_user)):
         500: {"description": "OAuth configuration is missing or invalid"},
     },
 )
-async def initiate_google_oauth(
+def initiate_google_oauth(
     request: Request,
     response: Response,
     user_id: Optional[str] = Query(None, description="Optional Synesis User ID"),
@@ -528,7 +528,7 @@ async def disconnect_google(
     summary="List User Google Connections",
     description="Returns list of all connections for the authenticated user. Excludes all secrets and tokens.",
 )
-async def list_google_connections(
+def list_google_connections(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -550,7 +550,7 @@ async def list_google_connections(
     summary="Get Current Authenticated User",
     description="Returns current authenticated session user profile.",
 )
-async def get_me(
+def get_me(
     current_user: User = Depends(get_current_user),
 ):
     return {
