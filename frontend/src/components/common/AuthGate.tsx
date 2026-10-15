@@ -27,13 +27,19 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [message, setMessage] = useState("");
   const [membership, setMembership] = useState<{ status: string; role: string } | null>(null);
 
-  async function refreshMembership() {
+  async function refreshMembership(): Promise<boolean> {
     try {
       const access = await api.getWorkspaceAccess();
       setMembership(access);
       setSignedIn(true);
-    } catch {
+      setMessage("");
+      return true;
+    } catch (error) {
       setSignedIn(false);
+      const detail = error instanceof Error ? error.message : "Unknown workspace access error.";
+      console.error("Synora workspace access failed after authentication:", error);
+      setMessage(`You are signed in, but Synora could not load your workspace: ${detail}`);
+      return false;
     }
   }
 
@@ -44,10 +50,20 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return;
     }
-    client.getSession().then(async ({ data }) => {
+    client.getSession().then(async ({ data, error }) => {
       if (data?.user) await refreshMembership();
-      else setSignedIn(false);
-    }).catch(() => setSignedIn(false)).finally(() => setLoading(false));
+      else {
+        setSignedIn(false);
+        if (error) {
+          console.error("Could not restore Synora auth session:", error);
+          setMessage(`Could not restore your sign-in session: ${error.message || "Please sign in again."}`);
+        }
+      }
+    }).catch((error) => {
+      setSignedIn(false);
+      console.error("Could not restore Synora auth session:", error);
+      setMessage(`Could not restore your sign-in session: ${error instanceof Error ? error.message : "Please sign in again."}`);
+    }).finally(() => setLoading(false));
   }, []);
 
   async function submit(event: React.FormEvent) {
@@ -83,8 +99,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         setMessage("Enter the verification code sent to your email.");
         setMode("verify");
       }
-    } catch {
-      setMessage("Authentication is unavailable. Please try again.");
+    } catch (error) {
+      console.error("Synora authentication flow failed:", error);
+      setMessage(error instanceof Error ? error.message : "Authentication failed. Please try again.");
     } finally {
       setPending(false);
     }
@@ -119,6 +136,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <label className="block text-sm text-text-main">Password<input required type="password" minLength={8} autoComplete={mode === "sign-in" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-canvas px-3 py-2" /></label>
         )}
         {message && <p role="alert" className="text-sm text-primary">{message}</p>}
+        {message.startsWith("You are signed in, but Synora could not load your workspace:") && (
+          <button type="button" onClick={() => { setPending(true); void refreshMembership().finally(() => setPending(false)); }} className="w-full rounded-lg border border-border px-4 py-2 text-sm font-semibold text-text-main">Retry workspace connection</button>
+        )}
         <button disabled={pending} className="w-full rounded-lg bg-primary px-4 py-2.5 font-semibold text-white disabled:opacity-60">{pending ? "Please wait..." : mode === "sign-in" ? "Sign in" : mode === "sign-up" ? "Create account" : "Verify email"}</button>
         {mode === "verify" && <button type="button" onClick={async () => { const result = await clientResend(email); setMessage(result); }} className="w-full text-sm text-primary">Send another code</button>}
         <button type="button" onClick={() => { setMode(mode === "sign-in" ? "sign-up" : "sign-in"); setMessage(""); }} className="w-full text-sm text-primary">
