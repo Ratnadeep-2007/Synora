@@ -19,6 +19,48 @@ def test_expected_issuer_is_origin(monkeypatch):
     assert neon_auth.expected_issuer() == "https://auth.example.com"
 
 
+class _FakeMappings:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+class _FakeResult:
+    def __init__(self, row):
+        self._row = row
+
+    def mappings(self):
+        return _FakeMappings(self._row)
+
+
+class _FakeDb:
+    def __init__(self, row):
+        self._row = row
+
+    def execute(self, statement, params):
+        assert params["token"]
+        return _FakeResult(self._row)
+
+
+def test_verify_session_token_introspection():
+    neon_auth._SESSION_CACHE.clear()
+    row = {"user_id": "neon-user-1", "email": "a@example.com", "name": "A", "verified": True, "banned": False}
+    claims = neon_auth.verify_session_token("opaque-session-token", _FakeDb(row))
+    assert claims is not None
+    assert claims["sub"] == "neon-user-1"
+    assert claims["email"] == "a@example.com"
+    # Cached: a second call must not need the database.
+    assert neon_auth.verify_session_token("opaque-session-token", _FakeDb(None)) is not None
+
+
+def test_verify_session_token_rejects_unverified():
+    neon_auth._SESSION_CACHE.clear()
+    row = {"user_id": "neon-user-2", "email": "b@example.com", "name": "B", "verified": False, "banned": False}
+    assert neon_auth.verify_session_token("other-token", _FakeDb(row)) is None
+
+
 def test_verify_accepts_origin_issuer_token(monkeypatch):
     monkeypatch.setattr(settings, "NEON_AUTH_BASE_URL", "https://auth.example.com/neondb/auth")
     monkeypatch.setattr(settings, "NEON_AUTH_JWKS_URL", "https://auth.example.com/jwks.json")

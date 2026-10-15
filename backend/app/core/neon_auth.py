@@ -31,6 +31,55 @@ def _jwks_client() -> PyJWKClient:
     return PyJWKClient(settings.NEON_AUTH_JWKS_URL, cache_jwk_set=True, lifespan=300)
 
 
+import hashlib
+import time
+from datetime import datetime, timezone
+from typing import Optional
+
+_SESSION_CACHE: dict = {}
+_SESSION_CACHE_TTL_SECONDS = 30
+
+
+def verify_session_token(token: str, db) -> Optional[dict]:
+    """Validate an opaque Better Auth session token against the DB.
+
+    Fallback for browsers that block the cross-domain Neon Auth cookie on
+    XHR: the SPA then cannot mint a JWT via /token, but it does hold the
+    session token from getSession(). The token is the credential itself
+    (same trust as the session cookie); we resolve it against
+    neon_auth.session joined to neon_auth.user. Results are cached for
+    30s per token hash to bound database hits.
+    """
+    if not token:
+        return None
+    cache_key = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    cached = _SESSION_CACHE.get(cache_key)
+    if cached and cached[1] > time.time():
+        return cached[0]
+    from sqlalchemy import text
+
+    row = db.execute(
+        text(
+            'SELECT s."userId" AS user_id, u.email AS email, u.name AS name, '
+            'u."emailVerified" AS verified, u.banned AS banned '
+            'FROM neon_auth.session s JOIN neon_auth."user" u ON u.id = s."userId" '
+            'WHERE s.token = :token AND s."expiresAt" > :now'
+        ),
+        {"token": token, "now": datetime.now(timezone.utc)},
+    ).mappings().first()
+    if not row or not row["verified"] or row["banned"]:
+        return None
+    claims = {
+        "sub": row["user_id"],
+        "email": row["email"],
+        "name": row["name"],
+        "emailVerified": True,
+        "banned": False,
+    }
+    _SESSION_CACHE[cache_key] = (claims, time.time() + _SESSION_CACHE_TTL_SECONDS)
+    return claims
+
+
 def verify_neon_token(token: str) -> dict:
     """Return verified claims; the caller handles invalid-token errors."""
     if not settings.NEON_AUTH_BASE_URL:

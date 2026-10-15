@@ -137,16 +137,33 @@ async def require_session(request: Request, call_next):
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
         return JSONResponse(status_code=401, content={"detail": "Sign in required."})
+    prefetched_user = None
     try:
         request.state.auth_claims = verify_neon_token(token)
     except Exception:
-        return JSONResponse(status_code=401, content={"detail": "Invalid or expired session."})
+        # Browsers may block the cross-domain auth cookie on XHR, which makes
+        # the SPA's /token call fail; it then sends the opaque session token.
+        # Validate that against the Neon Auth session table instead.
+        try:
+            from app.core.neon_auth import verify_session_token
+
+            with SessionLocal() as db:
+                prefetched_user = verify_session_token(token, db)
+        except Exception:
+            logger.exception("Neon Auth session token lookup failed")
+            prefetched_user = None
+        if not prefetched_user:
+            return JSONResponse(status_code=401, content={"detail": "Invalid or expired session."})
+        request.state.auth_claims = prefetched_user
     try:
-        with SessionLocal() as db:
-            auth_user = db.execute(
-                text('SELECT email, "emailVerified", banned, name FROM neon_auth."user" WHERE id = :id'),
-                {"id": request.state.auth_claims["sub"]},
-            ).mappings().first()
+        if prefetched_user is not None:
+            auth_user = prefetched_user
+        else:
+            with SessionLocal() as db:
+                auth_user = db.execute(
+                    text('SELECT email, "emailVerified", banned, name FROM neon_auth."user" WHERE id = :id'),
+                    {"id": request.state.auth_claims["sub"]},
+                ).mappings().first()
     except Exception:
         logger.exception("Neon Auth user lookup failed")
         return JSONResponse(status_code=503, content={"detail": "Authentication database unavailable."})

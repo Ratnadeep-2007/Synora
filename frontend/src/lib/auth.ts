@@ -6,6 +6,7 @@ import { BetterAuthVanillaAdapter } from "@neondatabase/auth/vanilla/adapters";
 declare global {
   interface Window {
     __SYNORA_AUTH_URL__?: string;
+    __SYNORA_AUTH_MODE__?: "required" | "shared";
   }
 }
 
@@ -17,6 +18,7 @@ let authClient: ReturnType<typeof createSynoraAuthClient> | null = null;
 let currentUrl = "";
 
 export function isAuthEnabled(): boolean {
+  if (typeof window !== "undefined" && window.__SYNORA_AUTH_MODE__ === "shared") return false;
   return Boolean(
     (typeof window !== "undefined" && window.__SYNORA_AUTH_URL__) ||
       process.env.NEXT_PUBLIC_NEON_AUTH_URL,
@@ -24,6 +26,7 @@ export function isAuthEnabled(): boolean {
 }
 
 export function getAuthClient() {
+  if (typeof window !== "undefined" && window.__SYNORA_AUTH_MODE__ === "shared") return null;
   const url = (typeof window !== "undefined" && window.__SYNORA_AUTH_URL__) ||
     process.env.NEXT_PUBLIC_NEON_AUTH_URL || "";
   if (!url) return null;
@@ -68,14 +71,27 @@ export async function getAuthToken(): Promise<string | null> {
       const client = getAuthClient();
       if (!client) return null;
       const { data, error } = await client.token();
-      if (error || !data?.token) {
-        cachedToken = null;
-        return null;
+      if (!error && data?.token) {
+        const expiresAtMs = tokenExpiryMs(data.token);
+        // Never cache a token we cannot date; treat it as single-use.
+        cachedToken = expiresAtMs > now ? { token: data.token, expiresAtMs } : null;
+        return data.token;
       }
-      const expiresAtMs = tokenExpiryMs(data.token);
-      // Never cache a token we cannot date; treat it as single-use.
-      cachedToken = expiresAtMs > now ? { token: data.token, expiresAtMs } : null;
-      return data.token;
+      // Fallback: /token needs the cross-domain session cookie, which some
+      // browsers block on XHR even with SameSite=None. The opaque session
+      // token (already in the SDK's session) is accepted by the backend,
+      // which validates it against the Neon Auth session table.
+      const session = (await client.getSession()) as unknown as {
+        data?: { session?: { token?: string; expiresAt?: string } } | null;
+      };
+      const sessionToken = session?.data?.session?.token;
+      if (sessionToken) {
+        const expMs = Date.parse(session?.data?.session?.expiresAt || "");
+        cachedToken = { token: sessionToken, expiresAtMs: Number.isFinite(expMs) ? expMs : now + 5 * 60_000 };
+        return sessionToken;
+      }
+      cachedToken = null;
+      return null;
     } catch {
       cachedToken = null;
       return null;
