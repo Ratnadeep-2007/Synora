@@ -70,9 +70,9 @@ def verify_session_token(token: str, db) -> Optional[dict]:
     if not row or not row["verified"] or row["banned"]:
         return None
     claims = {
-        "sub": row["user_id"],
-        "email": row["email"],
-        "name": row["name"],
+        "sub": str(row["user_id"]),
+        "email": str(row["email"]),
+        "name": str(row["name"] or ""),
         "emailVerified": True,
         "banned": False,
     }

@@ -45,11 +45,15 @@ class _FakeDb:
 
 
 def test_verify_session_token_introspection():
+    import uuid
+
     neon_auth._SESSION_CACHE.clear()
-    row = {"user_id": "neon-user-1", "email": "a@example.com", "name": "A", "verified": True, "banned": False}
+    # Postgres returns uuid columns as UUID objects; claims must be strings
+    # or downstream sha256(subject.encode()) crashes with AttributeError.
+    row = {"user_id": uuid.UUID("12345678-1234-5678-1234-567812345678"), "email": "a@example.com", "name": "A", "verified": True, "banned": False}
     claims = neon_auth.verify_session_token("opaque-session-token", _FakeDb(row))
     assert claims is not None
-    assert claims["sub"] == "neon-user-1"
+    assert claims["sub"] == "12345678-1234-5678-1234-567812345678"
     assert claims["email"] == "a@example.com"
     # Cached: a second call must not need the database.
     assert neon_auth.verify_session_token("opaque-session-token", _FakeDb(None)) is not None
