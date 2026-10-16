@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Video,
   Clock,
@@ -94,6 +94,11 @@ export function MeetingsView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Single-flight guards: refs (not state) so a rapid double click in the
+  // same frame cannot slip two requests past a not-yet-disabled button.
+  const startInFlight = useRef(false);
+  const stopInFlight = useRef<Set<string>>(new Set());
+  const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(new Set());
 
   const confirmDeleteMeeting = async (meetingId: string, title?: string) => {
     if (
@@ -127,10 +132,12 @@ export function MeetingsView({
   ].includes(captureStatus);
 
   const startCapture = async () => {
+    if (startInFlight.current || busy) return;
     if (!meetingUrl.trim()) {
       setError("Paste a valid Google Meet link first.");
       return;
     }
+    startInFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -138,7 +145,27 @@ export function MeetingsView({
     } catch (err: any) {
       setError(err?.message || "Could not start Vexa capture.");
     } finally {
+      startInFlight.current = false;
       setBusy(false);
+    }
+  };
+
+  const stopCapture = async (meetingId?: string) => {
+    const key = meetingId || vexaCaptureStatus?.meeting_id || "current";
+    if (stopInFlight.current.has(key)) return;
+    stopInFlight.current.add(key);
+    setStoppingIds((prev) => new Set(prev).add(key));
+    try {
+      await onStopVexaCapture?.(meetingId);
+    } catch (err: any) {
+      setError(err?.message || "Could not stop capture.");
+    } finally {
+      stopInFlight.current.delete(key);
+      setStoppingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   };
 
@@ -239,10 +266,11 @@ export function MeetingsView({
               </button>
             ) : (
               <button
-                onClick={() => onStopVexaCapture?.()}
-                className="px-5 py-2.5 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all shrink-0"
+                onClick={() => stopCapture()}
+                disabled={stoppingIds.has(vexaCaptureStatus?.meeting_id || "current")}
+                className="px-5 py-2.5 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all shrink-0 disabled:opacity-50"
               >
-                Stop capture
+                {stoppingIds.has(vexaCaptureStatus?.meeting_id || "current") ? "Stopping..." : "Stop capture"}
               </button>
             )}
           </div>
@@ -287,10 +315,11 @@ export function MeetingsView({
                     Open
                   </button>
                   <button
-                    onClick={() => onStopVexaCapture?.(cap.meeting_id)}
-                    className="px-3 py-2 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all"
+                    onClick={() => stopCapture(cap.meeting_id)}
+                    disabled={stoppingIds.has(cap.meeting_id)}
+                    className="px-3 py-2 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all disabled:opacity-50"
                   >
-                    Stop bot
+                    {stoppingIds.has(cap.meeting_id) ? "Stopping..." : "Stop bot"}
                   </button>
                 </div>
               </div>

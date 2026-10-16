@@ -28,6 +28,13 @@ class MultimodalService:
         http_client: Optional[httpx.Client] = None,
     ):
         self.groq_api_key = groq_api_key or settings.GROQ_API_KEY
+        # Rotate across Groq accounts on quota failures (per-org limits).
+        # An explicitly injected key stays a single-key client (callers and
+        # tests that pass one key get exactly that account's behavior).
+        if groq_api_key:
+            self.groq_api_keys = [groq_api_key]
+        else:
+            self.groq_api_keys = list(settings.groq_api_keys)
         self.nvidia_api_key = nvidia_api_key or settings.NVIDIA_API_KEY
         self.groq_base_url = settings.GROQ_BASE_URL.rstrip("/")
         self.nvidia_base_url = settings.NVIDIA_BASE_URL.rstrip("/")
@@ -73,11 +80,11 @@ class MultimodalService:
                 "error": "Empty audio payload",
             }
 
-        # Attempt Groq Whisper if API key configured
-        if self.groq_api_key:
+        # Attempt Groq Whisper, rotating accounts on quota failures.
+        for groq_key in self.groq_api_keys:
             try:
                 headers = {
-                    "Authorization": f"Bearer {self.groq_api_key}",
+                    "Authorization": f"Bearer {groq_key}",
                 }
                 model_name = settings.GROQ_WHISPER_MODEL or "whisper-large-v3-turbo"
                 mime_type = mimetypes.guess_type(filename)[0] or "audio/ogg"
@@ -187,9 +194,9 @@ class MultimodalService:
             "}"
         )
 
-        # Vision provider order: Groq Llama vision first (same key as the
-        # rest of the stack, no extra account), NVIDIA NIM as fallback.
-        if (self.groq_api_key or "").strip():
+        # Vision provider order: Groq vision first (rotating accounts on
+        # quota failures), NVIDIA NIM as fallback.
+        for groq_key in [key for key in self.groq_api_keys if key.strip()]:
             try:
                 model_name = settings.GROQ_VISION_MODEL
                 payload = {
@@ -214,7 +221,7 @@ class MultimodalService:
                 resp = client.post(
                     f"{self.groq_base_url}/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {self.groq_api_key.strip()}",
+                        "Authorization": f"Bearer {groq_key.strip()}",
                         "Content-Type": "application/json",
                     },
                     json=payload,

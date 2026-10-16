@@ -584,6 +584,134 @@ class MeetingSessionIntelligenceService:
         """Stable visual workspace key that is isolated from any project."""
         return f"meeting_canvas:{meeting_id}"
 
+    # Minor work filter for the canvas ONLY (evidence/transcripts are never
+    # touched): greetings, acknowledgments, and one-word filler carry no
+    # work content ("haan", "hoga", "hmm", "चलिए।", "हो गया।"). Anything
+    # with work substance — development, product, delivery, business of
+    # work — is kept regardless of project, speaker, or routing.
+    _FILLER_WORDS = frozenset({
+        "haan", "haa", "hoga", "hmm", "hm", "ok", "okay", "yes", "no", "right",
+        "chalo", "chaliye", "theek", "thik", "achha", "accha", "bas", "ji", "sir",
+        "oh", "wow", "hmm", "um", "uh", "er", "ah", "bye", "hello", "hi", "hey",
+        "है", "होगा", "हम्म", "हाँ", "चलिए", "देखो", "हो", "गया", "सर", "जी", "अच्छा", "ठीक",
+    })
+    _WORK_ANCHORS = frozenset({
+        "api", "app", "agent", "architecture", "auth", "backend", "build", "bug",
+        "canvas", "claims", "client", "code", "component", "cost", "customer",
+        "dashboard", "data", "database", "decision", "deliver", "delivery", "deploy",
+        "design", "develop", "development", "docker", "endpoint", "engine", "excalidraw",
+        "feature", "fix", "flow", "frontend", "implement", "integration", "integrate",
+        "launch", "llm", "market", "model", "payment", "pipeline", "plan", "price",
+        "pricing", "process", "product", "project", "prototype", "queue", "repo",
+        "requirement", "roadmap", "schema", "scope", "server", "service", "software",
+        "sprint", "synora", "system", "task", "team", "test", "testing", "timeline",
+        "token", "tool", "ui", "user", "users", "ux", "version", "webhook", "workflow",
+    })
+
+    @classmethod
+    def _is_work_discussion(cls, text: str) -> bool:
+        """Minor noise filter: False only for pure filler/casual statements."""
+        from app.services.context_intelligence import ContextIntelligenceService
+
+        raw = (text or "").strip()
+        if not raw:
+            return False
+        if ContextIntelligenceService.is_casual_chatter(raw):
+            return False
+        words = [w.lower() for w in re.findall(r"[^\W_]+", raw, flags=re.UNICODE) if len(w) > 1 or w.isdigit()]
+        if not words:
+            return False
+        if all(word in cls._FILLER_WORDS for word in words):
+            return False
+        # Very short statements survive only when they carry a work anchor
+        # (a product name, a component, a decision word) — not as filler.
+        if len(words) <= 2 and not any(word in cls._WORK_ANCHORS for word in words):
+            return False
+        return True
+
+    @staticmethod
+    def _discussion_snippets(
+        entries: Sequence[TranscriptEntry],
+        evidence_records: Sequence[Evidence],
+    ) -> List[Dict[str, Any]]:
+        """Complete work discussion for the canvas, in chronological order.
+
+        The meeting canvas is not a project-memory view: it must not be
+        limited to routed evidence, extracted candidates, categories, or
+        project labels. Transcript entries are therefore the primary source;
+        evidence is only a fallback for meetings without a transcript. A
+        minor noise filter drops pure filler/casual statements; all work
+        content is kept regardless of project or routing.
+        """
+        snippets: List[Dict[str, Any]] = []
+        ordered_entries = sorted(
+            [
+                entry for entry in entries
+                if (entry.text or "").strip()
+                and MeetingSessionIntelligenceService._is_work_discussion(entry.text)
+            ],
+            key=lambda entry: entry.start_time or datetime.min.replace(tzinfo=timezone.utc),
+        )
+        for entry in ordered_entries:
+            speaker = "Speaker"
+            participant = getattr(entry, "participant", None)
+            if participant is not None and participant.display_name:
+                speaker = participant.display_name
+            else:
+                try:
+                    metadata = json.loads(entry.metadata_json or "{}")
+                    speaker = str(metadata.get("speaker_id") or speaker)
+                except (TypeError, ValueError):
+                    pass
+            snippets.append(
+                {
+                    "id": entry.id,
+                    "content": f"{speaker}: {entry.text.strip()}",
+                    "source": "meeting_transcript",
+                }
+            )
+        if snippets:
+            return snippets
+        return [
+            {
+                "id": evidence.id,
+                "content": f"{evidence.actor_id or 'Speaker'}: {evidence.content.strip()}",
+                "source": evidence.source or "meeting_evidence",
+            }
+            for evidence in evidence_records
+            if evidence.content and evidence.content.strip()
+            and MeetingSessionIntelligenceService._is_work_discussion(evidence.content)
+        ]
+
+    @staticmethod
+    def _global_meeting_outline(
+        snippets: List[Dict[str, Any]],
+        participant_names: List[str],
+    ) -> str:
+        """Compact whole-meeting context shared by every chronological batch.
+
+        This is coherence context only, not a content filter: each batch
+        still receives its complete chronological slice. Representative
+        detailed statements are selected by length and restored to
+        chronological order so cross-batch implementation references,
+        decisions, and intent remain understandable.
+        """
+        if not snippets:
+            return ""
+        indexed = list(enumerate(snippets))
+        detailed = sorted(indexed, key=lambda pair: len(pair[1].get("content") or ""), reverse=True)[:12]
+        detailed.sort(key=lambda pair: pair[0])
+        lines = [
+            f"Speakers/participants: {', '.join(participant_names) if participant_names else 'not recorded'}.",
+            f"Complete discussion size: {len(snippets)} statements.",
+            "Representative detailed statements in chronological order:",
+        ]
+        lines.extend(
+            f"[{index + 1}] {str(snippet.get('content') or '')[:180]}"
+            for index, snippet in detailed
+        )
+        return "\n".join(lines)
+
     def _build_canvas_plans(
         self,
         meeting: Meeting,
@@ -591,6 +719,7 @@ class MeetingSessionIntelligenceService:
         current_nodes: List[str],
         evidence_snippets: List[Dict[str, Any]],
         focus_prompt: str,
+        global_outline: str = "",
     ) -> Tuple[Any, str, Dict[str, Any]]:
         """Plan the meeting canvas in chronological evidence batches.
 
@@ -614,9 +743,11 @@ class MeetingSessionIntelligenceService:
                 part_focus: Optional[str] = focus_prompt
             else:
                 part_focus = (
-                    f"{focus_prompt} This is PART {index + 1} of {len(batches)}: "
-                    "record ONLY the evidence in this part. Do not repeat or "
-                    "summarize other parts."
+                    f"{focus_prompt} This is chronological PART {index + 1} of {len(batches)}. "
+                    "Design this part freely. Use the global meeting context below to understand "
+                    "references, implementation intent, decisions, and dependencies that span parts; "
+                    "do not omit implementation detail merely because it is also relevant elsewhere.\n\n"
+                    f"GLOBAL MEETING CONTEXT (coherence only):\n{global_outline}"
                 )
             plan, status = planner.build_plan(
                 state_summary=state_summary,
@@ -708,32 +839,31 @@ class MeetingSessionIntelligenceService:
             name=f"Meeting Notes · {meeting.title or meeting_id}",
         )
         current_scene = self._json_list(artifact.elements_json)
+        # Design context only (never a content filter): a short summary of
+        # what is already drawn. Feeding hundreds of existing note texts
+        # into every batch prompt blows the providers' per-minute token
+        # budget and starves the actual design calls.
         current_nodes = []
-        for element in current_scene[:120]:
+        for element in current_scene:
+            if len(current_nodes) >= 24:
+                break
             if not isinstance(element, dict):
                 continue
             text_value = str(element.get("text") or "").strip()
             if text_value:
-                current_nodes.append(text_value[:120])
+                current_nodes.append(text_value[:100])
 
-        from app.models.project import Project as _CanvasProject
-
-        _project_names = {
-            row.id: row.name
-            for row in db.query(_CanvasProject).all()
+        evidence_snippets = self._discussion_snippets(entries, evidence_records)
+        _total_statements = (
+            sum(1 for entry in entries if (entry.text or "").strip())
+            or sum(1 for evidence in evidence_records if (evidence.content or "").strip())
+        )
+        discussion_filter = {
+            "kept": len(evidence_snippets),
+            "dropped_noise": max(0, _total_statements - len(evidence_snippets)),
+            "total": _total_statements,
         }
-        evidence_snippets = [
-            {
-                "id": evidence.id,
-                "content": f"{evidence.actor_id or 'Speaker'}: {evidence.content}",
-                "source": evidence.source,
-                # Per-project canvas separation: the planner groups notes by
-                # this name; unrouted rows render under "Shared".
-                "project_name": _project_names.get(evidence.project_id or "", "Shared"),
-            }
-            for evidence in evidence_records
-            if evidence.content and evidence.content.strip()
-        ]
+        global_outline = self._global_meeting_outline(evidence_snippets, participant_names)
 
         state_summary = {
             "title": meeting.title or "Meeting Notes",
@@ -741,6 +871,8 @@ class MeetingSessionIntelligenceService:
             "participants": participant_names,
             "meeting_id": meeting_id,
             "transcript_entry_count": len(entries),
+            "discussion_snippet_count": len(evidence_snippets),
+            "context_scope": "complete_meeting_discussion",
             "requirements": [],
             "architecture": [],
             "decisions": [],
@@ -750,11 +882,16 @@ class MeetingSessionIntelligenceService:
         }
         focus = (
             "MEETING CANVAS MODE. Capture only the substance of this meeting. "
+            "Use the complete discussion itself as context. Project routing, candidate categories, "
+            "Project State, approval status, and memory filters must NOT decide what you may use. "
             "There are NO required sections, categories, note formats, or diagram types. "
-            "Choose the most natural way to record the discussion. Keep notes grounded in the "
-            "meeting evidence. Create a visualization only when it genuinely communicates the "
-            "discussion better than words. Do not import project-wide status, Project State, "
-            "or information from other meetings. The workspace outside this canvas handles project routing."
+            "Choose the most natural way to record the discussion, freely. "
+            "When the discussion is about implementation, turn it into useful implementation notes "
+            "and, when helpful, diagrams or flows covering components, interfaces, APIs, data, UI, "
+            "responsibilities, dependencies, deployment, bugs and fixes, risks, and unresolved choices. "
+            "Preserve technical terms and speaker intent; distinguish what was stated from inference. "
+            "Do not import project-wide status, Project State, or information from other meetings. "
+            "The workspace outside this canvas handles project routing."
         )
 
         plan, ai_status, batch_info = self._build_canvas_plans(
@@ -763,6 +900,7 @@ class MeetingSessionIntelligenceService:
             current_nodes=current_nodes,
             evidence_snippets=evidence_snippets,
             focus_prompt=focus,
+            global_outline=global_outline,
         )
 
         try:
@@ -868,6 +1006,10 @@ class MeetingSessionIntelligenceService:
                     "plan_fingerprint": plan_fingerprint,
                     "evidence_ids": [e.id for e in evidence_records],
                     "transcript_entry_count": len(entries),
+                    "discussion_snippet_count": len(evidence_snippets),
+                    "context_scope": "complete_meeting_discussion",
+                    "project_filtering": False,
+                    "discussion_filter": discussion_filter,
                     "batches": batch_info.get("batches"),
                     "batches_ai": batch_info.get("batches_ai"),
                     "verification": verification,
@@ -882,6 +1024,8 @@ class MeetingSessionIntelligenceService:
                         "representation": plan.canvas_strategy,
                         "diagram_created": bool(plan.nodes or plan.relationships or plan.visualizations),
                         "ai_status": ai_status,
+                        "context_scope": "complete_meeting_discussion",
+                        "project_filtering": False,
                     },
                     "source_evidence_ids": [e.id for e in evidence_records],
                 }
@@ -906,6 +1050,10 @@ class MeetingSessionIntelligenceService:
             "plan_fingerprint": plan_fingerprint,
             "evidence_count": len(evidence_records),
             "transcript_entry_count": len(entries),
+            "discussion_snippet_count": len(evidence_snippets),
+            "context_scope": "complete_meeting_discussion",
+            "project_filtering": False,
+            "discussion_filter": discussion_filter,
             "batches": batch_info.get("batches"),
             "batches_ai": batch_info.get("batches_ai"),
             "verification": verification,

@@ -502,15 +502,22 @@ class GroqLLMClient(LLMClient):
         timeout_seconds: float = 15.0,
         fallback_client: Optional[LLMClient] = None,
         fallback_api_key: str = "",
+        api_keys: Optional[List[str]] = None,
     ):
         self.api_key = api_key.strip() if api_key else ""
         self.model_name = model_name
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._fallback_client = fallback_client or DeterministicRuleLLMClient()
-        # Second Groq account. Quotas are per-key, so a 429 on the primary
-        # retries here before degrading to the next provider tier.
+        # Additional Groq accounts. Quotas are per organization, so a 429
+        # rotates to the next account before degrading to the next tier.
         self.fallback_api_key = fallback_api_key.strip() if fallback_api_key else ""
+        ordered = [self.api_key, self.fallback_api_key] + list(api_keys or [])
+        self.api_keys: List[str] = []
+        for value in ordered:
+            key = (value or "").strip()
+            if key and key not in self.api_keys:
+                self.api_keys.append(key)
 
     def _post(self, api_key: str, payload: Dict[str, Any]) -> "httpx.Response":
         import httpx
@@ -544,16 +551,14 @@ class GroqLLMClient(LLMClient):
             "response_format": {"type": "json_object"},
         }
 
-        keys = [self.api_key]
-        if self.fallback_api_key and self.fallback_api_key != self.api_key:
-            keys.append(self.fallback_api_key)
+        keys = list(self.api_keys)
         last_error: Optional[str] = None
         for position, key in enumerate(keys):
             try:
                 resp = self._post(key, payload)
                 if resp.status_code != 200:
                     last_error = f"Groq API returned HTTP {resp.status_code}: {resp.text[:200]}"
-                    logger.warning(f"{last_error}. {'Retrying with fallback key.' if position == 0 and len(keys) > 1 else 'Failing over to fallback client.'}")
+                    logger.warning(f"{last_error}. {'Retrying with next Groq key.' if position < len(keys) - 1 else 'Failing over to fallback client.'}")
                     continue
 
                 res_json = resp.json()
@@ -582,7 +587,7 @@ class GroqLLMClient(LLMClient):
 
             except Exception as exc:
                 last_error = str(exc)
-                logger.warning(f"Groq LLM call failed: {exc}. {'Retrying with fallback key.' if position == 0 and len(keys) > 1 else 'Failing over to fallback client.'}")
+                logger.warning(f"Groq LLM call failed: {exc}. {'Retrying with next Groq key.' if position < len(keys) - 1 else 'Failing over to fallback client.'}")
 
         logger.warning(f"Groq keys exhausted ({last_error}). Failing over to fallback client.")
         return self._fallback_client.generate_structured(prompt, schema)
@@ -816,6 +821,7 @@ def get_default_llm_client() -> LLMClient:
             base_url=settings.GROQ_BASE_URL,
             fallback_client=nim_client or deterministic_client,
             fallback_api_key=settings.GROQ_API_KEY_FALLBACK,
+            api_keys=settings.groq_api_keys,
         )
 
     # Tier 1: Gemini

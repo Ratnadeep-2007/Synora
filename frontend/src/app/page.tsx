@@ -588,19 +588,37 @@ function HomeWorkspace() {
     return () => clearInterval(id);
   }, [pollVexaCapture, vexaCaptureMeetingId]);
 
+  // Single-flight: a double click (or Enter + click) must never send a
+  // second start/stop request. State-based disabling alone races, because
+  // both clicks can fire before React re-renders the disabled button.
+  const captureRequestInFlight = useRef<Set<string>>(new Set());
+
   const handleStartVexaCapture = async (meetingUrl: string) => {
-    const result = await api.startVexaCapture(meetingUrl);
-    setVexaCaptureMeetingId(result.meeting_id);
-    setVexaCaptureStatus(result);
+    if (captureRequestInFlight.current.has("start")) return;
+    captureRequestInFlight.current.add("start");
+    try {
+      const result = await api.startVexaCapture(meetingUrl);
+      setVexaCaptureMeetingId(result.meeting_id);
+      setVexaCaptureStatus(result);
+    } finally {
+      captureRequestInFlight.current.delete("start");
+    }
   };
 
   const handleStopVexaCapture = async (meetingId?: string) => {
     const target = meetingId || vexaCaptureMeetingId;
     if (!target) return;
-    const result = await api.stopVexaCapture(target);
-    setVexaCaptureStatus(result);
-    await pollVexaCapture();
-    await pollActiveCaptures();
+    const key = `stop:${target}`;
+    if (captureRequestInFlight.current.has(key)) return;
+    captureRequestInFlight.current.add(key);
+    try {
+      const result = await api.stopVexaCapture(target);
+      setVexaCaptureStatus(result);
+      await pollVexaCapture();
+      await pollActiveCaptures();
+    } finally {
+      captureRequestInFlight.current.delete(key);
+    }
   };
 
   const [activeCaptures, setActiveCaptures] = useState<any[]>([]);

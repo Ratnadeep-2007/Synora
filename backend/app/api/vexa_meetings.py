@@ -42,6 +42,14 @@ class VexaMeetingStartRequest(BaseModel):
     meeting_url: str = Field(..., min_length=1)
 
 
+def _queue_capture_processing(background_tasks: BackgroundTasks, db: Session, meeting_id: str) -> None:
+    # BackgroundTasks can run for the entire meeting before FastAPI releases
+    # request dependencies. Release the request's read transaction now; the
+    # processor creates its own SessionLocal and only receives a scalar ID.
+    db.close()
+    background_tasks.add_task(process_vexa_meeting_background, meeting_id)
+
+
 @router.post("/meetings/start")
 async def start_vexa_capture(
     payload: VexaMeetingStartRequest,
@@ -131,7 +139,7 @@ async def start_vexa_capture(
     meeting.status = "ACTIVE"
     db.commit()
 
-    background_tasks.add_task(process_vexa_meeting_background, meeting.id)
+    _queue_capture_processing(background_tasks, db, meeting.id)
 
     return {
         "ok": True,
@@ -233,6 +241,7 @@ def get_vexa_capture_status(
 @router.post("/meetings/{meeting_id}/stop")
 async def stop_vexa_capture(
     meeting_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -255,16 +264,54 @@ async def stop_vexa_capture(
             "message": "This meeting has already been processed.",
         }
 
+    # Idempotent stop: a double click (or a click while Vexa is finalizing)
+    # returns the in-flight state instead of issuing a second DELETE that
+    # can only 404 and surface as a user-facing error.
+    if str(capture.get("status") or "").lower() == "stopping":
+        return {
+            "ok": True,
+            "meeting_id": meeting.id,
+            "status": "stopping",
+            "message": "Stop is already in progress; Synora will process the recording once Vexa finalizes it.",
+        }
+
+    service = VexaSarvamService()
     try:
-        response = await VexaSarvamService().stop_capture(meeting_code)
+        response = await service.stop_capture(meeting_code)
     except VexaSarvamError as exc:
+        # "No active meeting for this bot" usually means the bot already
+        # left and Vexa finalized the recording. That is a recoverable
+        # state, not a capture failure: queue transcription of the
+        # completed recording instead of overwriting the capture as failed.
+        recording = await service.get_completed_recording(meeting_code)
+        if recording:
+            _set_capture_metadata(
+                meeting,
+                {
+                    "status": "recording_ready",
+                    "recording_id": recording.get("recording_id") or recording.get("id"),
+                    "error": None,
+                },
+            )
+            meeting.status = "ACTIVE"
+            db.commit()
+            _queue_capture_processing(background_tasks, db, meeting.id)
+            return {
+                "ok": True,
+                "meeting_id": meeting.id,
+                "status": "recording_ready",
+                "message": "The bot already left; Synora will transcribe the completed recording.",
+                "recording_id": recording.get("recording_id") or recording.get("id"),
+            }
         _set_capture_metadata(meeting, {"status": "failed", "error": str(exc)[:1000]})
         db.commit()
         raise HTTPException(status_code=502, detail=str(exc))
 
     # Vexa's DELETE is asynchronous: it returns a stopping state while the
-    # recording is finalized. Keep Synora processing alive and let the same
-    # post-meeting worker wait for the completed recording.
+    # recording is finalized. Always queue the post-meeting worker: if the
+    # original worker is still alive the single-flight claim makes this a
+    # no-op, and if it died (restart, crash) this is the only thing that
+    # guarantees the recording still reaches transcription + pipeline.
     _set_capture_metadata(
         meeting,
         {
@@ -275,9 +322,7 @@ async def stop_vexa_capture(
     )
     meeting.status = "ACTIVE"
     db.commit()
-    # The capture worker was queued when capture started. Vexa stop is
-    # asynchronous, so let that worker continue polling for the finalized
-    # recording rather than starting a second concurrent pipeline.
+    _queue_capture_processing(background_tasks, db, meeting.id)
     return {
         "ok": True,
         "meeting_id": meeting.id,
@@ -320,7 +365,7 @@ def process_vexa_capture(
             "message": "Meeting processing is already active.",
         }
 
-    background_tasks.add_task(process_vexa_meeting_background, meeting.id)
+    _queue_capture_processing(background_tasks, db, meeting.id)
     return {
         "ok": True,
         "meeting_id": meeting.id,

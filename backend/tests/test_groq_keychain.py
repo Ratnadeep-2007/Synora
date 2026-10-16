@@ -45,6 +45,36 @@ def test_fallback_key_serves_after_primary_429():
     assert calls == ["gsk_primary", "gsk_fallback"]
 
 
+def test_third_account_serves_after_two_429s():
+    client = GroqLLMClient(
+        api_key="gsk_primary", fallback_api_key="gsk_fallback",
+        api_keys=["gsk_primary", "gsk_fallback", "gsk_third", "gsk_third"],
+    )
+    calls = []
+
+    def fake_post(api_key, payload):
+        calls.append(api_key)
+        if len(calls) < 3:
+            return _resp(429)
+        return _resp(200, _ok_payload())
+
+    client._post = fake_post
+    out = client.generate_structured("hi", TinySchema)
+    assert out.ok is True
+    # Ordered rotation, duplicates removed.
+    assert calls == ["gsk_primary", "gsk_fallback", "gsk_third"]
+
+
+def test_settings_collects_all_groq_accounts(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "gsk_a")
+    monkeypatch.setattr(settings, "GROQ_API_KEY_FALLBACK", "gsk_b")
+    monkeypatch.setattr(settings, "GROQ_API_KEY_2", "gsk_c")
+    monkeypatch.setattr(settings, "GROQ_API_KEY_3", "")
+    assert settings.groq_api_keys == ["gsk_a", "gsk_b", "gsk_c"]
+
+
 def test_no_fallback_key_goes_straight_to_tier_fallback():
     fallback = MagicMock()
     fallback.generate_structured.return_value = TinySchema(ok=False)

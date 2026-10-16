@@ -186,6 +186,27 @@ class MeetingEvidenceRouter:
                 )
 
         if not dry_run and routed:
+            # Initial meeting processing may have filed these rows in Unknown
+            # Context. When later review/routing resolves a row, update the
+            # matching inbox item as well so users do not see stale pending
+            # copies of evidence that now belongs to a known project.
+            from datetime import datetime, timezone
+            from app.models.context_resolution import UnknownContextItem, UnknownItemStatus
+
+            for assignment in assignments:
+                target_id = assignment.get("to_project_id")
+                evidence_id = assignment.get("evidence_id")
+                if not target_id or not evidence_id:
+                    continue
+                items = db.query(UnknownContextItem).filter(
+                    UnknownContextItem.evidence_id == evidence_id,
+                    UnknownContextItem.status == UnknownItemStatus.PENDING.value,
+                ).all()
+                for item in items:
+                    item.status = UnknownItemStatus.ASSIGNED.value
+                    item.assigned_project_id = target_id
+                    item.assigned_by = actor_id
+                    item.assigned_at = datetime.now(timezone.utc)
             db.commit()
 
         by_project: Dict[str, int] = {}

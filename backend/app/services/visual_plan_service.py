@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 AI_STATUS_AI = "ai"
 AI_STATUS_DETERMINISTIC = "deterministic"
 
+# Rotates the starting Groq account per design call. Quotas are per
+# organization with a small per-minute burst budget, so always starting
+# at the primary account serializes failures onto one org while the
+# others sit idle.
+_GROQ_KEY_CURSOR = 0
+
 
 def _evidence_id_of(snippet: Any) -> str:
     """
@@ -650,24 +656,40 @@ class VisualPlanService:
             "temperature": 0.1,
             "response_format": {"type": "json_object"},
         }
-        headers = {
-            "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-            "Content-Type": "application/json",
-            "User-Agent": "Synora/1.0",
-        }
-        try:
-            with httpx.Client(timeout=25.0) as client:
-                resp = client.post(
-                    f"{settings.GROQ_BASE_URL.rstrip('/')}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-                if resp.status_code != 200:
-                    logger.warning("visual_plan_groq_http_%s: %s", resp.status_code, resp.text[:200])
-                    return None
-                content = resp.json()["choices"][0]["message"]["content"]
-        except Exception as exc:
-            logger.warning("visual_plan_groq_failed: %s", exc)
+        content = None
+        # Rotate through all configured Groq accounts, starting where the
+        # last call left off: quotas are per organization, so one
+        # exhausted account must not end the design.
+        global _GROQ_KEY_CURSOR
+        all_keys = settings.groq_api_keys
+        if all_keys:
+            start = _GROQ_KEY_CURSOR % len(all_keys)
+            ordered_keys = all_keys[start:] + all_keys[:start]
+            _GROQ_KEY_CURSOR += 1
+        else:
+            ordered_keys = []
+        for key in ordered_keys:
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Synora/1.0",
+            }
+            try:
+                with httpx.Client(timeout=25.0) as client:
+                    resp = client.post(
+                        f"{settings.GROQ_BASE_URL.rstrip('/')}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("visual_plan_groq_http_%s: %s", resp.status_code, resp.text[:200])
+                        continue
+                    content = resp.json()["choices"][0]["message"]["content"]
+                    break
+            except Exception as exc:
+                logger.warning("visual_plan_groq_failed: %s", exc)
+                continue
+        if content is None:
             return None
         plan = self._parse(content, model=f"groq/{settings.GROQ_MODEL}")
         return plan if settings.visual_design_free else self._ensure_efficient_notes(plan, state, focus)

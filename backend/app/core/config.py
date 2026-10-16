@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     # Second Groq account. Quotas are per-key: the client retries here on
     # 429s before degrading a tier. Never commit a value here.
     GROQ_API_KEY_FALLBACK: str = ""
+    # Additional Groq accounts (separate organizations; same-org extra keys
+    # share the org quota and add nothing). Clients rotate through
+    # groq_api_keys in order, cooling past a key on 429.
+    GROQ_API_KEY_2: str = ""
+    GROQ_API_KEY_3: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_WHISPER_MODEL: str = "whisper-large-v3-turbo"
     GROQ_MODEL: str = "openai/gpt-oss-120b"
@@ -164,6 +169,10 @@ class Settings(BaseSettings):
     # Memory-to-canvas reconciliation: how often the background loop checks
     # whether approved project memory has outrun the visual workspace.
     VISUAL_SYNC_INTERVAL_SECONDS: int = Field(default=30, ge=5, le=3600)
+    # Meeting canvas reads are cached-only by default. An explicit
+    # ?refresh=true regeneration is limited to one attempt per cooldown so
+    # polling clients cannot burn LLM quota or append revision spam.
+    MEETING_CANVAS_REFRESH_COOLDOWN_SECONDS: int = Field(default=900, ge=0, le=86400)
     WHATSAPP_BATCH_POLL_SECONDS: int = Field(default=1, ge=1, description="Interval for background batch worker to poll.")
     WHATSAPP_BATCH_MAX_MESSAGES: int = Field(default=100, ge=1, le=1000)
     WHATSAPP_BATCH_MAX_RETRIES: int = Field(default=3, ge=1, le=20)
@@ -191,6 +200,22 @@ class Settings(BaseSettings):
     @property
     def is_groq_configured(self) -> bool:
         return bool(self.GROQ_API_KEY.strip())
+
+    @property
+    def groq_api_keys(self) -> List[str]:
+        """Ordered, de-duplicated Groq account keys for rotation."""
+        ordered = [
+            self.GROQ_API_KEY,
+            self.GROQ_API_KEY_FALLBACK,
+            self.GROQ_API_KEY_2,
+            self.GROQ_API_KEY_3,
+        ]
+        keys: List[str] = []
+        for value in ordered:
+            key = (value or "").strip()
+            if key and key not in keys:
+                keys.append(key)
+        return keys
 
     @property
     def is_meta_configured(self) -> bool:

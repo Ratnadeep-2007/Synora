@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import httpx
@@ -230,6 +230,22 @@ class VexaSarvamService:
 
         while datetime.now(timezone.utc) < deadline:
             bot = await self.get_bot_lifecycle(meeting_code)
+            if not bot:
+                # The bot may already have finished and left (for example
+                # when this worker is a recovery run after a restart). A
+                # finalized recording means there is nothing to join-wait
+                # for; proceed straight to transcription.
+                completed = await self.get_completed_recording(meeting_code)
+                if completed:
+                    _set_capture_metadata(
+                        meeting,
+                        {
+                            "bot_status": "completed",
+                            "bot_status_updated_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    db.commit()
+                    return {"status": "completed", "recording_id": completed.get("id")}
             stage = str(bot.get("status") or "unknown")
             if stage != last_stage:
                 logger.info(
@@ -307,6 +323,31 @@ class VexaSarvamService:
             )
             data = response.json()
             return data if isinstance(data, dict) else {}
+
+    async def get_completed_recording(
+        self, meeting_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return an already-finalized recording for this meeting, if any.
+
+        Recovery path: a capture can outlive the backend process that
+        started it (restart, deploy, crash). The completed recording is
+        still in Vexa even though no bot is running anymore, so callers
+        must be able to discover it without re-joining the meeting.
+        """
+        try:
+            data = await self.get_meeting_artifacts(meeting_code)
+        except Exception as exc:
+            logger.warning(
+                "vexa_completed_recording_lookup_failed: meeting=%s error=%s",
+                meeting_code,
+                exc,
+            )
+            return None
+        for recording in data.get("recordings") or []:
+            status = str(recording.get("status", "") or "").strip().lower()
+            if status in {"completed", "complete", "done"} or recording.get("completed_at"):
+                return recording
+        return None
 
     async def wait_for_completed_recording(
         self,
@@ -642,7 +683,7 @@ class VexaSarvamService:
                     "conference_id": meeting.provider_conference_id,
                     "title": meeting.title,
                     "capture_provider": "vexa",
-                    "transcription_provider": "sarvam_saaras",
+                    "transcription_provider": get_capture_metadata(meeting).get("transcription_provider") or "unknown",
                 },
                 candidate_projects=projects,
                 tenant_id="default_tenant",
@@ -673,6 +714,34 @@ class VexaSarvamService:
             return target
         return SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 
+    @staticmethod
+    def _routing_groups(segments: List[Dict[str, Any]]) -> List[List[int]]:
+        """Bound semantic routing work without merging immutable source entries."""
+        groups: List[List[int]] = []
+        current: List[int] = []
+        chars = 0
+        for index, segment in enumerate(segments):
+            text = str(segment.get("text") or "")
+            boundary = False
+            if current:
+                previous = segments[current[-1]]
+                first = segments[current[0]]
+                boundary = (
+                    segment.get("speaker") != previous.get("speaker")
+                    or float(segment.get("start_seconds") or 0) - float(previous.get("end_seconds") or 0) > 2.5
+                    or float(segment.get("end_seconds") or 0) - float(first.get("start_seconds") or 0) > 45
+                    or chars + len(text) > 600
+                    or bool(re.match(r"^\s*(?:for|regarding|switching\s+to|moving\s+to)\b", text, re.I))
+                )
+            if boundary:
+                groups.append(current)
+                current, chars = [], 0
+            current.append(index)
+            chars += len(text) + 1
+        if current:
+            groups.append(current)
+        return groups
+
     def _persist_transcript(
         self,
         meeting: Meeting,
@@ -699,7 +768,19 @@ class VexaSarvamService:
             )
             .first()
         )
-        if existing:
+        expected_entry_ids = {
+            f"vexa_{transcription_provider}:{segment.get('id') or f'seg_{index:06d}'}"
+            for index, segment in enumerate(segments)
+        }
+        existing_entries = {entry.provider_entry_id: entry for entry in existing.entries} if existing else {}
+        existing_evidence = {
+            row.transcript_entry_id: row
+            for row in db.query(Evidence).filter(Evidence.meeting_id == meeting.id).all()
+        } if existing else {}
+        fully_ingested = expected_entry_ids.issubset(existing_entries) and all(
+            existing_entries[key].id in existing_evidence for key in expected_entry_ids
+        )
+        if existing and fully_ingested:
             capture = get_capture_metadata(meeting)
             evidence_projects = (
                 db.query(Evidence.project_id)
@@ -788,7 +869,7 @@ class VexaSarvamService:
                 return translated.strip()
             return None
 
-        transcript = Transcript(
+        transcript = existing or Transcript(
             meeting_id=meeting.id,
             provider="google",
             provider_transcript_id=provider_transcript_id,
@@ -812,14 +893,31 @@ class VexaSarvamService:
                 }
             ),
         )
-        db.add(transcript)
-        db.flush()
+        if existing is None:
+            db.add(transcript)
+            db.flush()
 
         projects = self._get_projects(db)
-        participants: Dict[str, Participant] = {}
+        participants: Dict[str, Participant] = {
+            participant.display_name: participant
+            for participant in db.query(Participant).filter(Participant.meeting_id == meeting.id).all()
+        }
         routed_projects = set()
+        group_for_index = {
+            index: group
+            for group in self._routing_groups(segments)
+            for index in group
+        }
+        group_routes: Dict[int, str] = {}
 
         for index, segment in enumerate(segments):
+            entry_key = segment["id"] or f"seg_{index:06d}"
+            provider_entry_id = f"vexa_{transcription_provider}:{entry_key}"
+            entry = existing_entries.get(provider_entry_id)
+            saved_evidence = existing_evidence.get(entry.id) if entry else None
+            if saved_evidence is not None:
+                routed_projects.add(saved_evidence.project_id)
+                continue
             speaker = segment["speaker"]
             participant = participants.get(speaker)
             if participant is None:
@@ -845,10 +943,9 @@ class VexaSarvamService:
             base_time = meeting.start_time or datetime.now(timezone.utc)
             start_time = base_time + timedelta(seconds=max(0.0, segment["start_seconds"]))
             end_time = base_time + timedelta(seconds=max(0.0, segment["end_seconds"]))
-            entry_key = segment["id"] or f"seg_{index:06d}"
             text_en = _english_text(entry_key, segment["text"])
 
-            entry = TranscriptEntry(
+            entry = entry or TranscriptEntry(
                 transcript_id=transcript.id,
                 provider="google",
                 provider_entry_id=f"vexa_{transcription_provider}:{entry_key}",
@@ -874,12 +971,15 @@ class VexaSarvamService:
             db.add(entry)
             db.flush()
 
-            target_project = self._resolve_project(
-                segment["text"], speaker, meeting, db, projects
-            )
+            group = group_for_index[index]
+            group_key = group[0]
+            if group_key not in group_routes:
+                group_text = " ".join(str(segments[item].get("text") or "") for item in group)
+                group_routes[group_key] = self._resolve_project(group_text, speaker, meeting, db, projects)
+            target_project = group_routes[group_key]
             routed_projects.add(target_project)
 
-            source_event_id = f"vexa:{meeting.provider_conference_id}:{entry.provider_entry_id}"
+            source_event_id = f"vexa:{meeting.id}:{meeting.provider_conference_id}:{entry.provider_entry_id}"
             source_event = (
                 db.query(SourceEvent)
                 .filter(
@@ -1021,6 +1121,7 @@ class VexaSarvamService:
         filename: str,
         content_type: str,
         meeting_id: str,
+        on_fallback: Optional[Callable[[str], None]] = None,
     ) -> Tuple[List[Dict[str, Any]], str, str, str, str, Optional[str]]:
         """Try Sarvam first, then self-hosted Whisper on the same audio."""
         fallback_reason: Optional[str] = None
@@ -1059,6 +1160,9 @@ class VexaSarvamService:
                 "WHISPER_ENABLED is false, so no local fallback is available."
             )
 
+        if on_fallback is not None:
+            on_fallback(fallback_reason)
+
         try:
             result, job_id = await WhisperTranscriptionService().transcribe(
                 audio_bytes,
@@ -1095,27 +1199,39 @@ class VexaSarvamService:
         )
 
         try:
-            # Join first, record second: the bot must reach 'active' before
-            # any recording can exist. Every stage transition is logged and
-            # persisted as bot_status for the status endpoint.
-            _set_capture_metadata(meeting, {"status": "joining"})
-            db.commit()
-            await self.wait_for_bot_active(
-                meeting_code,
-                db,
-                meeting,
-                timeout_seconds=600,
-            )
+            # Recovery first: if Vexa already finalized a recording (the
+            # capture outlived this worker, e.g. across a backend restart),
+            # skip the join wait entirely and go straight to transcription.
+            recording = await self.get_completed_recording(meeting_code)
+            if recording:
+                logger.info(
+                    "vexa_recording_recovered: meeting=%s recording=%s",
+                    meeting_code,
+                    recording.get("recording_id") or recording.get("id"),
+                )
+            else:
+                # Join first, record second: the bot must reach 'active'
+                # before any recording can exist. Every stage transition is
+                # logged and persisted as bot_status for the status endpoint.
+                _set_capture_metadata(meeting, {"status": "joining"})
+                db.commit()
+                await self.wait_for_bot_active(
+                    meeting_code,
+                    db,
+                    meeting,
+                    timeout_seconds=600,
+                )
 
-            _set_capture_metadata(meeting, {"status": "waiting_for_recording"})
-            db.commit()
+                _set_capture_metadata(meeting, {"status": "waiting_for_recording"})
+                db.commit()
 
-            recording = await self.wait_for_completed_recording(meeting_code)
+                recording = await self.wait_for_completed_recording(meeting_code)
             _set_capture_metadata(
                 meeting,
                 {
                     "status": "recording_ready",
                     "recording_id": recording.get("recording_id") or recording.get("id"),
+                    "error": None,
                 },
             )
             db.commit()
@@ -1150,7 +1266,21 @@ class VexaSarvamService:
             else:
                 audio_extension = ".audio"
 
-            audio_filename = f"{meeting.id}{audio_extension}"
+            # ORM attributes are expired by the preceding commit. Reading
+            # meeting.id here would open a transaction held throughout STT,
+            # which Neon can terminate before the recording is transcribed.
+            audio_filename = f"{meeting_id}{audio_extension}"
+
+            def mark_whisper_fallback(reason: str) -> None:
+                _set_capture_metadata(meeting, {
+                    "status": "transcribing_whisper",
+                    "transcription_provider": "whisper_faster_whisper",
+                    "transcription_model": settings.WHISPER_MODEL,
+                    "transcription_fallback_used": True,
+                    "transcription_fallback_reason": reason,
+                })
+                db.commit()
+
             (
                 segments,
                 transcription_provider,
@@ -1162,7 +1292,8 @@ class VexaSarvamService:
                 audio_bytes,
                 audio_filename,
                 content_type,
-                meeting.id,
+                meeting_id,
+                on_fallback=mark_whisper_fallback,
             )
 
             _set_capture_metadata(
@@ -1217,9 +1348,24 @@ class VexaSarvamService:
             raise
 
 
+_PROCESSING_MEETINGS: set = set()
+
+
+def claim_meeting_processing(meeting_id: str) -> bool:
+    """Single-flight claim so duplicate queueing can never run two
+    transcription/pipeline passes for the same meeting concurrently."""
+    if meeting_id in _PROCESSING_MEETINGS:
+        return False
+    _PROCESSING_MEETINGS.add(meeting_id)
+    return True
+
+
 async def process_vexa_meeting_background(meeting_id: str) -> None:
     from app.core.database import SessionLocal
 
+    if not claim_meeting_processing(meeting_id):
+        logger.info("vexa_processing_duplicate_skipped: meeting=%s", meeting_id)
+        return
     db = SessionLocal()
     try:
         await VexaSarvamService().process_meeting(meeting_id=meeting_id, db=db)
@@ -1231,3 +1377,94 @@ async def process_vexa_meeting_background(meeting_id: str) -> None:
         )
     finally:
         db.close()
+        _PROCESSING_MEETINGS.discard(meeting_id)
+
+
+# Capture states where a bot may still be inside the Meet. Stopping the
+# server must make those bots leave (which finalizes their recordings);
+# transcription then happens on the next start via reconciliation below.
+_BOT_IN_MEET_STATUSES = frozenset({"starting", "joining", "waiting_for_recording"})
+_CAPTURE_UNFINISHED_STATUSES = frozenset({
+    "starting", "joining", "waiting_for_recording", "stopping",
+    "recording_ready", "transcribing", "transcribing_sarvam",
+    "transcribing_whisper", "ingesting",
+})
+
+
+def _unfinished_captures(db, statuses, limit: int = 100):
+    meetings = (
+        db.query(Meeting)
+        .order_by(Meeting.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    found = []
+    for meeting in meetings:
+        capture = get_capture_metadata(meeting)
+        if capture.get("processed"):
+            continue
+        if str(capture.get("status") or "").lower() in statuses:
+            found.append((meeting, capture))
+    return found
+
+
+async def stop_active_captures_on_shutdown() -> Dict[str, Any]:
+    """Best-effort: when the server stops, bots leave their Meets.
+
+    Leaving finalizes the Vexa recording. Transcription/pipeline cannot
+    run in a dying process, so it is deliberately deferred to startup
+    reconciliation (which finds the completed recording and processes it).
+    """
+    from app.core.database import SessionLocal
+
+    stopped = 0
+    db = SessionLocal()
+    try:
+        service = VexaSarvamService()
+        for meeting, capture in _unfinished_captures(db, _BOT_IN_MEET_STATUSES):
+            code = str(capture.get("meeting_code") or meeting.provider_conference_id or "")
+            if not code:
+                continue
+            try:
+                await service.stop_capture(code)
+                _set_capture_metadata(meeting, {"status": "stopping"})
+                db.commit()
+                stopped += 1
+                logger.info("vexa_shutdown_bot_stop: meeting=%s code=%s", meeting.id, code)
+            except Exception as exc:
+                logger.warning("vexa_shutdown_bot_stop_failed: meeting=%s error=%s", meeting.id, exc)
+    finally:
+        db.close()
+    return {"stopped": stopped}
+
+
+async def reconcile_captures_on_startup() -> Dict[str, Any]:
+    """Resume unfinished captures after a restart.
+
+    For each unfinished capture: if Vexa already finalized a recording,
+    queue transcription + pipeline now; if the bot is still live, queue
+    the normal worker which waits for it to finish. Failed captures are
+    only retried when a completed recording actually exists, so a dead
+    bot without audio never burns a 10-minute join wait.
+    """
+    import asyncio
+
+    from app.core.database import SessionLocal
+
+    resumed = 0
+    db = SessionLocal()
+    try:
+        service = VexaSarvamService()
+        candidates = _unfinished_captures(db, _CAPTURE_UNFINISHED_STATUSES)
+        failed = _unfinished_captures(db, frozenset({"failed"}))
+        for meeting, capture in failed:
+            code = str(capture.get("meeting_code") or meeting.provider_conference_id or "")
+            if code and await service.get_completed_recording(code):
+                candidates.append((meeting, capture))
+        for meeting, _capture in candidates:
+            asyncio.create_task(process_vexa_meeting_background(meeting.id))
+            resumed += 1
+            logger.info("vexa_capture_reconciled_on_startup: meeting=%s", meeting.id)
+    finally:
+        db.close()
+    return {"resumed": resumed}

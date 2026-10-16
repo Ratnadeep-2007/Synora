@@ -58,22 +58,36 @@ def main():
         ]
         transcript = ROOT / "SAMPLE_ADMIN_MEETING_TRANSCRIPT.txt"
         transcript.write_text("\n".join(e["speaker"] + ": " + e["text"] for e in entries) + "\n", encoding="utf-8")
-        meeting = call("POST", "/meetings/ingest-transcript", {"project_id": project_id, "title": "Harbor Inventory Demo - sample admin acceptance meeting", "entries": entries, "auto_process": True})
-        assert meeting.get("pipeline_result"), "Meeting persisted but automatic processing did not return a result."
-        meeting_id = meeting["meeting_id"]
+        meeting_title = "Harbor Inventory Demo - sample admin acceptance meeting"
+        meetings = call("GET", "/meetings")
+        existing_meeting = next((m for m in meetings if m["title"] == meeting_title and m["project_id"] == project_id), None)
+        if existing_meeting:
+            meeting_id = existing_meeting["id"]
+            call("POST", f"/projects/{project_id}/meetings/{meeting_id}/process")
+        else:
+            meeting = call("POST", "/meetings/ingest-transcript", {"project_id": project_id, "title": meeting_title, "entries": entries, "auto_process": True})
+            assert meeting.get("pipeline_result"), "Meeting persisted but automatic processing did not return a result."
+            meeting_id = meeting["meeting_id"]
         call("GET", "/meetings/" + meeting_id)
         call("GET", f"/projects/{project_id}/meetings/{meeting_id}/intelligence")
-        call("GET", f"/projects/{project_id}/knowledge")
+        knowledge = call("GET", f"/projects/{project_id}/knowledge")
+        assert any(item.get("evidence_ids") for item in knowledge), "No provenance-linked candidate knowledge was produced."
         proposals = call("GET", f"/projects/{project_id}/state/proposals")
         # Approve only the synthetic meeting's proposals to verify canonical memory.
         for proposal in proposals:
+            state = call("GET", f"/projects/{project_id}/state")
+            if proposal["state_version_before"] != state["current_version"]:
+                results.append({"request": "Stale proposal remains pending for re-evaluation", "status": "EXPECTED_REVIEW", "data": {"proposal_id": proposal["id"], "proposed_version": proposal["state_version_before"], "current_version": state["current_version"]}})
+                continue
             call("POST", f"/projects/{project_id}/state/proposals/{proposal['id']}/approve", {"actor_id": current_user["id"], "note": "Approve synthetic sample meeting acceptance data."})
         context = "Harbor Inventory Demo requires supplier delivery CSV import with a preview before committing stock adjustments."
         call("POST", "/connectors/manual/text", {"project_id": project_id, "title": "Sample admin project context", "text": context})
-        call("POST", "/connectors/manual/text", {"project_id": project_id, "title": "Sample admin duplicate context", "text": context})
+        duplicate = call("POST", "/connectors/manual/text", {"project_id": project_id, "title": "Sample admin duplicate context", "text": context})
+        assert duplicate.get("outcome") == "duplicate", "Repeated context was not deduplicated."
         call("POST", "/connectors/manual/upload", files={"file": ("harbor-context.txt", b"Harbor Inventory Demo requires the audit log to retain a reference to the original supplier delivery CSV.", "text/plain")}, data={"project_id": project_id, "title": "Sample context file"})
         call("GET", f"/projects/{project_id}/memory/briefing")
-        call("GET", f"/projects/{project_id}/state")
+        state = call("GET", f"/projects/{project_id}/state")
+        assert state["current_version"] > 1, "Approved memory did not advance its canonical version."
         call("GET", f"/projects/{project_id}/state/history")
         call("POST", f"/projects/{project_id}/agent/sync-excalidraw")
         artifact = call("GET", f"/projects/{project_id}/excalidraw")

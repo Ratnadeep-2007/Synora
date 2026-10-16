@@ -198,17 +198,36 @@ def get_meeting_intelligence(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
+def _canvas_last_refresh_attempt(canvas_meta):
+    """Last stamped canvas regeneration attempt, if any.
+
+    Only the explicit marker counts: artifact.updated_at also changes on
+    user canvas saves, which must not block (or be mistaken for) a refresh.
+    """
+    raw = canvas_meta.get("last_refresh_attempt_at")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 @router.get(
     "/{meeting_id}/canvas",
-    summary="Get or synchronize the free-form Meeting Canvas",
+    summary="Get the free-form Meeting Canvas",
     description=(
-        "Returns the independent Excalidraw canvas for one meeting. The canvas is "
-        "derived only from that meeting's persisted transcript/evidence and has no "
-        "fixed note or diagram format."
+        "Returns the stored independent Excalidraw canvas for one meeting. "
+        "Reads are cached-only and never call an LLM: polling this endpoint "
+        "cannot burn provider quota or append revisions. Pass ?refresh=true "
+        "to explicitly regenerate (at most once per cooldown) after evidence "
+        "changes or when the stored canvas used a deterministic/partial plan."
     ),
 )
 def get_meeting_canvas(
     meeting_id: str,
+    refresh: bool = Query(False, description="Explicitly regenerate the canvas (cooldown-limited)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -247,30 +266,79 @@ def get_meeting_canvas(
     canvas_meta = app_state.get("meeting_canvas") or {}
     stored_ids = list(canvas_meta.get("evidence_ids") or [])
     stored_ai = canvas_meta.get("ai_status")
+    evidence_changed = stored_ids != evidence_ids
+    ai_upgrade_available = stored_ai in (None, "deterministic", "partial")
 
-    # Re-sync when the evidence set changed OR when the stored canvas was
-    # drawn by the deterministic fallback (ai_status deterministic/None) or
-    # only partly by the design model (ai_status partial): that means no
-    # design model was reachable for some evidence batches at the time, and
-    # the stub must not be cached forever once a model is available.
-    if stored_ids != evidence_ids or stored_ai in (None, "deterministic", "partial"):
-        try:
-            service = MeetingSessionIntelligenceService()
-            return service.sync_meeting_canvas(
-                meeting_id=meeting_id,
-                db=db,
-                tenant_id="default_tenant",
-                actor_id=current_user.id,
+    def _cached(reason: str, **extra):
+        return {
+            "meeting_id": meeting_id,
+            "synced": False,
+            "reason": reason,
+            "ai_status": stored_ai,
+            "evidence_changed": evidence_changed,
+            "refresh_available": bool(evidence_changed or ai_upgrade_available),
+            "artifact": excal.format_artifact_read(artifact).model_dump(),
+            **extra,
+        }
+
+    # Reads never regenerate. The frontend polls this endpoint every few
+    # seconds; regenerating on read (the previous behaviour for stale,
+    # deterministic, or partial canvases) burned LLM quota on every poll
+    # and appended a new visual revision each time a plan changed.
+    if not refresh:
+        return _cached("cached_stale" if evidence_changed else "cached")
+
+    from app.core.config import settings
+
+    cooldown = max(0, int(settings.MEETING_CANVAS_REFRESH_COOLDOWN_SECONDS))
+    now = datetime.now(timezone.utc)
+    last_attempt = _canvas_last_refresh_attempt(canvas_meta)
+    if cooldown and last_attempt is not None:
+        elapsed = (now - last_attempt).total_seconds()
+        if 0 <= elapsed < cooldown:
+            return _cached(
+                "refresh_cooldown",
+                retry_after_seconds=int(cooldown - elapsed),
             )
-        except Exception as exc:
-            logger.warning("meeting_canvas_sync_on_read_failed: meeting=%s error=%s", meeting_id, exc)
 
-    return {
-        "meeting_id": meeting_id,
-        "synced": False,
-        "reason": "cached" if stored_ids == evidence_ids else "sync_failed_using_last_canvas",
-        "artifact": excal.format_artifact_read(artifact).model_dump(),
-    }
+    # Stamp the attempt before calling the planner so failed or no-change
+    # regenerations also count toward the cooldown (no retry loops).
+    try:
+        state_blob = dict(app_state)
+        meta_blob = dict(state_blob.get("meeting_canvas") or {})
+        meta_blob["last_refresh_attempt_at"] = now.isoformat()
+        state_blob["meeting_canvas"] = meta_blob
+        artifact.app_state_json = json.dumps(state_blob)
+        db.commit()
+    except Exception as exc:
+        logger.warning("meeting_canvas_refresh_stamp_failed: meeting=%s error=%s", meeting_id, exc)
+        db.rollback()
+
+    try:
+        service = MeetingSessionIntelligenceService()
+        result = service.sync_meeting_canvas(
+            meeting_id=meeting_id,
+            db=db,
+            tenant_id="default_tenant",
+            actor_id=current_user.id,
+        )
+    except Exception as exc:
+        logger.warning("meeting_canvas_sync_on_refresh_failed: meeting=%s error=%s", meeting_id, exc)
+        return _cached("sync_failed_using_last_canvas")
+    # A successful sync overwrites app_state (dropping the pre-stamp), so
+    # re-stamp the attempt or the next ?refresh=true would bypass cooldown.
+    try:
+        db.refresh(artifact)
+        state_blob = json.loads(artifact.app_state_json or "{}")
+        meta_blob = dict(state_blob.get("meeting_canvas") or {})
+        meta_blob["last_refresh_attempt_at"] = now.isoformat()
+        state_blob["meeting_canvas"] = meta_blob
+        artifact.app_state_json = json.dumps(state_blob)
+        db.commit()
+    except Exception as exc:
+        logger.warning("meeting_canvas_refresh_restamp_failed: meeting=%s error=%s", meeting_id, exc)
+        db.rollback()
+    return result
 
 
 @router.get(

@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import SynesisException
@@ -121,40 +122,53 @@ class UnknownContextService:
         the Context Inbox, the Unknown board, or the Atlas Unknown column.
         One item per evidence row (the board/Atlas render one free note per
         item). Idempotent: an evidence row that already has an item in any
-        status is never re-filed, and create_item's (source, source_event_id)
-        idempotency is a second guard, so pipeline re-runs do not duplicate.
+        status is never re-filed. Both evidence IDs and (source, source_event_id)
+        keys are checked in bulk so pipeline re-runs do not duplicate items.
         Returns the number of newly filed items.
         """
-        filed = 0
-        for evidence in evidence_records:
+        records = [evidence for evidence in evidence_records if (evidence.content or "").strip()]
+        if not records:
+            return 0
+        event_keys = {f"meeting:{meeting_id}:evidence:{evidence.id}" for evidence in records}
+        existing = db.query(UnknownContextItem).filter(or_(
+            UnknownContextItem.evidence_id.in_([evidence.id for evidence in records]),
+            UnknownContextItem.source_event_id.in_(event_keys),
+        )).all()
+        seen_evidence = {item.evidence_id for item in existing}
+        seen_events = {(item.source, item.source_event_id) for item in existing}
+        pending = []
+        for evidence in records:
             content = (evidence.content or "").strip()
-            if not content:
+            source = evidence.source or "google_meet"
+            event_key = f"meeting:{meeting_id}:evidence:{evidence.id}"
+            if evidence.id in seen_evidence or (source, event_key) in seen_events:
                 continue
-            existing = (
-                db.query(UnknownContextItem)
-                .filter(UnknownContextItem.evidence_id == evidence.id)
-                .first()
-            )
-            if existing:
-                continue
-            self.create_item(
-                source=evidence.source or "google_meet",
-                payload={
+            pending.append(UnknownContextItem(
+                project_id=SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID,
+                tenant_id=tenant_id,
+                source=source,
+                payload_json=json.dumps({
                     "meeting_id": meeting_id,
                     "evidence_id": evidence.id,
                     "speaker": evidence.actor_id,
-                },
-                db=db,
-                tenant_id=tenant_id,
-                source_event_id=f"meeting:{meeting_id}:evidence:{evidence.id}",
+                }),
+                source_event_id=event_key,
                 evidence_id=evidence.id,
                 meeting_id=meeting_id,
                 actor_id=evidence.actor_id,
                 content=evidence.content or "",
                 occurred_at=evidence.occurred_at,
-            )
-            filed += 1
+                status=UnknownItemStatus.PENDING.value,
+            ))
+            seen_evidence.add(evidence.id)
+            seen_events.add((source, event_key))
+        filed = len(pending)
         if filed:
+            # One transaction for the meeting, rather than several network
+            # round trips and an expiration/reload for every spoken fragment.
+            self.context_service.ensure_unknown_context_project(db)
+            db.add_all(pending)
+            db.commit()
             logger.info(
                 "unknown_context_meeting_evidence_filed: meeting=%s items=%d",
                 meeting_id,

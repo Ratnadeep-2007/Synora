@@ -8,6 +8,8 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import asyncio
+import hashlib
+import time
 from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI, Request, status
@@ -85,12 +87,33 @@ async def lifespan(app: FastAPI):
 
     worker_task = asyncio.create_task(_batch_worker())
 
+    # Resume any Vexa captures left unfinished by a previous run: their
+    # recordings are transcribed and pushed through the pipeline here.
+    if settings.VEXA_ENABLED:
+        try:
+            from app.services.vexa_sarvam_service import reconcile_captures_on_startup
+
+            asyncio.create_task(reconcile_captures_on_startup())
+        except Exception as exc:
+            logger.warning(f"Vexa capture reconciliation not started: {exc}")
+
     # Visual memory reconciliation runs in the dedicated
     # visual_sync_worker process so API worker count cannot multiply it.
 
     yield
 
     logger.info("Shutting down Synesis Backend...")
+    # Bots must not stay stranded inside live Meets when the server goes
+    # down: ask Vexa to pull them out (which finalizes the recordings).
+    # Transcription of those recordings happens on the next startup via
+    # reconcile_captures_on_startup above.
+    if settings.VEXA_ENABLED:
+        try:
+            from app.services.vexa_sarvam_service import stop_active_captures_on_shutdown
+
+            await asyncio.wait_for(stop_active_captures_on_shutdown(), timeout=25)
+        except Exception as exc:
+            logger.warning(f"Vexa shutdown bot stop incomplete: {exc}")
     stop_event.set()
     worker_task.cancel()
     try:
@@ -112,6 +135,15 @@ app.include_router(memory_router)
 # Security and Observability Middlewares
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+# Successful auth resolutions are cached briefly per token: the JWT
+# signature is still verified on every request (cheap, JWKS cached), but
+# the Neon user lookup + workspace provisioning queries are skipped.
+# Without this, every API call paid several cross-region DB round-trips
+# and page-load bursts took 9-30s per request on the free instance.
+_AUTH_RESOLUTION_CACHE: dict = {}
+_AUTH_RESOLUTION_TTL_SECONDS = 60
 
 
 @app.middleware("http")
@@ -144,6 +176,31 @@ def _resolve_authenticated_request(request: Request, path: str):
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
         return JSONResponse(status_code=401, content={"detail": "Sign in required."})
+
+    access_path = path in {"/auth/workspace-access", "/auth/workspace/members"} or path.startswith("/auth/workspace/members/")
+    cache_key = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not access_path:
+        cached = _AUTH_RESOLUTION_CACHE.get(cache_key)
+        if cached and cached["expires_at"] > time.time():
+            # Still verify the token cryptographically on every request.
+            try:
+                verify_neon_token(token)
+            except Exception:
+                try:
+                    from app.core.neon_auth import verify_session_token
+
+                    with SessionLocal() as db:
+                        if not verify_session_token(token, db):
+                            return JSONResponse(status_code=401, content={"detail": "Invalid or expired session."})
+                except Exception:
+                    return JSONResponse(status_code=401, content={"detail": "Invalid or expired session."})
+            request.state.auth_claims = cached["claims"]
+            request.state.synora_user_id = cached["user_id"]
+            request.state.workspace_membership_status = cached["status"]
+            request.state.workspace_membership_role = cached["role"]
+            if cached["status"] != "active":
+                return JSONResponse(status_code=403, content={"detail": "Workspace owner approval is pending.", "code": "workspace_membership_pending"})
+            return None
     prefetched_user = None
     try:
         request.state.auth_claims = verify_neon_token(token)
@@ -181,7 +238,6 @@ def _resolve_authenticated_request(request: Request, path: str):
     try:
         from app.models import User, Workspace, WorkspaceMembership
         subject = request.state.auth_claims["sub"]
-        import hashlib
         digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:32]
         user_id = f"usr_neon_{digest}"
         with SessionLocal() as db:

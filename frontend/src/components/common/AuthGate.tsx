@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { clearCachedAuthToken, getAuthClient, isAuthEnabled } from "@/lib/auth";
 import { api } from "@/lib/api";
 
@@ -66,10 +66,16 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }).finally(() => setLoading(false));
   }, []);
 
+  // Ref guard (not just state): a double click or Enter+click in the same
+  // frame must not create two sign-in/sign-up requests.
+  const submitInFlight = useRef(false);
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (submitInFlight.current) return;
     const client = getAuthClient();
     if (!client) return;
+    submitInFlight.current = true;
     setPending(true);
     setMessage("");
     try {
@@ -103,6 +109,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       console.error("Synora authentication flow failed:", error);
       setMessage(error instanceof Error ? error.message : "Authentication failed. Please try again.");
     } finally {
+      submitInFlight.current = false;
       setPending(false);
     }
   }
