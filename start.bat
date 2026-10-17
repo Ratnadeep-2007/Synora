@@ -14,6 +14,7 @@ if /i "%~1"=="test" goto opt_tests
 if /i "%~1"=="tests" goto opt_tests
 if /i "%~1"=="all" goto opt_all
 if /i "%~1"=="both" goto opt_all
+if /i "%~1"=="agent" goto opt_agent
 
 :menu
 cls
@@ -93,11 +94,12 @@ echo    [3] Start Frontend UI Only (:3002)
 echo    [4] Start WhatsApp Baileys Bridge Only
 echo    [5] Run Full Test Suite (pytest)
 echo    [6] Refresh Health and Port Status
+echo    [7] Local Agent Mode (Vexa + Baileys only, app from Render)
 echo    [0] Exit
 echo ==============================================================================
 echo.
 
-choice /t 5 /d 1 /c 1234560 /m "Enter choice (auto-starts [1] in 5 seconds): "
+choice /t 5 /d 1 /c 12345670 /m "Enter choice (auto-starts [1] in 5 seconds): "
 set "SEL=%errorlevel%"
 
 if "%SEL%"=="1" goto opt_all
@@ -106,7 +108,8 @@ if "%SEL%"=="3" goto opt_frontend
 if "%SEL%"=="4" goto opt_baileys
 if "%SEL%"=="5" goto opt_tests
 if "%SEL%"=="6" goto menu
-if "%SEL%"=="7" goto opt_exit
+if "%SEL%"=="7" goto opt_agent
+if "%SEL%"=="8" goto opt_exit
 goto opt_all
 
 :opt_all
@@ -161,6 +164,12 @@ goto menu
 echo.
 echo Launching test suite in this console...
 call "%~dp0test.bat"
+goto menu
+
+:opt_agent
+echo.
+echo Starting Local Agent Mode (Vexa + Baileys on this laptop, app on Render)...
+call "%~dp0start_agent.bat"
 goto menu
 
 :opt_exit
