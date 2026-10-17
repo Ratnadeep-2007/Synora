@@ -21,9 +21,11 @@ free plan and can sleep when idle.
    later accounts remain pending until the owner assigns them in Settings →
    Workspace members. Make sure the intended owner registers first after the
    membership feature is deployed.
-5. Set the Google OAuth and AI provider keys if those features are needed.
-   Google Cloud must allow
-   `https://synora-backend.onrender.com/auth/google/callback` as a redirect URI.
+5. Set the Google OAuth and AI provider keys if those features are needed
+   (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are currently unset on
+   Render, so Google Meet connect is degraded there). Google Cloud must allow
+   `https://synora-oduz.onrender.com/auth/google/callback` as a redirect URI
+   (the live backend slug is `synora-oduz`, not `synora-backend`).
 6. Keep `SYNORA_AUTH_URL` on the frontend and the two `NEON_AUTH_*` values on
    the backend pointed at the same Neon Auth branch. The trusted frontend
    domain is already registered in Neon Auth.

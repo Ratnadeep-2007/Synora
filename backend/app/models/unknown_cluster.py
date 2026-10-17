@@ -61,3 +61,7 @@ class UnknownCluster(Base):
 
     def set_item_ids(self, ids: List[str]) -> None:
         self.item_ids_json = json.dumps(ids)
+
+    @property
+    def item_count(self) -> int:
+        return len(self.get_item_ids())

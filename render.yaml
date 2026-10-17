@@ -7,6 +7,10 @@
 # secrets, LLM/STT keys). Service names determine public URLs:
 #   backend  -> https://synora-backend.onrender.com
 #   frontend -> https://synora-frontend.onrender.com
+# NOTE: the live deployment was created manually, not from this Blueprint.
+# Its backend slug is synora-oduz (https://synora-oduz.onrender.com), so the
+# URL-valued env vars below point there. Do not retarget them to
+# synora-backend.onrender.com — no live service answers at that host.
 
 # Shared secrets live in one env group: Render forbids workers from
 # referencing a web service's generated env vars, so SECRET_KEY and
@@ -52,7 +56,7 @@ services:
       - key: PUBSUB_VERIFICATION_TOKEN
         sync: false
       - key: GOOGLE_REDIRECT_URI
-        value: https://synora-backend.onrender.com/auth/google/callback
+        value: https://synora-oduz.onrender.com/auth/google/callback
       - key: LLM_PROVIDER
         value: groq
       - key: GEMINI_API_KEY
@@ -92,7 +96,7 @@ services:
     # Must match the backend service name below.
     envVars:
       - key: SYNORA_API_URL
-        value: https://synora-backend.onrender.com
+        value: https://synora-oduz.onrender.com
       - key: SYNORA_AUTH_URL
         value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth
       - key: PORT

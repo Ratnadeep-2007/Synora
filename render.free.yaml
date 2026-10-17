@@ -60,7 +60,7 @@ services:
       - key: PUBSUB_VERIFICATION_TOKEN
         sync: false
       - key: GOOGLE_REDIRECT_URI
-        value: https://synora-backend.onrender.com/auth/google/callback
+        value: https://synora-oduz.onrender.com/auth/google/callback
       - key: LLM_PROVIDER
         value: groq
       - key: GEMINI_API_KEY
@@ -100,7 +100,7 @@ services:
     # Must match the backend service name below.
     envVars:
       - key: SYNORA_API_URL
-        value: https://synora-backend.onrender.com
+        value: https://synora-oduz.onrender.com
       - key: SYNORA_AUTH_URL
         value: https://ep-hidden-star-b30n47zs.neonauth.c-4.ap-southeast-1.aws.neon.tech/neondb/auth
       - key: PORT

@@ -15,6 +15,18 @@ async function clientResend(email: string): Promise<string> {
   }
 }
 
+// Neon Auth is always-on and normally answers in seconds. If session
+// restore stalls (network, cold edge), fail into the sign-in form with a
+// message instead of spinning on "Loading session..." forever.
+const SESSION_RESTORE_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
@@ -50,7 +62,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return;
     }
-    client.getSession().then(async ({ data, error }) => {
+    withTimeout(client.getSession(), SESSION_RESTORE_TIMEOUT_MS, "Session restore timed out. Please sign in again.").then(async ({ data, error }) => {
       if (data?.user) await refreshMembership();
       else {
         setSignedIn(false);
@@ -114,7 +126,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (loading) return <main className="min-h-screen grid place-items-center bg-canvas text-text-muted">Loading session...</main>;
+  if (loading) return <main className="min-h-screen grid place-items-center bg-canvas text-text-muted"><div className="text-center space-y-2"><p>Loading session...</p><p className="text-xs">First load after idle can take up to a minute while the backend wakes up.</p></div></main>;
   if (signedIn && membership?.status === "pending") return (
     <main className="min-h-screen grid place-items-center bg-canvas px-4">
       <section className="w-full max-w-md rounded-2xl border border-border bg-surface p-8 shadow-xl">

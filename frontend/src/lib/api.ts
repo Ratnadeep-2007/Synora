@@ -86,6 +86,26 @@ export function getFrontendBaseUrl(): string {
   return "http://localhost:3002";
 }
 
+// Free-tier backends sleep when idle and can take ~60s to answer the first
+// request. Bound every call so a stalled backend surfaces a retryable error
+// instead of leaving the UI on a spinner forever.
+const REQUEST_TIMEOUT_MS = 90_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("The backend did not respond in time. It may be waking up — please retry.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit, responseType: "json" | "blob" = "json"): Promise<T> {
   const url = `${apiBaseUrl()}${path}`;
   const buildHeaders = async (forceFreshToken: boolean): Promise<Record<string, string>> => {
@@ -104,11 +124,11 @@ async function request<T>(path: string, options?: RequestInit, responseType: "js
     }
     return headers;
   };
-  let res = await fetch(url, { ...options, headers: await buildHeaders(false) });
+  let res = await fetchWithTimeout(url, { ...options, headers: await buildHeaders(false) });
   // A cached token can go stale server-side (revoked session, clock skew):
   // drop it, mint one fresh token, and retry exactly once.
   if (res.status === 401 && isAuthEnabled()) {
-    res = await fetch(url, { ...options, headers: await buildHeaders(true) });
+    res = await fetchWithTimeout(url, { ...options, headers: await buildHeaders(true) });
   }
 
   if (!res.ok) {
