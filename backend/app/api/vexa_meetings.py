@@ -62,10 +62,14 @@ async def start_vexa_capture(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Vexa capture is disabled. Set VEXA_ENABLED=true.",
         )
-    if not settings.SARVAM_API_KEY.strip() and not settings.WHISPER_ENABLED:
+    if (
+        not settings.SARVAM_API_KEY.strip()
+        and not settings.WHISPER_ENABLED
+        and not (settings.GROQ_STT_ENABLED and settings.groq_api_keys)
+    ):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No transcription provider is configured. Set SARVAM_API_KEY or enable WHISPER_ENABLED.",
+            detail="No transcription provider is configured. Set SARVAM_API_KEY, configure a Groq key for hosted Whisper, or enable WHISPER_ENABLED.",
         )
 
     try:

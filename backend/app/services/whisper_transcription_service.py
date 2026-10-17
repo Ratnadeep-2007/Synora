@@ -41,6 +41,100 @@ def normalize_whisper_language(value: Optional[str]) -> str:
     return _LANGUAGE_REGION_MAP.get(code, code or "unknown")
 
 
+class GroqWhisperTranscriptionService:
+    """Hosted Whisper fallback via the Groq audio API (same model family as
+    the local fallback, no local RAM/disk). Rotates configured Groq keys.
+    Returns the same (result, job_id) shape as WhisperTranscriptionService.
+    Note: the Groq API rejects uploads above 25 MB; longer recordings fall
+    through to the local model when it is enabled."""
+
+    MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        filename: str = "meeting.audio",
+    ) -> Tuple[Dict[str, Any], str]:
+        if not audio_bytes:
+            raise WhisperFallbackError("Vexa returned an empty audio recording.")
+        if len(audio_bytes) > self.MAX_UPLOAD_BYTES:
+            raise WhisperFallbackError(
+                f"Recording is {len(audio_bytes) / 1e6:.1f} MB, above the Groq "
+                "25 MB upload limit; hosted Whisper fallback unavailable."
+            )
+        keys = settings.groq_api_keys
+        if not keys:
+            raise WhisperFallbackError("No GROQ_API_KEY configured for hosted Whisper fallback.")
+
+        import httpx
+        import mimetypes
+
+        model = settings.GROQ_WHISPER_MODEL or "whisper-large-v3-turbo"
+        prompt = (
+            settings.WHISPER_INITIAL_PROMPT.strip()
+            or settings.SARVAM_KEYTERMS.replace(",", ", ").strip()
+        )
+        mime_type = mimetypes.guess_type(filename)[0] or "audio/mpeg"
+        last_error = "unknown error"
+        for key in keys:
+            try:
+                async with httpx.AsyncClient(timeout=900.0) as client:
+                    resp = await client.post(
+                        f"{settings.GROQ_BASE_URL}/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {key}"},
+                        files={"file": (filename, audio_bytes, mime_type)},
+                        data={
+                            "model": model,
+                            "response_format": "verbose_json",
+                            **({"prompt": prompt} if prompt else {}),
+                        },
+                    )
+                if resp.status_code != 200:
+                    last_error = f"Groq Whisper API returned {resp.status_code}: {resp.text[:300]}"
+                    logger.warning(last_error)
+                    continue
+                payload = resp.json()
+                normalized: List[Dict[str, Any]] = []
+                for index, segment in enumerate(payload.get("segments") or []):
+                    text = str(segment.get("text") or "").strip()
+                    if not text:
+                        continue
+                    normalized.append(
+                        {
+                            "id": f"groq_whisper_seg_{index:06d}",
+                            "text": text,
+                            "speaker": "Unknown Speaker",
+                            "start_seconds": float(segment.get("start") or 0.0),
+                            "end_seconds": float(segment.get("end") or 0.0),
+                        }
+                    )
+                if not normalized and str(payload.get("text") or "").strip():
+                    normalized.append(
+                        {
+                            "id": "groq_whisper_seg_000000",
+                            "text": str(payload["text"]).strip(),
+                            "speaker": "Unknown Speaker",
+                            "start_seconds": 0.0,
+                            "end_seconds": float(payload.get("duration") or 0.0),
+                        }
+                    )
+                if not normalized:
+                    raise WhisperFallbackError("Groq Whisper produced no transcript segments.")
+                result = {
+                    "language_code": normalize_whisper_language(payload.get("language")),
+                    "segments": normalized,
+                    "transcription_provider": "whisper_groq_api",
+                    "model": model,
+                }
+                return result, f"groq:{model}"
+            except WhisperFallbackError:
+                raise
+            except Exception as exc:
+                last_error = str(exc)[:500]
+                logger.warning("Groq Whisper transcription failed: %s", last_error)
+        raise WhisperFallbackError(f"Hosted Whisper fallback failed for {filename}: {last_error}")
+
+
 class WhisperTranscriptionService:
     """Self-hosted faster-whisper fallback for post-meeting audio."""
 

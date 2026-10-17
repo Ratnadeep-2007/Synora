@@ -16,7 +16,11 @@ from app.models.project import Project, SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.models.source_event import SourceEvent
 from app.services.context_resolution_service import ContextResolutionService
 from app.services.pipeline_coordinator import PipelineCoordinator
-from app.services.whisper_transcription_service import WhisperFallbackError, WhisperTranscriptionService
+from app.services.whisper_transcription_service import (
+    GroqWhisperTranscriptionService,
+    WhisperFallbackError,
+    WhisperTranscriptionService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1154,14 +1158,53 @@ class VexaSarvamService:
         else:
             fallback_reason = "SARVAM_API_KEY is not configured."
 
+        # Hosted Whisper (Groq API) before the local model: same Whisper
+        # model family, but no local RAM/disk, so cloud hosts keep a
+        # fallback even with WHISPER_ENABLED=false. The fallback stage is
+        # reported exactly once, before whichever fallback runs first.
+        fallback_reported = False
+
+        def _report_fallback() -> None:
+            nonlocal fallback_reported
+            if on_fallback is not None and not fallback_reported:
+                fallback_reported = True
+                on_fallback(fallback_reason)
+
+        groq_error: Optional[str] = None
+        if settings.GROQ_STT_ENABLED and settings.groq_api_keys:
+            _report_fallback()
+            try:
+                result, job_id = await GroqWhisperTranscriptionService().transcribe(
+                    audio_bytes,
+                    filename,
+                )
+                segments = list(result.get("segments") or [])
+                if not segments:
+                    raise WhisperFallbackError("Groq Whisper returned no usable transcript segments.")
+                return (
+                    segments,
+                    "whisper_groq_api",
+                    settings.GROQ_WHISPER_MODEL,
+                    job_id,
+                    str(result.get("language_code") or "unknown"),
+                    fallback_reason,
+                )
+            except Exception as groq_exc:
+                groq_error = str(groq_exc)[:500]
+                logger.warning(
+                    "groq_whisper_fallback_failed: meeting=%s error=%s",
+                    meeting_id,
+                    groq_error,
+                )
+
         if not settings.WHISPER_ENABLED:
             raise VexaSarvamError(
                 f"Sarvam transcription was unavailable: {fallback_reason}; "
+                f"hosted Whisper fallback failed: {groq_error or 'not configured'}; "
                 "WHISPER_ENABLED is false, so no local fallback is available."
             )
 
-        if on_fallback is not None:
-            on_fallback(fallback_reason)
+        _report_fallback()
 
         try:
             result, job_id = await WhisperTranscriptionService().transcribe(

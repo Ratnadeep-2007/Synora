@@ -3,9 +3,32 @@ from app.services.vexa_sarvam_service import VexaSarvamService, VexaSarvamError
 
 
 @pytest.mark.asyncio
+async def test_groq_whisper_fallback_used_when_local_whisper_disabled(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "WHISPER_ENABLED", False)
+    monkeypatch.setattr(settings, "GROQ_STT_ENABLED", True)
+    service = VexaSarvamService(sarvam_api_key="test")
+    stages = []
+
+    async def fail_sarvam(*args):
+        raise VexaSarvamError("HTTP 402: no credits")
+
+    async def groq_whisper(*args):
+        assert stages == ["HTTP 402: no credits"]
+        return {"segments": [{"id": "s1", "text": "Actual speech"}], "language_code": "en"}, "groq:whisper-large-v3-turbo"
+
+    monkeypatch.setattr(service, "transcribe_with_sarvam", fail_sarvam)
+    monkeypatch.setattr("app.services.vexa_sarvam_service.GroqWhisperTranscriptionService.transcribe", groq_whisper)
+    result = await service._transcribe_with_fallback(b"audio", "meeting.webm", "audio/webm", "mtg_test", on_fallback=stages.append)
+    assert result[1] == "whisper_groq_api"
+    assert result[5] == "HTTP 402: no credits"
+
+
+@pytest.mark.asyncio
 async def test_fallback_stage_is_reported_before_whisper_runs(monkeypatch):
     from app.core.config import settings
     monkeypatch.setattr(settings, "WHISPER_ENABLED", True)
+    monkeypatch.setattr(settings, "GROQ_STT_ENABLED", False)
     service = VexaSarvamService(sarvam_api_key="test")
     stages = []
 

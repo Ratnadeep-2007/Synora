@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     GROQ_API_KEY_3: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_WHISPER_MODEL: str = "whisper-large-v3-turbo"
+    # Hosted Whisper (Groq API) as the meeting-STT fallback between Sarvam
+    # and the self-hosted faster-whisper model. Lets workerless/cloud hosts
+    # keep a Whisper fallback without the RAM/disk for a local model.
+    GROQ_STT_ENABLED: bool = True
     GROQ_MODEL: str = "openai/gpt-oss-120b"
     GROQ_VISION_MODEL: str = "qwen/qwen3.8-27b"
 
