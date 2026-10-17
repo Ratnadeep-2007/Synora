@@ -25,7 +25,10 @@ import http from "http";
 
 const BACKEND_URL = process.env.SYNORA_BACKEND_URL || "http://localhost:8000";
 const WEBHOOK_SECRET = process.env.SYNORA_WHATSAPP_WEBHOOK_SECRET || "";
-const AUTH_DIR = path.join(__dirname, "../baileys_auth_info");
+// Session credentials live here. On hosts with ephemeral filesystems
+// (Render), point BAILEYS_AUTH_DIR at a persistent disk mount so the
+// WhatsApp link survives restarts/deploys without a fresh QR scan.
+const AUTH_DIR = process.env.BAILEYS_AUTH_DIR || path.join(__dirname, "../baileys_auth_info");
 
 async function reportSessionStatus(
   status: "connected" | "disconnected" | "reconnecting",
