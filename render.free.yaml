@@ -67,6 +67,8 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
       # Meet capture stays OFF in the cloud until Vexa runs on a reachable
       # host (VPS). Vexa's 13 containers need a real Docker daemon; Render
       # cannot run them. Keep the local Vexa stack for local dev.
@@ -88,6 +90,10 @@ services:
         value: "5"
       - key: VISUAL_SYNC_INTERVAL_SECONDS
         value: "30"
+      # No worker service on this tier: run the visual-sync/memory-job
+      # loop inside the single API worker so the pipeline matches local.
+      - key: VISUAL_SYNC_IN_PROCESS
+        value: "true"
 
   - type: web
     name: synora-frontend

@@ -99,6 +99,15 @@ async def lifespan(app: FastAPI):
 
     # Visual memory reconciliation runs in the dedicated
     # visual_sync_worker process so API worker count cannot multiply it.
+    # Hosts without a separate worker service (Render free tier) opt in via
+    # VISUAL_SYNC_IN_PROCESS; the deployment runs a single API worker, so
+    # the loop still runs exactly once.
+    visual_sync_task = None
+    if settings.VISUAL_SYNC_IN_PROCESS:
+        from app.services.visual_sync_worker import run as _run_visual_sync
+
+        visual_sync_task = asyncio.create_task(_run_visual_sync())
+        logger.info("Visual sync + memory job loop running in-process.")
 
     yield
 
@@ -120,6 +129,12 @@ async def lifespan(app: FastAPI):
         await worker_task
     except asyncio.CancelledError:
         pass
+    if visual_sync_task is not None:
+        visual_sync_task.cancel()
+        try:
+            await visual_sync_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(

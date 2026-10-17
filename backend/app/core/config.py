@@ -169,6 +169,13 @@ class Settings(BaseSettings):
     # Memory-to-canvas reconciliation: how often the background loop checks
     # whether approved project memory has outrun the visual workspace.
     VISUAL_SYNC_INTERVAL_SECONDS: int = Field(default=30, ge=5, le=3600)
+    # Run the visual-sync/memory-job loop inside the API process instead of
+    # the dedicated visual_sync_worker process. Only safe with a single API
+    # worker (the loop must not be duplicated per worker). Locally the
+    # dedicated worker runs, so this stays off; on Render's free tier there
+    # is no worker service, so the backend enables it to keep the deployed
+    # pipeline identical to local.
+    VISUAL_SYNC_IN_PROCESS: bool = False
     # Meeting canvas reads are cached-only by default. An explicit
     # ?refresh=true regeneration is limited to one attempt per cooldown so
     # polling clients cannot burn LLM quota or append revision spam.
