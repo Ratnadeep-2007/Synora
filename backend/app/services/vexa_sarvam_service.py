@@ -662,6 +662,28 @@ class VexaSarvamService:
             .all()
         )
 
+    @staticmethod
+    def _explicit_project_exclusions(text, projects):
+        normalized = re.sub(r"[^a-z0-9.!?']+", " ", text.lower())
+        names = {project.id: re.sub(r"[^a-z0-9]+", " ", project.name.lower()).strip() for project in projects}
+        first_words = [name.split()[0] for name in names.values() if name]
+        excluded = set()
+        for project_id, name in names.items():
+            if not name:
+                continue
+            aliases = [name]
+            first = name.split()[0]
+            if first_words.count(first) == 1 and len(first) >= 4 and first not in {"project", "inventory", "demo", "test"}:
+                aliases.append(first)
+            for alias in aliases:
+                label = re.escape(alias)
+                if re.search(r"\bnot\s+(?:(?:about|for|part of|a|an)\s+)?" + label + r"\b", normalized) or re.search(
+                    r"\b(?:do not|don't|never)\s+(?:file|write|assign|route|put|save|record|include)\b[^.!?]{0,100}\b(?:in|into|to|under)\s+(?:the\s+)?" + label + r"\b", normalized
+                ):
+                    excluded.add(project_id)
+                    break
+        return excluded
+
     def _resolve_project(
         self,
         text: str,
@@ -670,10 +692,11 @@ class VexaSarvamService:
         db: Session,
         projects: List[Project],
     ) -> str:
+        excluded = self._explicit_project_exclusions(text, projects)
         projects = [
             project
             for project in projects
-            if project.id != SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+            if project.id != SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID and project.id not in excluded
         ]
         if not projects:
             return SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID

@@ -80,6 +80,27 @@ def reanalyze_saved_meeting(meeting_id, db, actor_id="meeting_reanalysis"):
     projects = db.query(Project).filter(Project.workspace_id == meeting.workspace_id, Project.is_system.is_(False)).all()
     service = VexaSarvamService()
     routed = 0
+    for evidence in evidence_rows:
+        excluded = service._explicit_project_exclusions(english.get(evidence.transcript_entry_id) or "", projects)
+        if evidence.project_id not in excluded:
+            continue
+        automatic_item = db.query(UnknownContextItem).filter(
+            UnknownContextItem.evidence_id == evidence.id,
+            UnknownContextItem.status == "assigned",
+            UnknownContextItem.assigned_by == "synora_reanalysis",
+        ).first()
+        if automatic_item:
+            # Correct this service's own derived assignment; human-reviewed
+            # routing remains untouched.
+            evidence.project_id = SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+            event = db.get(SourceEvent, evidence.source_event_id)
+            if event:
+                event.project_id = SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+            automatic_item.status = "pending"
+            automatic_item.assigned_project_id = None
+            automatic_item.assigned_by = None
+            automatic_item.assigned_at = None
+    db.commit()
     routing_segments = [{**segment, "text": english.get(segment["id"]) or ""} for segment in segments]
     groups = []
     anchors = [re.sub(r"[^a-z0-9]+", " ", project.name.lower()).strip() for project in projects]

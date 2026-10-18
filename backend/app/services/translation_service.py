@@ -325,7 +325,8 @@ def translate_segments(
     # Translate the complete ordered batch in that case; the model retains
     # existing English and translates Roman speech using neighboring context.
     effective_language = source_language
-    if first_pending and str(source_language or "").lower() in {"", "unknown", "en", "en-in"}:
+    source_base = str(source_language or "").lower().replace("_", "-").split("-")[0]
+    if first_pending and source_base in {"", "unknown", "en"}:
         effective_language = source
     translated, status = translate_texts(
         texts,

@@ -58,5 +58,5 @@ def test_project_resolution_preserves_actual_transcription_provider(monkeypatch)
 
     monkeypatch.setattr("app.services.vexa_sarvam_service.ContextResolutionService", Resolver)
     meeting = SimpleNamespace(id="mtg_test", provider_conference_id="abc-defg-hij", title="Test", workspace_id="ws_default", metadata_json=json.dumps({"vexa_capture":{"transcription_provider":"whisper_faster_whisper"}}))
-    VexaSarvamService()._resolve_project("Actual speech", "Unknown Speaker", meeting, None, [SimpleNamespace(id="proj_test")])
+    VexaSarvamService()._resolve_project("Actual speech", "Unknown Speaker", meeting, None, [SimpleNamespace(id="proj_test", name="Test project")])
     assert captured["meeting_metadata"]["transcription_provider"] == "whisper_faster_whisper"

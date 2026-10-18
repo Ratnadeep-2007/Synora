@@ -86,6 +86,17 @@ def test_mixed_meeting_translates_roman_speech_alongside_native_script(monkeypat
     ], "unknown")
     assert calls[0]["source_language"] == "hi-IN"
     assert mapping["roman"] == "Notify the manager immediately."
+    translation.translate_segments([{"id": "native", "text": HINDI}], "en-US")
+    assert calls[-1]["source_language"] == "hi-IN"
+
+
+def test_explicit_project_exclusion_is_not_a_name_match():
+    from app.services.vexa_sarvam_service import VexaSarvamService
+    projects = [SimpleNamespace(id="birch", name="Birch_inventory")]
+    exclude = VexaSarvamService._explicit_project_exclusions
+    assert exclude("This is not a Birch issue.", projects) == {"birch"}
+    assert exclude("Do not write these notes in Birch. Cedar has an unapproved budget.", projects) == {"birch"}
+    assert exclude("Nobody can approve their own correction in Birch.", projects) == set()
 
 
 def test_reanalysis_reuses_sources_and_updates_only_derived_metadata(monkeypatch, db_session, test_user):
