@@ -2,7 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('C:/Users/ratna/AppData/Local/hermes/hermes-agent/venv/Lib/site-packages/playwright/driver/package');
 const root = path.resolve(__dirname, '..');
-const dir = path.join(root, 'artifacts/render_meeting_retest_20261018');
+const dir = path.join(root, 'artifacts/meeting_notes_workflow_20261018');
+fs.mkdirSync(dir, { recursive: true });
 const env = name => Object.fromEntries(fs.readFileSync(path.join(root, name), 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter(line => /^[A-Z_]+=/.test(line)).map(line => { const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1).replace(/^['"]|['"]$/g, '')]; }));
 const credentials = env('.env.sample-admin');
 const report = { checked_at: new Date().toISOString(), errors: [], requests: [] };
@@ -44,8 +45,20 @@ async function main() {
       await page.waitForTimeout(500);
       await page.screenshot({ path: path.join(dir, 'render_meeting_canvas_detail.png'), fullPage: true });
     }
-    await page.getByRole('button', { name: 'Meeting Intelligence', exact: true }).click();
-    await page.screenshot({ path: path.join(dir, 'render_meeting_intelligence.png'), fullPage: true });
+    report.transcript_turns = await page.locator('#meeting-transcript article').count();
+    report.bullet_notes = await page.locator('#meeting-bullet-notes li').count();
+    report.source_buttons = await page.getByRole('button', { name: /^Show transcript source for:/ }).count();
+    if (report.source_buttons) {
+      await page.getByRole('button', { name: /^Show transcript source for:/ }).first().click();
+      report.source_highlights = await page.getByText('Source for selected note', { exact: true }).count();
+    }
+    if (!report.transcript_turns || !report.bullet_notes || !report.source_highlights) throw Error('Transcript, notes or source navigation is missing');
+    report.old_surface_switches = await page.getByRole('button', { name: /^(Meeting Canvas|Meeting Intelligence)$/ }).count();
+    await page.screenshot({ path: path.join(dir, 'meeting_workflow.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(500);
+    report.mobile_overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    await page.screenshot({ path: path.join(dir, 'meeting_workflow_mobile.png'), fullPage: true });
     fs.writeFileSync(path.join(dir, 'render_meeting_visible_text.txt'), await page.locator('body').innerText());
   } finally { await browser.close(); }
 }
