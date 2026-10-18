@@ -73,6 +73,7 @@ def _set_capture_metadata(meeting: Meeting, updates: Dict[str, Any]) -> None:
     metadata = _json_loads(meeting.metadata_json)
     capture = metadata.setdefault("vexa_capture", {})
     capture.update(updates)
+    capture["updated_at"] = datetime.now(timezone.utc).isoformat()
     meeting.metadata_json = _json_dump(metadata)
 
 
@@ -1287,6 +1288,8 @@ class VexaSarvamService:
                 meeting,
                 {
                     "status": "recording_ready",
+                    "bot_status": "completed",
+                    "bot_status_updated_at": datetime.now(timezone.utc).isoformat(),
                     "recording_id": recording.get("recording_id") or recording.get("id"),
                     "error": None,
                 },
@@ -1331,8 +1334,8 @@ class VexaSarvamService:
             def mark_whisper_fallback(reason: str) -> None:
                 _set_capture_metadata(meeting, {
                     "status": "transcribing_whisper",
-                    "transcription_provider": "whisper_faster_whisper",
-                    "transcription_model": settings.WHISPER_MODEL,
+                    "transcription_provider": "whisper_groq_api" if settings.GROQ_STT_ENABLED and settings.groq_api_keys else "whisper_faster_whisper",
+                    "transcription_model": settings.GROQ_WHISPER_MODEL if settings.GROQ_STT_ENABLED and settings.groq_api_keys else settings.WHISPER_MODEL,
                     "transcription_fallback_used": True,
                     "transcription_fallback_reason": reason,
                 })
@@ -1376,17 +1379,26 @@ class VexaSarvamService:
             )
             db.commit()
 
-            return self._persist_transcript(
-                meeting,
-                segments,
-                transcription_provider,
-                transcription_model,
-                transcription_job_id,
-                transcription_language_code,
-                recording_id,
-                db,
-                fallback_reason=fallback_reason,
-            )
+            # Translation, routing, memory and canvas calls are synchronous.
+            # Keep them off the single API event loop so health/status routes
+            # remain responsive throughout processing. The worker owns its
+            # Session and reloads the meeting; no ORM object crosses threads.
+            def persist_in_worker():
+                from app.core.database import SessionLocal
+
+                with SessionLocal() as worker_db:
+                    worker_meeting = worker_db.query(Meeting).filter(Meeting.id == meeting_id).first()
+                    if worker_meeting is None:
+                        raise VexaSarvamError("Meeting no longer exists.")
+                    return self._persist_transcript(
+                        worker_meeting, segments, transcription_provider,
+                        transcription_model, transcription_job_id,
+                        transcription_language_code, recording_id, worker_db,
+                        fallback_reason=fallback_reason,
+                    )
+
+            db.close()
+            return await asyncio.to_thread(persist_in_worker)
         except Exception as exc:
             # Do not accidentally commit partial transcript/evidence rows from a failed
             # transaction. The meeting capture state is recorded separately below.

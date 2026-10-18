@@ -582,74 +582,105 @@ function HomeWorkspace() {
     }
   };
 
-  const [vexaCaptureMeetingId, setVexaCaptureMeetingId] = useState<string | null>(null);
   const [vexaCaptureStatus, setVexaCaptureStatus] = useState<any>(null);
+  const [activeCaptures, setActiveCaptures] = useState<any[]>([]);
+  const [capturePollInfo, setCapturePollInfo] = useState<{ lastCheckedAt: string | null; error: string | null }>({ lastCheckedAt: null, error: null });
+  const captureMeetingIdRef = useRef<string | null>(null);
+  const capturePollGeneration = useRef(0);
+  const capturePollingMounted = useRef(false);
+  const capturePollInFlight = useRef<Promise<boolean> | null>(null);
 
-  const pollVexaCapture = useCallback(async () => {
-    if (!vexaCaptureMeetingId) return;
-    try {
-      setVexaCaptureStatus(await api.getVexaCaptureStatus(vexaCaptureMeetingId));
-    } catch {
-      // Non-blocking status polling.
-    }
-  }, [vexaCaptureMeetingId]);
+  // One server snapshot drives the console and list. Requests never overlap,
+  // and a response begun before a start/stop action cannot restore old state.
+  const pollCaptureState = useCallback((): Promise<boolean> => {
+    if (capturePollInFlight.current) return capturePollInFlight.current;
+    const requestedId = captureMeetingIdRef.current;
+    const generation = capturePollGeneration.current;
+    const pending = (async () => {
+      try {
+        const result = await api.getActiveVexaCaptures(requestedId);
+        if (!capturePollingMounted.current || generation !== capturePollGeneration.current || requestedId !== captureMeetingIdRef.current) return true;
+        setActiveCaptures(result.active || []);
+        const selected = result.selected || null;
+        if (selected) {
+          captureMeetingIdRef.current = selected.meeting_id;
+          setVexaCaptureStatus(selected);
+        } else if (requestedId) {
+          captureMeetingIdRef.current = null;
+          setVexaCaptureStatus(null);
+        }
+        setCapturePollInfo({ lastCheckedAt: result.checked_at || new Date().toISOString(), error: null });
+        return true;
+      } catch {
+        if (capturePollingMounted.current) setCapturePollInfo(current => ({ ...current, error: "Live updates are temporarily unavailable. Showing the last confirmed status and reconnecting automatically." }));
+        return false;
+      } finally {
+        capturePollInFlight.current = null;
+      }
+    })();
+    capturePollInFlight.current = pending;
+    return pending;
+  }, []);
 
   useEffect(() => {
-    if (!vexaCaptureMeetingId) return;
-    pollVexaCapture();
-    const id = setInterval(pollVexaCapture, 4000);
-    return () => clearInterval(id);
-  }, [pollVexaCapture, vexaCaptureMeetingId]);
+    capturePollingMounted.current = true;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
+    const tick = async () => {
+      const ok = await pollCaptureState();
+      if (cancelled) return;
+      failures = ok ? 0 : Math.min(failures + 1, 3);
+      timer = setTimeout(tick, ok ? 4000 : Math.min(30000, 4000 * 2 ** failures));
+    };
+    void tick();
+    const reconnect = () => { if (!cancelled && !capturePollInFlight.current) { clearTimeout(timer); void tick(); } };
+    window.addEventListener("online", reconnect);
+    return () => {
+      cancelled = true;
+      capturePollingMounted.current = false;
+      clearTimeout(timer);
+      window.removeEventListener("online", reconnect);
+    };
+  }, [pollCaptureState]);
 
-  // Single-flight: a double click (or Enter + click) must never send a
-  // second start/stop request. State-based disabling alone races, because
-  // both clicks can fire before React re-renders the disabled button.
   const captureRequestInFlight = useRef<Set<string>>(new Set());
-
   const handleStartVexaCapture = async (meetingUrl: string) => {
     if (captureRequestInFlight.current.has("start")) return;
     captureRequestInFlight.current.add("start");
     try {
       const result = await api.startVexaCapture(meetingUrl);
-      setVexaCaptureMeetingId(result.meeting_id);
+      capturePollGeneration.current += 1;
+      captureMeetingIdRef.current = result.meeting_id;
       setVexaCaptureStatus(result);
+      setActiveCaptures(current => current.some(capture => capture.meeting_id === result.meeting_id)
+        ? current.map(capture => capture.meeting_id === result.meeting_id ? { ...capture, ...result } : capture)
+        : [result, ...current]);
+      await pollCaptureState();
     } finally {
       captureRequestInFlight.current.delete("start");
     }
   };
 
   const handleStopVexaCapture = async (meetingId?: string) => {
-    const target = meetingId || vexaCaptureMeetingId;
+    const target = meetingId || captureMeetingIdRef.current;
     if (!target) return;
     const key = `stop:${target}`;
     if (captureRequestInFlight.current.has(key)) return;
     captureRequestInFlight.current.add(key);
     try {
       const result = await api.stopVexaCapture(target);
+      capturePollGeneration.current += 1;
+      captureMeetingIdRef.current = target;
       setVexaCaptureStatus(result);
-      await pollVexaCapture();
-      await pollActiveCaptures();
+      setActiveCaptures(current => ["completed", "stopped", "failed"].includes(result.status)
+        ? current.filter(capture => capture.meeting_id !== target)
+        : current.map(capture => capture.meeting_id === target ? { ...capture, ...result } : capture));
+      await pollCaptureState();
     } finally {
       captureRequestInFlight.current.delete(key);
     }
   };
-
-  const [activeCaptures, setActiveCaptures] = useState<any[]>([]);
-
-  const pollActiveCaptures = useCallback(async () => {
-    try {
-      const res = await api.getActiveVexaCaptures();
-      setActiveCaptures(res.active || []);
-    } catch {
-      // Non-blocking; an empty list simply hides the section.
-    }
-  }, []);
-
-  useEffect(() => {
-    pollActiveCaptures();
-    const id = setInterval(pollActiveCaptures, 5000);
-    return () => clearInterval(id);
-  }, [pollActiveCaptures]);
 
   const handleSyncLivingWorkspace = async () => {
     const projectId = requireProject();
@@ -918,6 +949,7 @@ function HomeWorkspace() {
             onSelectMeeting={(mId) => setSelectedMeetingId(mId)}
             vexaCaptureStatus={vexaCaptureStatus}
             activeCaptures={activeCaptures}
+            capturePollInfo={capturePollInfo}
             onStartVexaCapture={handleStartVexaCapture}
             onStopVexaCapture={handleStopVexaCapture}
             onDeleteMeeting={handleDeleteMeeting}

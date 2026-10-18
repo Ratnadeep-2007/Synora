@@ -173,6 +173,7 @@ async def start_vexa_capture(
 def list_active_captures(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    meeting_id: str | None = None,
 ):
     import json as _json
 
@@ -197,9 +198,7 @@ def list_active_captures(
             continue
         active.append(
             {
-                "meeting_id": meeting.id,
-                "meeting_code": capture.get("meeting_code")
-                or meeting.provider_conference_id,
+                **_capture_status_payload(meeting),
                 "title": meeting.title,
                 "status": capture.get("status"),
                 "bot_status": capture.get("bot_status"),
@@ -207,7 +206,34 @@ def list_active_captures(
                 "capture_started_at": capture.get("capture_started_at"),
             }
         )
-    return {"ok": True, "active": active}
+    selected = next((meeting for meeting in meetings if meeting.id == meeting_id), None) if meeting_id else None
+    if meeting_id and selected is None:
+        selected = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == current_user.id).first()
+    return {
+        "ok": True, "active": active,
+        "selected": _capture_status_payload(selected) if selected is not None else (active[0] if not meeting_id and active else None),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _capture_status_payload(meeting: Meeting) -> dict:
+    capture = get_capture_metadata(meeting)
+    return {
+        **{key: capture.get(key) for key in (
+            "updated_at", "recording_id", "transcription_provider", "transcription_model",
+            "transcription_job_id", "transcription_fallback_used", "transcription_fallback_reason",
+            "sarvam_job_id", "whisper_job_id", "translation_status", "translation_pending_count",
+            "notes_language", "bot_status", "bot_status_updated_at", "bot_container_id",
+            "capture_started_at", "error",
+        )},
+        "ok": True,
+        "meeting_id": meeting.id,
+        "meeting_code": capture.get("meeting_code") or meeting.provider_conference_id,
+        "status": capture.get("status", "idle"),
+        "processed": bool(capture.get("processed")),
+        "entries_count": capture.get("entries_count", 0),
+        "resolved_projects": capture.get("resolved_projects", []),
+    }
 
 
 @router.get("/meetings/{meeting_id}")
@@ -230,6 +256,7 @@ def get_vexa_capture_status(
         "meeting_id": meeting.id,
         "meeting_code": capture.get("meeting_code") or meeting.provider_conference_id,
         "status": capture.get("status", "idle"),
+        "updated_at": capture.get("updated_at"),
         "processed": bool(capture.get("processed")),
         "entries_count": capture.get("entries_count", 0),
         "resolved_projects": capture.get("resolved_projects", []),

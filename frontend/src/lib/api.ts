@@ -91,9 +91,9 @@ export function getFrontendBaseUrl(): string {
 // instead of leaving the UI on a spinner forever.
 const REQUEST_TIMEOUT_MS = 90_000;
 
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
@@ -106,7 +106,7 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
   }
 }
 
-async function request<T>(path: string, options?: RequestInit, responseType: "json" | "blob" = "json"): Promise<T> {
+async function request<T>(path: string, options?: RequestInit, responseType: "json" | "blob" = "json", timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const url = `${apiBaseUrl()}${path}`;
   const buildHeaders = async (forceFreshToken: boolean): Promise<Record<string, string>> => {
     const headers: Record<string, string> = {
@@ -124,11 +124,11 @@ async function request<T>(path: string, options?: RequestInit, responseType: "js
     }
     return headers;
   };
-  let res = await fetchWithTimeout(url, { ...options, headers: await buildHeaders(false) });
+  let res = await fetchWithTimeout(url, { ...options, headers: await buildHeaders(false) }, timeoutMs);
   // A cached token can go stale server-side (revoked session, clock skew):
   // drop it, mint one fresh token, and retry exactly once.
   if (res.status === 401 && isAuthEnabled()) {
-    res = await fetchWithTimeout(url, { ...options, headers: await buildHeaders(true) });
+    res = await fetchWithTimeout(url, { ...options, headers: await buildHeaders(true) }, timeoutMs);
   }
 
   if (!res.ok) {
@@ -283,8 +283,8 @@ export const api = {
 
   // Captures still running for this user. The Stop buttons are driven by
   // this server state so a page reload can never hide a live bot.
-  getActiveVexaCaptures: (): Promise<{ ok: boolean; active: any[] }> =>
-    request<{ ok: boolean; active: any[] }>("/vexa/meetings/active"),
+  getActiveVexaCaptures: (meetingId?: string | null): Promise<{ ok: boolean; active: any[]; selected?: any; checked_at?: string }> =>
+    request(`/vexa/meetings/active${meetingId ? `?meeting_id=${encodeURIComponent(meetingId)}` : ""}`, undefined, "json", 20_000),
 
   processVexaCapture: (meetingId: string): Promise<any> =>
     request<any>(`/vexa/meetings/${meetingId}/process`, { method: "POST" }),

@@ -51,6 +51,7 @@ interface MeetingsViewProps {
   };
   onSelectMeeting: (meetingId: string) => void;
   vexaCaptureStatus?: VexaCaptureStatus | null;
+  capturePollInfo?: { lastCheckedAt: string | null; error: string | null };
   // Server-driven list of captures still running. Rendered with their own
   // Stop buttons so a reload can never strand a live bot without a control.
   activeCaptures?: Array<{
@@ -88,6 +89,7 @@ export function MeetingsView({
   autoSyncStatus,
   onSelectMeeting,
   vexaCaptureStatus,
+  capturePollInfo,
   activeCaptures = [],
   onStartVexaCapture,
   onStopVexaCapture,
@@ -156,6 +158,8 @@ export function MeetingsView({
   };
 
   const captureStatus = vexaCaptureStatus?.status || "idle";
+  const canStopCapture = ["starting", "joining", "waiting_for_recording", "stopping"].includes(captureStatus);
+  useEffect(() => { setError(null); }, [vexaCaptureStatus?.meeting_id, captureStatus]);
   const isRunning = [
     "starting",
     "joining",
@@ -280,11 +284,17 @@ export function MeetingsView({
             </div>
           </div>
 
-          {error && (
+          {(error || vexaCaptureStatus?.error) && (
             <div className="p-3 rounded-xl bg-danger/10 border border-danger/25 text-danger text-xs">
-              {error}
+              {error === "Failed to fetch" ? "The server connection was interrupted. The status will update when Synora reconnects." : error || vexaCaptureStatus?.error}
             </div>
           )}
+
+          <p role="status" className={`text-xs ${capturePollInfo?.error ? "text-warning" : "text-text-muted"}`}>
+            {capturePollInfo?.error || (capturePollInfo?.lastCheckedAt ? `Live status · checked ${new Date(capturePollInfo.lastCheckedAt).toLocaleTimeString()}` : "Connecting to live status...")}
+            {capturePollInfo?.error && capturePollInfo.lastCheckedAt ? ` Last confirmed at ${new Date(capturePollInfo.lastCheckedAt).toLocaleTimeString()}.` : ""}
+          </p>
+          {vexaCaptureStatus?.transcription_fallback_used && <p className="text-xs text-text-muted">{/402|no credits|insufficient_quota/i.test(vexaCaptureStatus.transcription_fallback_reason || "") ? "Sarvam has no available credits. Whisper fallback was selected." : "The primary transcription service was unavailable. Whisper fallback was selected."}</p>}
 
           {!!vexaCaptureStatus?.translation_pending_count && (
             <p role="status" className="rounded-xl border border-border bg-canvas p-3 text-xs text-text-muted">
@@ -328,7 +338,7 @@ export function MeetingsView({
               >
                 {busy ? "Starting..." : "Start capture"}
               </button>
-            ) : (
+            ) : canStopCapture ? (
               <button
                 onClick={() => stopCapture()}
                 disabled={stoppingIds.has(vexaCaptureStatus?.meeting_id || "current")}
@@ -336,7 +346,7 @@ export function MeetingsView({
               >
                 {stoppingIds.has(vexaCaptureStatus?.meeting_id || "current") ? "Stopping..." : "Stop capture"}
               </button>
-            )}
+            ) : <span className="inline-flex items-center px-3 text-xs text-text-muted">Processing the recording...</span>}
           </div>
         </section>
       )}
@@ -378,13 +388,13 @@ export function MeetingsView({
                   >
                     Open
                   </button>
-                  <button
+                  {["starting", "joining", "waiting_for_recording", "stopping"].includes(cap.status || "") && <button
                     onClick={() => stopCapture(cap.meeting_id)}
                     disabled={stoppingIds.has(cap.meeting_id)}
                     className="px-3 py-2 rounded-xl bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 text-xs font-semibold transition-all disabled:opacity-50"
                   >
                     {stoppingIds.has(cap.meeting_id) ? "Stopping..." : "Stop bot"}
-                  </button>
+                  </button>}
                 </div>
               </div>
             ))}
