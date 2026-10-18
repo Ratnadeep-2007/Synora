@@ -47,8 +47,31 @@ def save(name, value):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["model", "deploy", "start", "status", "snapshot"])
+    parser.add_argument("action", choices=["model", "deploy", "start", "status", "snapshot", "audit-before", "audit-after"])
     args = parser.parse_args()
+    if args.action.startswith("audit-"):
+        from sqlalchemy import create_engine, text
+        response = requests.get(f"https://api.render.com/v1/services/{SERVICE}/env-vars?limit=100", headers=render_headers(), timeout=45)
+        response.raise_for_status()
+        config = {item["envVar"]["key"]: item["envVar"]["value"] for item in response.json()}
+        url = config["DATABASE_URL"].replace("postgres://", "postgresql+psycopg://", 1).replace("postgresql://", "postgresql+psycopg://", 1)
+        engine = create_engine(url)
+        with engine.connect() as conn:
+            conn.execute(text("SET TRANSACTION READ ONLY"))
+            queries = {
+                "entries": "SELECT e.id, e.text, e.language_code, e.metadata_json FROM transcript_entries e JOIN transcripts t ON e.transcript_id=t.id WHERE t.meeting_id=:meeting ORDER BY e.id",
+                "evidence": "SELECT id, content, project_id, transcript_entry_id, metadata_json FROM evidence WHERE meeting_id=:meeting ORDER BY id",
+                "candidates": "SELECT id, project_id, category, classification, title, content, evidence_ids_json, status FROM candidate_knowledge WHERE meeting_id=:meeting ORDER BY created_at",
+                "unknown": "SELECT u.id, u.evidence_id, u.status, u.assigned_project_id FROM unknown_context_items u JOIN evidence e ON e.id=u.evidence_id WHERE e.meeting_id=:meeting",
+                "states": "SELECT project_id, current_version, requirements_json, architecture_json, decisions_json, constraints_json, assumptions_json, open_questions_json FROM project_states WHERE project_id='proj_e42a80c4'",
+                "projects": "SELECT id,name FROM projects",
+            }
+            result = {name: [dict(row) for row in conn.execute(text(sql), {"meeting": MEETING}).mappings()] for name, sql in queries.items()}
+            result["source_hashes"] = {name: hashlib.sha256(json.dumps([(row["id"], row[field]) for row in result[name]], ensure_ascii=False).encode()).hexdigest() for name, field in (("entries", "text"), ("evidence", "content"))}
+            save(args.action + ".json", result)
+            print(json.dumps({"audit": args.action, "counts": {key: len(value) for key, value in result.items() if isinstance(value, list)}, "hashes": result["source_hashes"]}))
+        engine.dispose()
+        return
     if args.action in {"model", "deploy"}:
         headers = render_headers()
         if args.action == "model":

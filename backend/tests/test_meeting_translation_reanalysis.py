@@ -64,6 +64,30 @@ def test_marathi_hint_and_english_skip(monkeypatch):
     assert translation.translate_texts(["The stock remains unchanged."]) == (["The stock remains unchanged."], "skipped")
 
 
+def test_unidentified_blank_fragment_does_not_discard_valid_translations(monkeypatch):
+    configure(monkeypatch)
+    monkeypatch.setattr(settings, "SARVAM_TRANSLATE_ENABLED", False)
+    monkeypatch.setattr("app.services.llm.GroqLLMClient.generate_structured", lambda self, prompt, schema: schema.model_validate({"translations": ["", {"id": 0, "text": "Approval is required."}]}))
+    details = {}
+    result, status = translation.translate_texts([HINDI], details=details)
+    assert result == ["Approval is required."]
+    assert status == "translated"
+
+
+def test_mixed_meeting_translates_roman_speech_alongside_native_script(monkeypatch):
+    calls = []
+    def translate(texts, **kwargs):
+        calls.append(kwargs)
+        return ["Approval is required.", "Notify the manager immediately."], "translated"
+    monkeypatch.setattr(translation, "translate_texts", translate)
+    mapping, status, source = translation.translate_segments([
+        {"id": "native", "text": HINDI},
+        {"id": "roman", "text": "manager ko turanth alert milna chaiye"},
+    ], "unknown")
+    assert calls[0]["source_language"] == "hi-IN"
+    assert mapping["roman"] == "Notify the manager immediately."
+
+
 def test_reanalysis_reuses_sources_and_updates_only_derived_metadata(monkeypatch, db_session, test_user):
     from app.models.context_resolution import UnknownContextItem
     from app.models.evidence import Evidence
