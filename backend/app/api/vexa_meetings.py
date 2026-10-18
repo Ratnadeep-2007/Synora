@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.models.meeting import Meeting
 from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.models.user import User
+from app.services.meeting_readiness_service import get_meeting_readiness
 from app.services.vexa_sarvam_service import (
     VexaSarvamError,
     VexaSarvamService,
@@ -40,6 +41,11 @@ ACTIVE_CAPTURE_STATUSES = frozenset({
 
 class VexaMeetingStartRequest(BaseModel):
     meeting_url: str = Field(..., min_length=1)
+
+
+@router.get("/readiness")
+async def meeting_capture_readiness(current_user: User = Depends(get_current_user)):
+    return await get_meeting_readiness()
 
 
 def _queue_capture_processing(background_tasks: BackgroundTasks, db: Session, meeting_id: str) -> None:
@@ -235,6 +241,9 @@ def get_vexa_capture_status(
         "transcription_fallback_reason": capture.get("transcription_fallback_reason"),
         "sarvam_job_id": capture.get("sarvam_job_id"),
         "whisper_job_id": capture.get("whisper_job_id"),
+        "translation_status": capture.get("translation_status"),
+        "translation_pending_count": capture.get("translation_pending_count", 0),
+        "notes_language": capture.get("notes_language"),
         "bot_status": capture.get("bot_status"),
         "bot_status_updated_at": capture.get("bot_status_updated_at"),
         "bot_container_id": capture.get("bot_container_id"),

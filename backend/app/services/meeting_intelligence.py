@@ -10,6 +10,7 @@ from app.models.evidence import Evidence
 from app.models.intelligence import AgentRun, CandidateKnowledge
 from app.schemas.intelligence import CandidateItemDTO, ExtractionBatchResult
 from app.services.llm import DeterministicRuleLLMClient, LLMClient, get_default_llm_client
+from app.services.translation_service import english_note_text, needs_translation
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,12 @@ class MeetingIntelligenceService:
 
     def _build_evidence_prompt(self, evidence_list: List[Evidence], task_instruction: str) -> str:
         """Formats evidence snippets into a structured prompt with explicit evidence IDs."""
-        lines = [task_instruction, "\n--- EVIDENCE LIST ---"]
+        lines = [task_instruction, "Write every title, statement, action item, question and explanation in English only. Translate Hindi/Marathi meaning into English; preserve project names, numbers and uncertainty. Never invent a translation.", "\n--- EVIDENCE LIST ---"]
         for ev in evidence_list:
             speaker = ev.actor_id or "Unknown"
-            lines.append(f"[EVIDENCE: {ev.id}] {speaker}: {ev.content}")
+            text = english_note_text(ev.content, ev.metadata_json)
+            if text:
+                lines.append(f"[EVIDENCE: {ev.id}] {speaker}: {text}")
         return "\n".join(lines)
 
     # Canonical category vocabulary. The extractor prompt historically asked
@@ -142,6 +145,7 @@ decision_candidate | requirement_candidate | constraint | action_item | question
             .all()
         )
 
+        evidence_records = [ev for ev in evidence_records if english_note_text(ev.content, ev.metadata_json)]
         if not evidence_records:
             logger.warning(f"No evidence found for meeting '{meeting_id}'. Intelligence extraction skipped.")
             return []
@@ -175,6 +179,9 @@ decision_candidate | requirement_candidate | constraint | action_item | question
         persisted_candidates: List[CandidateKnowledge] = []
 
         for item in batch_result.items:
+            if needs_translation(item.title) or needs_translation(item.content):
+                logger.warning("Rejected non-English candidate output for meeting %s", meeting_id)
+                continue
             # Normalize onto the canonical vocabulary before anything else,
             # so dedup and persistence agree on the stored form.
             item.category = self.normalize_category(item.category)
@@ -243,6 +250,7 @@ decision_candidate | requirement_candidate | constraint | action_item | question
         Provider-agnostic intelligence extraction directly on Evidence records.
         Processes evidence from Google Meet, Slack, or any source identically.
         """
+        evidence_records = [ev for ev in evidence_records if english_note_text(ev.content, ev.metadata_json)]
         if not evidence_records:
             logger.warning(f"No evidence provided for project '{project_id}'. Intelligence extraction skipped.")
             return []
@@ -274,6 +282,9 @@ decision_candidate | requirement_candidate | constraint | action_item | question
 
         persisted_candidates: List[CandidateKnowledge] = []
         for item in batch_result.items:
+            if needs_translation(item.title) or needs_translation(item.content):
+                logger.warning("Rejected non-English candidate output for project %s", project_id)
+                continue
             # Same canonicalization as analyze_meeting_evidence: the stored
             # category is what the coordinator and memory service match on.
             item.category = self.normalize_category(item.category)

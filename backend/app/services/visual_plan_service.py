@@ -271,6 +271,7 @@ class VisualPlanService:
             "Your output is the living visual workspace for ONE project or ONE scoped conversation.",
             "",
             "CONTENT AND REPRESENTATION ARE OPEN-ENDED.",
+            "OUTPUT LANGUAGE: English only for all headings, notes, labels, tables, questions and actions. Translate Hindi and Marathi meaning into English. Preserve numbers, negation and uncertainty; do not transliterate sentences or invent missing translations. Translation-pending markers are processing status, never project facts.",
             "There is NO required note-taking structure, no mandatory sections, no fixed note categories, no fixed diagram type, and no minimum number of diagrams.",
             "Choose the representation that best communicates the information: prose, headings, bullets, tables, callouts, sketches, timelines, flows, hierarchies, matrices, or a custom composition.",
             "Do not force unrelated information into categories merely because a schema offers them.",

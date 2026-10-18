@@ -153,6 +153,13 @@ async function request<T>(path: string, options?: RequestInit, responseType: "js
   return responseType === "blob" ? await res.blob() as T : res.json();
 }
 
+export interface MeetingReadiness {
+  checked_at: string;
+  can_start: boolean;
+  capture: { status: string; message: string };
+  transcription: { status: string; providers: string[]; message: string };
+}
+
 export interface InputOutcome {
   outcome: "resolved" | "unknown_context" | "duplicate" | "ignored";
   source: string;
@@ -259,6 +266,9 @@ export const api = {
     }),
 
   // Server-side Google Meet capture via Vexa; Sarvam transcribes after the meeting.
+  getMeetingReadiness: (): Promise<MeetingReadiness> =>
+    request<MeetingReadiness>("/vexa/readiness"),
+
   startVexaCapture: (meeting_url: string): Promise<any> =>
     request<any>("/vexa/meetings/start", {
       method: "POST",

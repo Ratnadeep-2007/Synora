@@ -32,6 +32,7 @@ from app.models.intelligence import CandidateKnowledge
 from app.models.meeting import Meeting, Transcript, TranscriptEntry
 from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.services.visual_plan_service import VisualPlanService
+from app.services.translation_service import english_note_text, needs_translation
 
 import logging
 
@@ -434,7 +435,7 @@ class MeetingSessionIntelligenceService:
                 if self._candidate_type(candidate) != "question"
             ]
             preview = " ".join(
-                f"{entry.participant.display_name if entry.participant and entry.participant.display_name else 'Speaker'}: {entry.text}"
+                f"{entry.participant.display_name if entry.participant and entry.participant.display_name else 'Speaker'}: {english_note_text(entry.text, entry.metadata_json, entry.language_code) or 'English translation pending.'}"
                 for entry in window[:3]
             )[:900]
 
@@ -653,6 +654,10 @@ class MeetingSessionIntelligenceService:
             key=lambda entry: entry.start_time or datetime.min.replace(tzinfo=timezone.utc),
         )
         for entry in ordered_entries:
+            text = english_note_text(entry.text, entry.metadata_json, entry.language_code)
+            if not text:
+                snippets.append({"id": entry.id, "content": "English translation pending. Original transcript preserved as evidence.", "source": "translation_pending"})
+                continue
             speaker = "Speaker"
             participant = getattr(entry, "participant", None)
             if participant is not None and participant.display_name:
@@ -666,7 +671,7 @@ class MeetingSessionIntelligenceService:
             snippets.append(
                 {
                     "id": entry.id,
-                    "content": f"{speaker}: {entry.text.strip()}",
+                    "content": f"{speaker}: {text}",
                     "source": "meeting_transcript",
                 }
             )
@@ -675,7 +680,7 @@ class MeetingSessionIntelligenceService:
         return [
             {
                 "id": evidence.id,
-                "content": f"{evidence.actor_id or 'Speaker'}: {evidence.content.strip()}",
+                "content": f"{evidence.actor_id or 'Speaker'}: {english_note_text(evidence.content, evidence.metadata_json) or 'English translation pending. Original evidence preserved.'}",
                 "source": evidence.source or "meeting_evidence",
             }
             for evidence in evidence_records
@@ -903,6 +908,32 @@ class MeetingSessionIntelligenceService:
             global_outline=global_outline,
         )
 
+        # Enforce the display-language boundary even when a model ignores
+        # instructions. Operate only on generated display fields, never on
+        # IDs, source evidence, or user-drawn canvas elements.
+        withheld_fields = 0
+        display_fields = {"title", "subtitle", "text", "label", "items", "rows", "annotations", "notes", "description", "heading"}
+
+        def english_display(value, field=""):
+            nonlocal withheld_fields
+            if isinstance(value, str):
+                if field in display_fields and needs_translation(value):
+                    withheld_fields += 1
+                    return "English translation pending."
+                return value
+            if isinstance(value, list):
+                return [english_display(item, field) for item in value]
+            if isinstance(value, dict):
+                return {key: english_display(item, key) for key, item in value.items()}
+            return value
+
+        plan = type(plan).model_validate(english_display(plan.model_dump(mode="json")))
+        batch_info["notes_language"] = "en"
+        batch_info["translation_pending_count"] = sum(snippet.get("source") == "translation_pending" for snippet in evidence_snippets)
+        batch_info["non_english_fields_withheld"] = withheld_fields
+        if withheld_fields and ai_status == "ai":
+            ai_status = "partial"
+
         try:
             compiled = ExcalidrawCompiler().compile(
                 plan,
@@ -1012,6 +1043,9 @@ class MeetingSessionIntelligenceService:
                     "discussion_filter": discussion_filter,
                     "batches": batch_info.get("batches"),
                     "batches_ai": batch_info.get("batches_ai"),
+                    "notes_language": "en",
+                    "translation_pending_count": batch_info.get("translation_pending_count", 0),
+                    "non_english_fields_withheld": withheld_fields,
                     "verification": verification,
                 },
             },

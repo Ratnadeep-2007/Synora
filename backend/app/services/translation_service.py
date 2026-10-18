@@ -1,10 +1,10 @@
-"""Post-transcription translation for Hindi-first meetings.
+"""Post-transcription English translation for multilingual meetings.
 
 Vexa records, Sarvam/Whisper transcribe in the spoken language. This service
 translates transcript segments into English (Sarvam Translate) so the agent,
 memory, and canvases work on English text while the original is preserved
-alongside. Any failure degrades to originals-only — translation never blocks
-the pipeline.
+alongside. Translation failure preserves sources; note consumers withhold
+untranslated text instead of presenting it as English.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ _SCRIPT_LANGUAGE = [
 ]
 
 _BASE_LANGUAGE = {
-    "hi": "hi-IN", "mr": "hi-IN", "bn": "bn-IN", "pa": "pa-IN",
+    "hi": "hi-IN", "mr": "mr-IN", "bn": "bn-IN", "pa": "pa-IN",
     "gu": "gu-IN", "ta": "ta-IN", "te": "te-IN", "kn": "kn-IN",
     "ml": "ml-IN", "or": "or-IN", "en": "en-IN",
 }
@@ -59,18 +59,14 @@ def normalize_source_language(code: str, sample: str = "") -> str:
     return guess_source_language(sample)
 
 
-def needs_translation(text: str) -> bool:
-    """True when the text contains Indic-script characters.
+def needs_translation(text: str, source_language: str = "") -> bool:
+    """Translate Indic script and known Hindi/Marathi, including Roman text.
 
-    Roman-script Hindi (codemix in Latin letters) is a DELIBERATE skip,
-    pinned by test_roman_hinglish_skipped below. Rationale: it is
-    indistinguishable from English to a script detector, so translating
-    it would mean either LLM-detecting every segment (spends Groq TPM —
-    the system's scarcest resource) or translating everything (burns
-    Sarvam quota for near-zero gain, since the extraction LLMs already
-    read Roman Hindi fluently). Revisit only if quota pressure eases.
+    Unknown Latin-script language needs semantic detection; script alone
+    cannot distinguish English from Roman Hindi or Marathi.
     """
-    return bool(
+    base = str(source_language or "").lower().replace("_", "-").split("-")[0]
+    return base in {"hi", "mr"} or bool(
         re.search(
             "[\u0900-\u097f\u0980-\u09ff\u0a00-\u0a7f\u0a80-\u0aff"
             "\u0b00-\u0b7f\u0b80-\u0bff\u0c00-\u0c7f\u0c80-\u0cff"
@@ -119,7 +115,7 @@ def translate_texts(
     if not settings.SARVAM_API_KEY.strip():
         return list(texts), "disabled"
 
-    pending = [i for i, text in enumerate(texts) if needs_translation(text)]
+    pending = [i for i, text in enumerate(texts) if text.strip() and needs_translation(text, source_language)]
     if not pending:
         return list(texts), "skipped"
 
@@ -172,7 +168,7 @@ def translate_texts(
                 for text_index, line in zip(line_order, lines):
                     # Strip the "N) " prefix we added.
                     stripped = re.sub(r"^\d+\)\s*", "", line).strip()
-                    if stripped:
+                    if stripped and (not target_language.startswith("en") or not needs_translation(stripped)):
                         out[text_index] = stripped
                         translated_count += 1
     except Exception as exc:
@@ -209,6 +205,31 @@ def preferred_text(content: str, metadata_json: str = "") -> str:
     return original
 
 
+def english_note_text(content: str, metadata_json: str = "", language_code: str = "") -> str:
+    """English presentation text; untranslated evidence never becomes notes.
+
+    This does not mutate the immutable source. An empty result means the
+    translation is pending, not that the original statement was irrelevant.
+    Latin-script language cannot be proven by a script detector; known
+    Hindi/Marathi sources are explicitly marked during ingestion.
+    """
+    import json
+
+    try:
+        metadata = json.loads(metadata_json or "{}")
+        if not isinstance(metadata, dict):
+            metadata = {}
+    except (TypeError, ValueError):
+        metadata = {}
+    translated = str(metadata.get("text_en") or "").strip()
+    if translated and not needs_translation(translated):
+        return translated
+    original = str(content or "").strip()
+    if metadata.get("translation_required") or needs_translation(original, language_code):
+        return ""
+    return original
+
+
 def translate_segments(
     segments: List[Dict[str, object]],
     source_language: str = "",
@@ -229,7 +250,7 @@ def translate_segments(
     source = normalize_source_language(source_language, first_pending)
     translated, status = translate_texts(
         texts,
-        target_language=settings.SARVAM_TRANSLATE_TARGET,
+        target_language="en-IN",
         source_language=source_language,
     )
     return dict(zip(ids, translated)), status, source

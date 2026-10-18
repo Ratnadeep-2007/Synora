@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Video,
   Clock,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { MeetingItem } from "@/lib/types";
 import { ProgressLine } from "@/components/ui/primitives";
+import { api, type MeetingReadiness } from "@/lib/api";
 
 export interface VexaCaptureStatus {
   ok: boolean;
@@ -35,6 +36,9 @@ export interface VexaCaptureStatus {
   transcription_fallback_reason?: string | null;
   sarvam_job_id?: string | null;
   whisper_job_id?: string | null;
+  translation_status?: string | null;
+  translation_pending_count?: number;
+  notes_language?: string | null;
   error?: string | null;
 }
 
@@ -94,6 +98,39 @@ export function MeetingsView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState<MeetingReadiness | null>(null);
+  const [checkingReadiness, setCheckingReadiness] = useState(false);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
+  const readinessInFlight = useRef<Promise<MeetingReadiness> | null>(null);
+  const captureAvailable = Boolean(onStartVexaCapture);
+
+  const checkReadiness = () => {
+    if (readinessInFlight.current) return readinessInFlight.current;
+    setCheckingReadiness(true);
+    setReadinessError(null);
+    const pending = api.getMeetingReadiness()
+      .then((result) => { setReadiness(result); return result; })
+      .catch((err: unknown) => {
+        setReadiness(null);
+        setReadinessError(err instanceof Error ? err.message : "Could not check the capture connection. Retry before starting.");
+        throw err;
+      })
+      .finally(() => { readinessInFlight.current = null; setCheckingReadiness(false); });
+    readinessInFlight.current = pending;
+    return pending;
+  };
+
+  useEffect(() => {
+    if (!captureAvailable) return;
+    let mounted = true;
+    setCheckingReadiness(true);
+    api.getMeetingReadiness().then((result) => {
+      if (mounted) setReadiness(result);
+    }).catch((err: unknown) => {
+      if (mounted) setReadinessError(err instanceof Error ? err.message : "Could not check the capture connection.");
+    }).finally(() => { if (mounted) setCheckingReadiness(false); });
+    return () => { mounted = false; };
+  }, [captureAvailable]);
   // Single-flight guards: refs (not state) so a rapid double click in the
   // same frame cannot slip two requests past a not-yet-disabled button.
   const startInFlight = useRef(false);
@@ -141,6 +178,11 @@ export function MeetingsView({
     setBusy(true);
     setError(null);
     try {
+      const connection = await checkReadiness();
+      if (!connection.can_start) {
+        setError(connection.capture.status !== "reachable" ? connection.capture.message : connection.transcription.message);
+        return;
+      }
       await onStartVexaCapture?.(meetingUrl.trim());
     } catch (err: any) {
       setError(err?.message || "Could not start Vexa capture.");
@@ -222,7 +264,7 @@ export function MeetingsView({
                 <h2 className="text-sm font-bold text-text-main flex items-center gap-2">
                   <span>Meeting capture</span>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-canvas border border-border text-primary uppercase">
-                    Sarvam + Whisper
+                    Meeting audio
                   </span>
                 </h2>
                 <p className="text-xs text-text-muted">
@@ -244,6 +286,28 @@ export function MeetingsView({
             </div>
           )}
 
+          {!!vexaCaptureStatus?.translation_pending_count && (
+            <p role="status" className="rounded-xl border border-border bg-canvas p-3 text-xs text-text-muted">
+              English translation is pending for {vexaCaptureStatus.translation_pending_count} transcript segments. The original transcript is preserved; untranslated segments are withheld from notes and memory extraction. Check the translation provider before reprocessing.
+            </p>
+          )}
+
+          <div className="rounded-xl border border-border bg-canvas p-3 text-xs space-y-2" aria-live="polite" aria-busy={checkingReadiness}>
+            <div className="flex items-center justify-between gap-3">
+              <strong className="text-text-main">Capture connection</strong>
+              <button type="button" onClick={() => { void checkReadiness().catch(() => {}); }} disabled={checkingReadiness || busy} className="text-primary underline underline-offset-2 disabled:opacity-50">
+                {checkingReadiness ? "Checking..." : "Check again"}
+              </button>
+            </div>
+            {readinessError ? <p className="text-danger">{readinessError}</p> : readiness ? (
+              <>
+                <p className={readiness.can_start ? "text-text-main" : "text-text-muted"}>{readiness.capture.message}</p>
+                <p className="text-text-muted">{readiness.transcription.message}</p>
+                <p className="text-text-muted">Last checked {new Date(readiness.checked_at).toLocaleTimeString()}. Capture readiness does not verify AI routing or memory updates.</p>
+              </>
+            ) : <p className="text-text-muted">Checking capture and transcription configuration...</p>}
+          </div>
+
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <input
@@ -259,7 +323,7 @@ export function MeetingsView({
             {!isRunning ? (
               <button
                 onClick={startCapture}
-                disabled={busy}
+                disabled={busy || checkingReadiness || !readiness?.can_start}
                 className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-semibold transition-all shadow-[0_0_14px_rgba(16,185,129,0.2)] disabled:opacity-50 shrink-0"
               >
                 {busy ? "Starting..." : "Start capture"}

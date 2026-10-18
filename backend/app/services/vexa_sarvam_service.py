@@ -857,7 +857,7 @@ class VexaSarvamService:
         # Originals stay authoritative (transcript text); translations ride
         # alongside into evidence so the agent and memory work in English.
         # Any failure degrades to originals-only and never blocks the pipeline.
-        from app.services.translation_service import translate_segments
+        from app.services.translation_service import needs_translation, translate_segments
 
         try:
             segment_translations, translation_status, translation_source = translate_segments(
@@ -869,7 +869,9 @@ class VexaSarvamService:
 
         def _english_text(entry_key: str, original: str) -> Optional[str]:
             translated = segment_translations.get(entry_key)
-            if translated and translated.strip() and translated.strip() != original.strip():
+            if translated and translated.strip() and not needs_translation(translated) and (
+                translated.strip() != original.strip() or translation_status == "translated"
+            ):
                 return translated.strip()
             return None
 
@@ -967,6 +969,7 @@ class VexaSarvamService:
                         "segment_start_seconds": segment["start_seconds"],
                         "segment_end_seconds": segment["end_seconds"],
                         "text_en": text_en,
+                        "translation_required": needs_translation(segment["text"], transcription_language_code),
                         "translation_status": translation_status,
                         "translation_source": translation_source,
                     }
@@ -978,7 +981,11 @@ class VexaSarvamService:
             group = group_for_index[index]
             group_key = group[0]
             if group_key not in group_routes:
-                group_text = " ".join(str(segments[item].get("text") or "") for item in group)
+                group_text = " ".join(
+                    _english_text(str(segments[item].get("id") or f"seg_{item:06d}"), str(segments[item].get("text") or ""))
+                    or str(segments[item].get("text") or "")
+                    for item in group
+                )
                 group_routes[group_key] = self._resolve_project(group_text, speaker, meeting, db, projects)
             target_project = group_routes[group_key]
             routed_projects.add(target_project)
@@ -1050,6 +1057,7 @@ class VexaSarvamService:
                                 "transcription_model": transcription_model,
                                 "speaker_id": speaker,
                                 "text_en": text_en,
+                                "translation_required": needs_translation(segment["text"], transcription_language_code),
                                 "translation_status": translation_status,
                                 "translation_source": translation_source,
                             }
@@ -1095,6 +1103,12 @@ class VexaSarvamService:
                 "transcription_fallback_reason": fallback_reason,
                 "translation_status": translation_status,
                 "translation_source": translation_source,
+                "notes_language": "en",
+                "translation_pending_count": sum(
+                    needs_translation(str(segment.get("text") or ""), transcription_language_code)
+                    and not _english_text(str(segment.get("id") or f"seg_{index:06d}"), str(segment.get("text") or ""))
+                    for index, segment in enumerate(segments)
+                ),
                 "sarvam_job_id": (
                     transcription_job_id
                     if transcription_provider == "sarvam_saaras"
