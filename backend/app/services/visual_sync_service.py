@@ -16,11 +16,13 @@ same answer from persisted memory and the current canvas.
 import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.services.translation_service import english_note_text
 
 logger = logging.getLogger(__name__)
 
@@ -125,11 +127,34 @@ class VisualSyncService:
             .limit(16)
             .all()
         )
-        evidence_snippets = [
-            {"id": row.id, "content": row.content, "source": getattr(row, "source", None)}
-            for row in reversed(evidence_rows)
-            if row.content and row.content.strip()
-        ]
+        evidence_snippets = []
+        for row in reversed(evidence_rows):
+            content = english_note_text(row.content, row.metadata_json)
+            if content:
+                evidence_snippets.append({"id": row.id, "content": content, "source": getattr(row, "source", None)})
+
+        input_fingerprint = hashlib.sha256(json.dumps({
+            "version": "english-canvas-inputs-v1", "state": state_summary,
+            "profile": [project.name, project.description], "evidence": evidence_snippets,
+            "human_scene": [element for element in base_scene if not _is_agent_managed(element)],
+            "provider": settings.LLM_PROVIDER, "model": settings.GROQ_MODEL,
+            "design_mode": settings.VISUAL_DESIGN_MODE,
+        }, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+        previous = {}
+        if current_rev:
+            try:
+                previous = json.loads(current_rev.app_state_json or "{}").get("living_canvas", {})
+            except (TypeError, ValueError, AttributeError):
+                pass
+        if previous.get("input_fingerprint") == input_fingerprint:
+            created = getattr(current_rev, "created_at", None)
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - created).total_seconds() if created else 120
+            if previous.get("ai_status") == "ai" or age < 120:
+                return {"project_id": project_id, "synced": False, "reason": "no_change",
+                        "cached": True, "ai_status": previous.get("ai_status"),
+                        "state_version": getattr(state_row, "current_version", None)}
 
         current_canvas = _canvas_summary(base_scene)
         # The agent chooses the project's note structure and visual form.
@@ -177,16 +202,6 @@ class VisualSyncService:
         compiled_agent_scene = enrich_scene(compiled_agent_scene, project_id, tenant_id, db)
         merged_scene = user_scene + reconcile_managed(base_scene, compiled_agent_scene)
 
-        if _scene_fingerprint(merged_scene) == _scene_fingerprint(base_scene):
-            return {
-                "project_id": project_id,
-                "synced": False,
-                "reason": "no_change",
-                "state_version": getattr(state_row, "current_version", None),
-                "ai_status": ai_status,
-                "diagram": proper_diagram,
-            }
-
         plan_dump = plan.model_dump(mode="json")
         plan_fingerprint = hashlib.sha256(
             json.dumps(plan_dump, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -214,6 +229,7 @@ class VisualSyncService:
                     "representation": plan.canvas_strategy,
                     "diagram_created": proper_diagram,
                     "plan_fingerprint": plan_fingerprint,
+                    "input_fingerprint": input_fingerprint,
                     "memory_version": getattr(state_row, "current_version", None),
                     "evidence_ids": [row.id for row in evidence_rows],
                     "notes_sections": len(getattr(plan, "notes_sections", []) or []),

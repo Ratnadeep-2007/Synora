@@ -169,3 +169,26 @@ def test_visual_sync_has_no_evidence_gate(db_session, test_user):
     out = VisualSyncService().sync_project(project.id, db_session)
     assert out["synced"] is True, out
     assert out["reason"] == "reconciled"
+
+
+def test_unchanged_inputs_skip_provider_and_translation_invalidates_cache(db_session, test_user, monkeypatch):
+    from app.services.visual_plan_service import VisualPlanService
+    project = _seed_project_with_memory(db_session, test_user, "proj_cached", "Cache test")
+    service = VisualSyncService()
+    original = VisualPlanService.build_plan
+    calls = []
+    def plan(self, **kwargs):
+        calls.append(kwargs["evidence_snippets"])
+        return original(self, **kwargs)
+    monkeypatch.setattr(VisualPlanService, "build_plan", plan)
+    service.sync_project(project.id, db_session)
+    second = service.sync_project(project.id, db_session)
+    assert second["cached"] is True
+    assert len(calls) == 1
+    row = db_session.query(Evidence).filter(Evidence.project_id == project.id).first()
+    row.metadata_json = json.dumps({"text_en": "The dashboard requires independent approval."})
+    db_session.commit()
+    service.sync_project(project.id, db_session)
+    assert len(calls) == 2
+    assert any(item["content"] == "The dashboard requires independent approval." for item in calls[-1])
+    assert row.content == "We will use face recognition."
