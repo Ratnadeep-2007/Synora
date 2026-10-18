@@ -35,6 +35,13 @@ _BASE_LANGUAGE = {
     "ml": "ml-IN", "or": "or-IN", "en": "en-IN",
 }
 
+# Conservative phonetic markers for common Roman Hindi/Marathi verbs.
+# These catch mixed speech even when STT labels the meeting English.
+_ROMAN_INDIC = re.compile(
+    r"\b(?:chahiye|chaiye|dikha(?:yega|ayega)|honne|turanth|pahije|aahe|"
+    r"aapan|karunga|karenge|banayenge|banaunga)\b", re.I,
+)
+
 
 def guess_source_language(text: str) -> str:
     """Best-effort BCP-47 source code from script ranges."""
@@ -66,7 +73,7 @@ def needs_translation(text: str, source_language: str = "") -> bool:
     cannot distinguish English from Roman Hindi or Marathi.
     """
     base = str(source_language or "").lower().replace("_", "-").split("-")[0]
-    return base in {"hi", "mr"} or bool(
+    return base in {"hi", "mr"} or bool(_ROMAN_INDIC.search(text or "")) or bool(
         re.search(
             "[\u0900-\u097f\u0980-\u09ff\u0a00-\u0a7f\u0a80-\u0aff"
             "\u0b00-\u0b7f\u0b80-\u0bff\u0c00-\u0c7f\u0c80-\u0cff"
@@ -137,6 +144,8 @@ def _llm_translations(texts, indices, source_language, timeout_seconds):
             context = context[:8]
         prompt = (
             "Translate each Hindi/Marathi or mixed-language meeting statement into fluent English. "
+            "Translate phonetic Roman Hindi/Marathi too, even when surrounded by English technical terms. "
+            "For example 'preview mein dikhaayega' means 'will show it in the preview'; never leave Roman speech untranslated. "
             "Keep already-English statements in English. Preserve names, project boundaries, numbers, "
             "negation, rejected alternatives, tentative wording and uncertainty. Do not add facts or "
             "correct unclear speech using assumptions. Translate each item independently while using "
@@ -229,6 +238,13 @@ def translate_texts(
             accepted.add(index)
         if fallback:
             providers.append("groq/" + settings.TRANSLATION_GROQ_MODEL)
+        # A bounded retry for rejected Roman output, with a smaller batch.
+        # Provider-wide failures return nothing and must not trigger retries.
+        retry_ids = [index for index in remaining if index not in accepted]
+        if fallback and retry_ids:
+            for index, text in _llm_translations(texts, retry_ids, source_language, timeout_seconds).items():
+                out[index] = text
+                accepted.add(index)
     status = "translated" if len(accepted) == len(pending) else "partial" if accepted else "unavailable"
     if details is not None:
         details.update(provider=" + ".join(providers) or "unavailable", translated_count=len(accepted),

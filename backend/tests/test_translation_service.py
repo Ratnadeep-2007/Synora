@@ -18,7 +18,7 @@ def test_needs_translation_devanagari():
 
 def test_needs_translation_english_and_roman_hindi():
     assert ts.needs_translation("Kitchen display must be on time") is False
-    assert ts.needs_translation("kitchen display samay par hona chahiye") is False
+    assert ts.needs_translation("kitchen display samay par hona chahiye") is True
 
 
 def test_skipped_when_nothing_needs_it(monkeypatch):
@@ -133,13 +133,8 @@ def test_translate_segments_mapping(monkeypatch):
     assert source == "hi-IN"
 
 
-def test_roman_hinglish_skipped(monkeypatch):
-    """Pinned decision: Roman-script Hinglish is NOT translated.
-
-    It is indistinguishable from English to a script detector, and the
-    extraction LLMs already read it fluently — translating it would spend
-    quota for no gain. No HTTP call may be made for it.
-    """
+def test_roman_hinglish_requires_translation(monkeypatch):
+    """Known phonetic markers must not leak into English-only notes."""
     monkeypatch.setattr("app.core.config.settings.SARVAM_API_KEY", "k")
     monkeypatch.setattr(
         "app.core.config.settings.SARVAM_TRANSLATE_ENABLED", True
@@ -147,9 +142,9 @@ def test_roman_hinglish_skipped(monkeypatch):
     monkeypatch.setattr("httpx.Client", _FakeClient)
     _FakeClient.calls = []
     out, status = ts.translate_texts(["kitchen display samay par hona chahiye"])
-    assert out == ["kitchen display samay par hona chahiye"]
-    assert status == "skipped"
-    assert _FakeClient.calls == []
+    assert out == ["TRANSLATED"]
+    assert status == "translated"
+    assert len(_FakeClient.calls) == 1
 
 
 def test_source_resolution_prefers_stt_then_script():
