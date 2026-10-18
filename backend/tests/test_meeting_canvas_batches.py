@@ -156,6 +156,16 @@ def test_minor_filter_drops_only_filler_not_work():
         "Pricing for early users needs a decision this week.",
     ):
         assert keep(work) is True, work
+    for fragment in ("MongoDB", "proposal", "rejected", "Not approved"):
+        assert keep(fragment) is True
+
+
+def test_short_meeting_context_keeps_rejection_across_batch_boundaries():
+    snippets = [{"id": str(i), "content": "Discuss the inventory dashboard."} for i in range(16)]
+    snippets += [{"id": "alternative", "content": "MongoDB"}, {"id": "rejection", "content": "rejected for this release"}]
+    outline = MeetingSessionIntelligenceService._global_meeting_outline(snippets, [])
+    assert "MongoDB" in outline
+    assert "rejected for this release" in outline
 
 
 def test_global_outline_keeps_late_implementation_context():

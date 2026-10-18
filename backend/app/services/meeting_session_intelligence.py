@@ -624,10 +624,9 @@ class MeetingSessionIntelligenceService:
             return False
         if all(word in cls._FILLER_WORDS for word in words):
             return False
-        # Very short statements survive only when they carry a work anchor
-        # (a product name, a component, a decision word) — not as filler.
-        if len(words) <= 2 and not any(word in cls._WORK_ANCHORS for word in words):
-            return False
+        # STT can split a decision into "MongoDB", "proposal", "rejected".
+        # Keep substantive short fragments: dropping them loses negation
+        # and project boundaries even when the translation is correct.
         return True
 
     @staticmethod
@@ -703,6 +702,14 @@ class MeetingSessionIntelligenceService:
         """
         if not snippets:
             return ""
+        complete = "\n".join(f"[{index + 1}] {snippet.get('content') or ''}" for index, snippet in enumerate(snippets))
+        if len(complete) <= 6000:
+            return (
+                f"Speakers/participants: {', '.join(participant_names) if participant_names else 'not recorded'}.\n"
+                f"Complete discussion size: {len(snippets)} statements.\n"
+                "Complete chronological context. Later corrections and rejections supersede earlier suggestions:\n"
+                + complete
+            )
         indexed = list(enumerate(snippets))
         detailed = sorted(indexed, key=lambda pair: len(pair[1].get("content") or ""), reverse=True)[:12]
         detailed.sort(key=lambda pair: pair[0])
@@ -889,6 +896,8 @@ class MeetingSessionIntelligenceService:
             "MEETING CANVAS MODE. Capture only the substance of this meeting. "
             "Produce concise English bullet-point notes, and a useful diagram when the discussion supports components, dependencies or a process. "
             "Use the diagram to explain those actual relationships; never invent architecture merely to fill the canvas. "
+            "Respect later corrections and rejected proposals. Do not invent open questions or decisions. "
+            "Some speech recognition terms may be unclear: label them uncertain rather than silently correcting them. "
             "Use the complete discussion itself as context. Project routing, candidate categories, "
             "Project State, approval status, and memory filters must NOT decide what you may use. "
             "There are NO required sections, categories, note formats, or diagram types. "
