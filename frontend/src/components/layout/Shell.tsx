@@ -107,6 +107,7 @@ export function Shell({
   children,
 }: ShellProps) {
   const [railOpen, setRailOpen] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -194,6 +195,7 @@ export function Shell({
   };
 
   const navTo = (tab: NavTab) => {
+    setMobileNavOpen(false);
     setActivityOpen(false);
     setUserOpen(false);
     onTabChange(tab);
@@ -204,11 +206,13 @@ export function Shell({
 
   return (
     <div className="synora-shell min-h-screen bg-canvas text-text-main">
+      {!isHome && mobileNavOpen && <button type="button" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} className="fixed inset-0 z-30 bg-black/25 lg:hidden" />}
       {!isHome && (
       <aside
         className={
           "synora-rail fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-white/90 backdrop-blur-xl transition-all duration-300 " +
-          (railOpen ? "w-[232px]" : "w-[76px]")
+          (railOpen ? "w-[232px] " : "w-[76px] ") +
+          (mobileNavOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0")
         }
       >
         <div className="flex h-16 items-center gap-3 border-b border-border px-4">
@@ -377,21 +381,22 @@ export function Shell({
       </aside>
       )}
 
-      <div className={isHome ? "" : railOpen ? "ml-[232px] transition-all duration-300" : "ml-[76px] transition-all duration-300"}>
+      <div className={isHome ? "min-w-0" : railOpen ? "ml-0 min-w-0 transition-all duration-300 lg:ml-[232px]" : "ml-0 min-w-0 transition-all duration-300 lg:ml-[76px]"}>
         {!isHome && (
         <header className="synora-topbar sticky top-0 z-30 border-b border-border/80 bg-white/80 backdrop-blur-xl">
           <div className="flex h-[68px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
             <div className="flex min-w-0 items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => setRailOpen((value) => !value)}
+                onClick={() => { setRailOpen(true); setMobileNavOpen((value) => !value); }}
                 className="grid h-9 w-9 place-items-center rounded-xl border border-border bg-white text-text-muted shadow-xs hover:text-text-main lg:hidden"
                 aria-label="Toggle navigation"
+                aria-expanded={mobileNavOpen}
               >
                 <Menu className="h-4 w-4" />
               </button>
 
-              <div className="relative">
+              <div className="relative min-w-0">
                 <button
                   type="button"
                   onClick={() => setProjectMenuOpen((value) => !value)}
@@ -551,7 +556,7 @@ export function Shell({
                     setActivityOpen((value) => !value);
                     setUserOpen(false);
                   }}
-                  className="grid h-9 w-9 place-items-center rounded-xl border border-transparent text-text-muted transition-colors hover:border-border hover:bg-white hover:text-text-main"
+                  className="hidden h-9 w-9 place-items-center rounded-xl border border-transparent text-text-muted transition-colors hover:border-border hover:bg-white hover:text-text-main sm:grid"
                   aria-label="Notifications"
                 >
                   <span className="relative">

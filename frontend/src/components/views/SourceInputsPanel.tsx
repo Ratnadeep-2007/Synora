@@ -132,7 +132,7 @@ export function SourceInputsPanel({ projects, selectedProject, onChanged }: {
   };
 
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-xs" aria-label="Add project context" aria-busy={busy}>
+    <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-surface shadow-xs" aria-label="Add project context" aria-busy={busy}>
       <div className="px-5 pt-5 sm:px-6 sm:pt-6">
         <h2 className="text-sm font-semibold text-text-main">Add context</h2>
         <p className="mt-1 text-xs leading-relaxed text-text-muted">Drop your files here. Synora reads the content and connects it to {selectedProject?.name || "your project"}.</p>
