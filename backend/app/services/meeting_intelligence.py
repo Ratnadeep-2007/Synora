@@ -301,6 +301,7 @@ decision_candidate | requirement_candidate | constraint | action_item | question
                     CandidateKnowledge.project_id == project_id,
                     CandidateKnowledge.category == item.category,
                     CandidateKnowledge.title == item.title,
+                    CandidateKnowledge.status != "superseded",
                 )
                 .first()
             )

@@ -144,3 +144,45 @@ def test_reanalysis_reuses_sources_and_updates_only_derived_metadata(monkeypatch
     assert json.loads(db.get(Evidence, evidence.id).metadata_json)["text_en"] == "Approval is required before changing stock."
     db.refresh(item)
     assert item.status == "assigned"
+
+
+def test_rerouting_retracts_only_displaced_memory_and_preserves_history(db_session, test_user):
+    from app.models.project import Project, Workspace
+    from app.models.meeting import Meeting
+    from app.models.intelligence import CandidateKnowledge
+    from app.models.project_state import ProjectStateVersion, StateChange
+    from app.models.memory_engine import MemoryClaimRevision
+    from app.services.project_state_service import ProjectStateService
+    from app.services.meeting_reanalysis_service import _retract_displaced_claims
+    db = db_session
+    db.add(Workspace(id="ws_retract", name="Retraction test"))
+    db.flush()
+    db.add(Project(id="proj_retract", workspace_id="ws_retract", name="Birch"))
+    meeting = Meeting(id="mtg_retract", workspace_id="ws_retract", project_id="proj_retract", user_id=test_user.id, provider_conference_id="retract-test")
+    db.add(meeting)
+    db.flush()
+    candidate = CandidateKnowledge(id="cand_wrong_scope", project_id="proj_retract", meeting_id=meeting.id,
+        category="assumption", title="Other project's tentative budget", content="Unapproved budget.",
+        evidence_ids_json='["ev_displaced"]', status="approved")
+    db.add(candidate)
+    db.flush()
+    state = ProjectStateService().get_or_create_state("proj_retract", db)
+    state.assumptions_json = json.dumps([
+        {"id": "wrong", "source_candidate_id": candidate.id, "evidence_ids": ["ev_displaced"]},
+        {"id": "keep", "title": "Existing reviewed knowledge"},
+    ])
+    db.add(MemoryClaimRevision(id="claim_wrong_scope", candidate_id=candidate.id, project_id="proj_retract",
+        status="approved", snapshot_json='{"title":"Budget"}'))
+    db.add(StateChange(project_id="proj_retract", candidate_id=candidate.id, state_version_before=1,
+        operation="insert", target_section="assumptions", value_json="{}", reason="test", actor_id="test", approval_status="proposed"))
+    db.commit()
+    previous = state.current_version
+    _retract_displaced_claims(meeting.id, {"proj_retract": {"ev_displaced"}}, db, "repair")
+    assert candidate.status == "superseded"
+    assert state.current_version == previous + 1
+    assert json.loads(state.assumptions_json) == [{"id": "keep", "title": "Existing reviewed knowledge"}]
+    assert db.query(ProjectStateVersion).filter_by(project_id="proj_retract", version_number=previous).first()
+    assert db.get(MemoryClaimRevision, "claim_wrong_scope").valid_to is not None
+    count = db.query(ProjectStateVersion).filter_by(project_id="proj_retract").count()
+    _retract_displaced_claims(meeting.id, {"proj_retract": {"ev_displaced"}}, db, "repair")
+    assert db.query(ProjectStateVersion).filter_by(project_id="proj_retract").count() == count
