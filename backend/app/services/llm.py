@@ -552,6 +552,9 @@ class GroqLLMClient(LLMClient):
         }
 
         keys = list(self.api_keys)
+        if self.model_name.startswith("openai/gpt-oss-"):
+            payload["reasoning_effort"] = "low"
+            payload["max_completion_tokens"] = 4096
         last_error: Optional[str] = None
         for position, key in enumerate(keys):
             try:

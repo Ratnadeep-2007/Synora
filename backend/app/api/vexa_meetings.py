@@ -160,6 +160,39 @@ async def start_vexa_capture(
     }
 
 
+@router.post("/meetings/{meeting_id}/reanalyze", status_code=202)
+async def reanalyze_saved_capture(
+    meeting_id: str, background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    from app.models.meeting import Transcript, TranscriptEntry
+    from app.services.meeting_reanalysis_service import reanalyze_saved_meeting_background
+    from app.services.vexa_sarvam_service import claim_meeting_processing, _PROCESSING_MEETINGS
+
+    meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == current_user.id).with_for_update().first()
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="Meeting not found.")
+    if get_capture_metadata(meeting).get("status") in ACTIVE_CAPTURE_STATUSES:
+        raise HTTPException(status_code=409, detail="This meeting is already being recorded or processed.")
+    has_entries = db.query(TranscriptEntry.id).join(Transcript, TranscriptEntry.transcript_id == Transcript.id).filter(Transcript.meeting_id == meeting_id).first()
+    if not has_entries:
+        raise HTTPException(status_code=400, detail="There is no saved transcript to analyze.")
+    if not claim_meeting_processing(meeting_id):
+        raise HTTPException(status_code=409, detail="Meeting processing is already active.")
+    actor_id = current_user.id
+    try:
+        _set_capture_metadata(meeting, {"status": "ingesting", "analysis_step": "translating", "processed": False,
+            "pipeline_processed": False, "error": None})
+        db.commit()
+    except Exception:
+        db.rollback()
+        _PROCESSING_MEETINGS.discard(meeting_id)
+        raise
+    db.close()
+    background_tasks.add_task(reanalyze_saved_meeting_background, meeting_id, actor_id)
+    return {"ok": True, "meeting_id": meeting_id, "status": "ingesting", "message": "Analyzing the saved transcript; audio will not be transcribed again."}
+
+
 @router.get(
     "/meetings/active",
     summary="List captures still running for the current user",
@@ -224,7 +257,7 @@ def _capture_status_payload(meeting: Meeting) -> dict:
             "transcription_job_id", "transcription_fallback_used", "transcription_fallback_reason",
             "sarvam_job_id", "whisper_job_id", "translation_status", "translation_pending_count",
             "notes_language", "bot_status", "bot_status_updated_at", "bot_container_id",
-            "capture_started_at", "error",
+            "capture_started_at", "error", "analysis_step", "translation_provider", "reanalyzed_routed_count",
         )},
         "ok": True,
         "meeting_id": meeting.id,
@@ -271,6 +304,8 @@ def get_vexa_capture_status(
         "translation_status": capture.get("translation_status"),
         "translation_pending_count": capture.get("translation_pending_count", 0),
         "notes_language": capture.get("notes_language"),
+        "translation_provider": capture.get("translation_provider"),
+        "analysis_step": capture.get("analysis_step"),
         "bot_status": capture.get("bot_status"),
         "bot_status_updated_at": capture.get("bot_status_updated_at"),
         "bot_container_id": capture.get("bot_container_id"),

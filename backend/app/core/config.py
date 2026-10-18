@@ -143,6 +143,8 @@ class Settings(BaseSettings):
     # Post-transcription translation for Hindi-first meetings. Translates
     # Indic-script segments to English; originals are always preserved.
     SARVAM_TRANSLATE_ENABLED: bool = True
+    TRANSLATION_FALLBACK_ENABLED: bool = True
+    TRANSLATION_GROQ_MODEL: str = "openai/gpt-oss-20b"
     SARVAM_TRANSLATE_MODEL: str = "sarvam-translate:v1"
     SARVAM_TRANSLATE_TARGET: str = "en-IN"
     SARVAM_TRANSLATE_MAX_CHARS: int = Field(default=1800, ge=200, le=2000)

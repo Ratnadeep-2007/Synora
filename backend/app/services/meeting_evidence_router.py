@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.evidence import Evidence
 from app.models.project import Project
+from app.services.translation_service import english_note_text
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class MeetingEvidenceRouter:
         unresolved = 0
 
         for row in evidence:
-            text = (row.content or "").strip()
+            text = english_note_text(row.content, row.metadata_json)
             if not text:
                 continue
 

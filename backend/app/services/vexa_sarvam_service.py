@@ -860,9 +860,10 @@ class VexaSarvamService:
         # Any failure degrades to originals-only and never blocks the pipeline.
         from app.services.translation_service import needs_translation, translate_segments
 
+        translation_metadata = {}
         try:
             segment_translations, translation_status, translation_source = translate_segments(
-                segments, source_language=transcription_language_code
+                segments, source_language=transcription_language_code, translation_metadata=translation_metadata,
             )
         except Exception as exc:
             logger.warning("meeting_translation_failed: meeting=%s error=%s", meeting.id, exc)
@@ -973,6 +974,7 @@ class VexaSarvamService:
                         "translation_required": needs_translation(segment["text"], transcription_language_code),
                         "translation_status": translation_status,
                         "translation_source": translation_source,
+                        "translation_provider": translation_metadata.get("provider"),
                     }
                 ),
             )
@@ -1061,6 +1063,7 @@ class VexaSarvamService:
                                 "translation_required": needs_translation(segment["text"], transcription_language_code),
                                 "translation_status": translation_status,
                                 "translation_source": translation_source,
+                                "translation_provider": translation_metadata.get("provider"),
                             }
                         ),
                     )
@@ -1104,6 +1107,7 @@ class VexaSarvamService:
                 "transcription_fallback_reason": fallback_reason,
                 "translation_status": translation_status,
                 "translation_source": translation_source,
+                "translation_provider": translation_metadata.get("provider"),
                 "notes_language": "en",
                 "translation_pending_count": sum(
                     needs_translation(str(segment.get("text") or ""), transcription_language_code)

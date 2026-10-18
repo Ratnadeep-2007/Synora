@@ -121,12 +121,12 @@ def test_discussion_snippets_use_complete_transcript_without_project_filter():
         SimpleNamespace(
             id="entry_2", text="Implement the API worker and queue retry flow.",
             start_time=datetime(2026, 1, 1, 10, 1, tzinfo=timezone.utc),
-            participant=SimpleNamespace(display_name="SPEAKER_01"), metadata_json="{}",
+            participant=SimpleNamespace(display_name="SPEAKER_01"), metadata_json="{}", language_code="en",
         ),
         SimpleNamespace(
             id="entry_1", text="Let us discuss the product first.",
             start_time=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
-            participant=SimpleNamespace(display_name="SPEAKER_00"), metadata_json="{}",
+            participant=SimpleNamespace(display_name="SPEAKER_00"), metadata_json="{}", language_code="en",
         ),
     ]
     evidence = [SimpleNamespace(

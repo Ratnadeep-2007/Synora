@@ -7,6 +7,11 @@ import pytest
 from app.services import translation_service as ts
 
 
+@pytest.fixture(autouse=True)
+def no_external_fallback(monkeypatch):
+    monkeypatch.setattr(ts, "_llm_translations", lambda *args, **kwargs: {})
+
+
 def test_needs_translation_devanagari():
     assert ts.needs_translation("किचन डिस्प्ले समय पर होना चाहिए") is True
 
@@ -30,7 +35,7 @@ def test_disabled_without_key(monkeypatch):
     monkeypatch.setattr("app.core.config.settings.SARVAM_API_KEY", "  ")
     out, status = ts.translate_texts(["काम समय पर"])
     assert out == ["काम समय पर"]
-    assert status == "disabled"
+    assert status == "unavailable"
 
 
 class _FakeResponse:
@@ -121,7 +126,9 @@ def test_translate_segments_mapping(monkeypatch):
         {"id": "s2", "text": "all good in english"},
     ]
     mapping, status, source = ts.translate_segments(segments, source_language="hi")
-    assert mapping == {"s1": "TRANSLATED", "s2": "all good in english"}
+    # A known Hindi source also translates Roman text; the fake returns the
+    # same marker for every supplied line.
+    assert mapping == {"s1": "TRANSLATED", "s2": "TRANSLATED"}
     assert status == "translated"
     assert source == "hi-IN"
 
@@ -158,7 +165,7 @@ def test_script_overrides_default_english_claim():
     API rejects (source == target) and real Hindi goes untranslated."""
     assert ts.normalize_source_language("en", "काम समय पर") == "hi-IN"
     assert ts.normalize_source_language("en", "plain english") == "hi-IN"
-    assert ts.normalize_source_language("mr", "काम समय पर") == "hi-IN"
+    assert ts.normalize_source_language("mr", "काम समय पर") == "mr-IN"
 
 
 def test_preferred_text_uses_translation():

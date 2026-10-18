@@ -662,6 +662,9 @@ class VisualPlanService:
         # last call left off: quotas are per organization, so one
         # exhausted account must not end the design.
         global _GROQ_KEY_CURSOR
+        if settings.GROQ_MODEL.startswith("openai/gpt-oss-"):
+            payload["reasoning_effort"] = "low"
+            payload["max_completion_tokens"] = 4096
         all_keys = settings.groq_api_keys
         if all_keys:
             start = _GROQ_KEY_CURSOR % len(all_keys)

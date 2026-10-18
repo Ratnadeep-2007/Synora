@@ -887,6 +887,8 @@ class MeetingSessionIntelligenceService:
         }
         focus = (
             "MEETING CANVAS MODE. Capture only the substance of this meeting. "
+            "Produce concise English bullet-point notes, and a useful diagram when the discussion supports components, dependencies or a process. "
+            "Use the diagram to explain those actual relationships; never invent architecture merely to fill the canvas. "
             "Use the complete discussion itself as context. Project routing, candidate categories, "
             "Project State, approval status, and memory filters must NOT decide what you may use. "
             "There are NO required sections, categories, note formats, or diagram types. "
