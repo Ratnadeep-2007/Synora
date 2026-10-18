@@ -770,6 +770,50 @@ class VexaSarvamService:
             groups.append(current)
         return groups
 
+    @classmethod
+    def _scoped_routing_groups(cls, segments, projects):
+        """Carry explicit project-switch boundaries across short STT groups."""
+        anchors = []
+        names = [re.sub(r"[^a-z0-9]+", " ", project.name.lower()).strip() for project in projects]
+        firsts = [name.split()[0] for name in names if name]
+        for name in names:
+            if not name:
+                continue
+            anchors.append(name)
+            first = name.split()[0]
+            if firsts.count(first) == 1 and len(first) >= 4 and first not in {"project", "inventory", "demo", "test"}:
+                anchors.append(first)
+        def normalize(text):
+            return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+        def named_known(text):
+            clean = normalize(text)
+            return any(re.match(r"^(?:(?:for|regarding|back to|returning to|final recap for) )?" + re.escape(anchor) + r"\b", clean) for anchor in anchors)
+        groups = []
+        for group in cls._routing_groups(segments):
+            current = []
+            for index in group:
+                clean = normalize(str(segments[index].get("text") or ""))
+                if current and (named_known(str(segments[index].get("text") or "")) or clean.startswith(("now switching", "this is not ", "moving to another", "switching to another"))):
+                    groups.append(current)
+                    current = []
+                current.append(index)
+            if current:
+                groups.append(current)
+        unknown_scope = False
+        scoped = []
+        for group in groups:
+            lead = str(segments[group[0]].get("text") or "")
+            clean = normalize(lead)
+            if clean.startswith(("now switching", "moving to another", "switching to another", "moving to a new", "switching to a new")):
+                unknown_scope = True
+            proper = re.match(r"^(?i:for|regarding)\s+([A-Z][A-Za-z0-9_-]+)", lead)
+            if proper and proper.group(1).lower() not in {"this", "the", "a", "an", "our"} and not named_known(lead):
+                unknown_scope = True
+            if named_known(lead):
+                unknown_scope = False
+            scoped.append((group, unknown_scope))
+        return scoped
+
     def _persist_transcript(
         self,
         meeting: Meeting,
@@ -934,12 +978,14 @@ class VexaSarvamService:
             for participant in db.query(Participant).filter(Participant.meeting_id == meeting.id).all()
         }
         routed_projects = set()
+        routing_segments = [{**segment, "text": _english_text(str(segment.get("id") or f"seg_{index:06d}"), str(segment.get("text") or "")) or str(segment.get("text") or "")} for index, segment in enumerate(segments)]
+        scoped_groups = self._scoped_routing_groups(routing_segments, projects)
         group_for_index = {
             index: group
-            for group in self._routing_groups(segments)
+            for group, _ in scoped_groups
             for index in group
         }
-        group_routes: Dict[int, str] = {}
+        group_routes: Dict[int, str] = {group[0]: SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID for group, unknown in scoped_groups if unknown}
 
         for index, segment in enumerate(segments):
             entry_key = segment["id"] or f"seg_{index:06d}"

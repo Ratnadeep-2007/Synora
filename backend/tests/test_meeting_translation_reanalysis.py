@@ -99,6 +99,19 @@ def test_explicit_project_exclusion_is_not_a_name_match():
     assert exclude("Nobody can approve their own correction in Birch.", projects) == set()
 
 
+def test_project_switch_quarantines_every_unknown_group_until_known_return():
+    from app.services.vexa_sarvam_service import VexaSarvamService
+    texts = ["For Birch inventory, use PostgreSQL.", "Now switching to a different project.",
+             "This is not a Birch issue.", "For Cedar cold chain", "trucks need sensors",
+             "For refrigerated delivery", "Do not write these notes in Birch.",
+             "Unapproved budget of 50000.", "We will automate it.",
+             "Birch inventory has a stock blocker.", "Final recap for Birch."]
+    segments = [{"text": text, "speaker": "S", "start_seconds": i * 10, "end_seconds": i * 10 + 1} for i, text in enumerate(texts)]
+    scoped = VexaSarvamService._scoped_routing_groups(segments, [SimpleNamespace(name="Birch_inventory")])
+    quarantined = {index for group, unknown in scoped if unknown for index in group}
+    assert quarantined == set(range(1, 9))
+
+
 def test_reanalysis_reuses_sources_and_updates_only_derived_metadata(monkeypatch, db_session, test_user):
     from app.models.context_resolution import UnknownContextItem
     from app.models.evidence import Evidence
@@ -144,6 +157,9 @@ def test_reanalysis_reuses_sources_and_updates_only_derived_metadata(monkeypatch
     assert json.loads(db.get(Evidence, evidence.id).metadata_json)["text_en"] == "Approval is required before changing stock."
     db.refresh(item)
     assert item.status == "assigned"
+    monkeypatch.setattr("app.services.meeting_reanalysis_service.translate_segments", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Accepted translations must be reused")))
+    reanalyze_saved_meeting(meeting.id, db)
+    assert db.get(Evidence, evidence.id).content == HINDI
 
 
 def test_rerouting_retracts_only_displaced_memory_and_preserves_history(db_session, test_user):

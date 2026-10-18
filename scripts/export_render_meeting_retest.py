@@ -41,15 +41,28 @@ def main():
             notes += ["- " + " ".join(element["text"].split()), ""]
     (OUT / "ENGLISH_NOTES.md").write_text("\n".join(notes), encoding="utf-8")
     contamination = []
+    scopes = {row["id"]: row["project_id"] for row in after["evidence"]}
+    scope_violations = []
     for candidate in after["candidates"]:
-        if candidate["project_id"] == "proj_e42a80c4" and "nimbus" in (candidate["title"] + candidate["content"]).lower():
+        if candidate["status"] not in {"superseded", "rejected"}:
+            references = json.loads(candidate["evidence_ids_json"] or "[]")
+            if any(scopes.get(reference) != candidate["project_id"] for reference in references):
+                scope_violations.append(candidate["id"])
+        if candidate["status"] not in {"superseded", "rejected"} and candidate["project_id"] == "proj_e42a80c4" and "nimbus" in (candidate["title"] + candidate["content"]).lower():
             contamination.append(candidate["id"])
+    original = read("before_meeting.json")
+    ordered = sorted([entry for transcript in original["transcripts"] for entry in transcript["entries"]], key=lambda entry: entry.get("start_time") or "")
+    start = next(index for index, entry in enumerate(ordered) if entry["text"].lower().startswith("now switching to different project"))
+    end = next(index for index, entry in enumerate(ordered) if index > start and entry["text"].lower().startswith("harbor inventory demo"))
+    destinations = {row["transcript_entry_id"]: row["project_id"] for row in after["evidence"]}
+    unknown_misfiled = [entry["id"] for entry in ordered[start:end] if destinations.get(entry["id"]) != "proj_unknown_context"]
     summary = {
         "source_hashes_unchanged": before["source_hashes"] == after["source_hashes"],
         "entry_count": len(after["entries"]), "evidence_count": len(after["evidence"]),
         "evidence_by_project": dict(Counter(row["project_id"] for row in after["evidence"])),
         "unknown_by_status": dict(Counter(row["status"] for row in after["unknown"])),
         "candidate_count": len(after["candidates"]),
+        "candidate_statuses": dict(Counter(row["status"] for row in after["candidates"])),
         "candidate_categories": dict(Counter(row["category"] for row in after["candidates"])),
         "session_counts": {key: len(intelligence.get(key, [])) for key in ("decisions", "requirements", "action_items", "open_questions")},
         "memory_version": after["states"][0]["current_version"],
@@ -61,6 +74,10 @@ def main():
         "pending_translation_entries": pending,
         "missing_fixed_text_dimensions": [e["id"] for e in texts if e.get("autoResize") is not False or not e.get("width") or not e.get("height")],
         "nimbus_candidates_in_harbor": contamination,
+        "active_candidate_scope_violations": scope_violations,
+        "unknown_discussion_entries": end - start,
+        "unknown_discussion_misfiled_entries": unknown_misfiled,
+        "nimbus_in_current_harbor_memory": "nimbus" in json.dumps(after["states"]).lower(),
         "nimbus_project_created": any("nimbus" in project["name"].lower() for project in after["projects"]),
     }
     (OUT / "evaluation.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

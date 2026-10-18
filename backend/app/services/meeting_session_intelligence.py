@@ -902,6 +902,7 @@ class MeetingSessionIntelligenceService:
             "Use the diagram to explain those actual relationships; never invent architecture merely to fill the canvas. "
             "Respect later corrections and rejected proposals. Do not invent open questions or decisions. "
             "Keep independent projects separate. Never invent an integration, shared component or dependency between different projects. "
+            "Do not render schema field names, maintenance footers or provider status as meeting notes. "
             "Some speech recognition terms may be unclear: label them uncertain rather than silently correcting them. "
             "Use the complete discussion itself as context. Project routing, candidate categories, "
             "Project State, approval status, and memory filters must NOT decide what you may use. "

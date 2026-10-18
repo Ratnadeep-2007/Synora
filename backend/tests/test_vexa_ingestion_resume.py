@@ -47,9 +47,11 @@ def test_partial_ingestion_resumes_without_rewriting_evidence(monkeypatch, db_se
     assert db.query(TranscriptEntry).filter_by(transcript_id=transcript.id).count() == 3
     assert db.query(Evidence).filter_by(meeting_id=meeting.id).count() == 3
     assert db.get(Evidence,evidence_id).content == original_content
-    assert len(calls) == 2
+    # Explicit named projects absent from the catalog remain quarantined
+    # across their subsequent fragments without a semantic name guess.
+    assert len(calls) == 0
     assert db.query(SourceEvent).filter(SourceEvent.source_event_id.like("vexa:mtg_resume:%")).count() == 2
     service._persist_transcript(meeting,items,"whisper_faster_whisper","small.en","job","en","recording",db)
     assert db.query(Evidence).filter_by(meeting_id=meeting.id).count() == 3
     assert db.query(TranscriptEntry).filter_by(transcript_id=transcript.id).count() == 3
-    assert len(calls) == 2
+    assert len(calls) == 0

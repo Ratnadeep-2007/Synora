@@ -98,7 +98,18 @@ def reanalyze_saved_meeting(meeting_id, db, actor_id="meeting_reanalysis"):
                 segment["end_seconds"] = max(segment["start_seconds"], ((entry.end_time or entry.start_time) - first_time).total_seconds())
 
     details = {}
-    translations, status, source = translate_segments(segments, source_language, translation_metadata=details)
+    cached = [english_note_text(entry.text, entry.metadata_json, entry.language_code) for entry in entries]
+    cached_meta = [_metadata(entry.metadata_json) for entry in entries]
+    if all(cached) and any(meta.get("text_en") for meta in cached_meta):
+        # Routing/canvas repair reuses accepted translations of the same
+        # immutable source, avoiding quota burn and linguistic drift.
+        translations = {entry.id: text for entry, text in zip(entries, cached)}
+        status = "translated"
+        provenance = next(meta for meta in cached_meta if meta.get("text_en"))
+        source = provenance.get("translation_source") or source_language
+        details.update(successful_ids=list(range(len(entries))), provider=provenance.get("translation_provider") or "stored_translation", reused=True)
+    else:
+        translations, status, source = translate_segments(segments, source_language, translation_metadata=details)
     accepted_ids = set(details.get("successful_ids", []))
     evidence_rows = db.query(Evidence).filter(Evidence.meeting_id == meeting_id).all()
     by_entry = {}
@@ -155,26 +166,11 @@ def reanalyze_saved_meeting(meeting_id, db, actor_id="meeting_reanalysis"):
             automatic_item.assigned_at = None
     db.commit()
     routing_segments = [{**segment, "text": english.get(segment["id"]) or ""} for segment in segments]
-    groups = []
-    anchors = [re.sub(r"[^a-z0-9]+", " ", project.name.lower()).strip() for project in projects]
-    for original_group in service._routing_groups(routing_segments):
-        current = []
-        for index in original_group:
-            normalized = re.sub(r"[^a-z0-9]+", " ", routing_segments[index]["text"].lower()).strip()
-            boundary = normalized.startswith(("now switching", "this is not about", "this is not ")) or any(
-                normalized.startswith(anchor) or normalized.startswith("for " + anchor) for anchor in anchors if anchor
-            )
-            if current and boundary:
-                groups.append(current)
-                current = []
-            current.append(index)
-        if current:
-            groups.append(current)
-    for group in groups:
+    for group, unknown_scope in service._scoped_routing_groups(routing_segments, projects):
         group_text = " ".join(english.get(entries[index].id) or "" for index in group).strip()
         if not group_text:
             continue
-        target = service._resolve_project(group_text, segments[group[0]]["speaker"], meeting, db, projects)
+        target = SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID if unknown_scope else service._resolve_project(group_text, segments[group[0]]["speaker"], meeting, db, projects)
         for index in group:
             entry = entries[index]
             if not english.get(entry.id):
