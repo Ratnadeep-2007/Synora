@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Inbox, Check, AlertTriangle, Plus, X } from "lucide-react";
+import { Inbox, Check, AlertTriangle, Plus, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { Project, UnknownContextItem } from "@/lib/types";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -97,6 +97,36 @@ export function UnknownContextView({ projects, onChanged }: UnknownContextViewPr
     }
   };
 
+  const handleDelete = async (itemId: string) => {
+    if (!window.confirm("Permanently delete this item and its unassigned evidence? This cannot be undone.")) return;
+    setBusy(true);
+    try {
+      await api.deleteUnknownItem(itemId);
+      await load();
+      setSelectedId(null);
+      await onChanged?.();
+    } catch (err: any) {
+      alert(`Delete failed: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteAllPending = async () => {
+    if (!window.confirm(`Permanently delete all ${pendingCount} pending item(s) and their unassigned evidence? Assigned project memory is not affected. This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await api.deleteUnknownItemsBulk("pending");
+      await load();
+      setSelectedId(null);
+      await onChanged?.();
+    } catch (err: any) {
+      alert(`Bulk delete failed: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleCreateProject = async (itemId: string) => {
     if (!newProjectName.trim()) return;
     setBusy(true);
@@ -142,6 +172,15 @@ export function UnknownContextView({ projects, onChanged }: UnknownContextViewPr
             <option value="dismissed">Dismissed</option>
             <option value="">All</option>
           </select>
+          {pendingCount > 0 && (
+            <button
+              disabled={busy}
+              onClick={handleDeleteAllPending}
+              className="px-2.5 py-1.5 rounded-md border border-danger/25 bg-danger/5 text-xs font-semibold text-danger hover:bg-danger/10 disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete all pending
+            </button>
+          )}
         </div>
       </header>
 
@@ -285,6 +324,13 @@ export function UnknownContextView({ projects, onChanged }: UnknownContextViewPr
                   className="px-3 py-1.5 rounded-md text-xs font-medium text-text-muted hover:text-text-main inline-flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <X className="w-3.5 h-3.5" /> Dismiss
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => handleDelete(selected.id)}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold text-danger hover:bg-danger/5 inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete permanently
                 </button>
               </div>
 

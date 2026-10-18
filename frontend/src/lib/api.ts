@@ -443,6 +443,14 @@ export const api = {
       method: "POST",
     }),
 
+  deleteUnknownItem: (itemId: string): Promise<any> =>
+    request(`/unknown-context/items/${itemId}`, { method: "DELETE" }),
+
+  deleteUnknownItemsBulk: (status = "pending"): Promise<any> =>
+    request(`/unknown-context/items?status=${encodeURIComponent(status)}`, {
+      method: "DELETE",
+    }),
+
   // 5c. Visual revision history
   getVisualRevisions: (projectId: string): Promise<any> =>
     request<any>(`/projects/${projectId}/visual/revisions`),

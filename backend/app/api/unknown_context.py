@@ -243,6 +243,47 @@ def dismiss_unknown_item(
     )
 
 
+@router.delete(
+    "/items/{item_id}",
+    summary="Permanently delete an Unknown Context item",
+    description="Hard delete: removes the inbox item, its matches, cluster membership, and its still-unassigned evidence/source event. Evidence already assigned to a real project is never deleted here.",
+)
+def delete_unknown_item(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant = _tenant(current_user)
+    try:
+        result = service.delete_item(
+            item_id, db, actor_id=current_user.id, tenant_id=tenant
+        )
+    except UnknownContextError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {"success": True, "message": "Item permanently deleted.", **result}
+
+
+@router.delete(
+    "/items",
+    summary="Permanently delete Unknown Context items in bulk",
+    description="Deletes every item in the requested status (default: pending). Use to clear the inbox; project memory is unaffected.",
+)
+def delete_unknown_items_bulk(
+    status_filter: str = Query("pending", alias="status"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tenant = _tenant(current_user)
+    result = service.delete_pending(
+        db, actor_id=current_user.id, tenant_id=tenant, status=status_filter
+    )
+    return {
+        "success": True,
+        "message": f"Deleted {result['deleted_items']} Unknown Context item(s).",
+        **result,
+    }
+
+
 # ------------------------------------------------------------------
 # Cluster Management & Project Draft Endpoints
 # ------------------------------------------------------------------

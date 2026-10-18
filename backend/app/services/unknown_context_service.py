@@ -637,6 +637,118 @@ class UnknownContextService:
         )
         return item
 
+    def delete_item(
+        self, item_id: str, db: Session, actor_id: str, tenant_id: str = "default_tenant"
+    ) -> Dict[str, Any]:
+        """Hard-delete one Unknown Context item and its unassigned content.
+
+        Unlike dismiss (a soft status), this removes the inbox record, its
+        project matches, its cluster membership, and - only while the linked
+        evidence still belongs to the Unknown Context system project - the
+        evidence and source event themselves. Evidence that was already
+        assigned into a real project is project memory and is never deleted
+        from here.
+        """
+        item = self.get_item(item_id, db, tenant_id)
+        return self._delete_items([item], db, actor_id, tenant_id)
+
+    def delete_pending(
+        self, db: Session, actor_id: str, tenant_id: str = "default_tenant",
+        status: str = UnknownItemStatus.PENDING.value,
+    ) -> Dict[str, Any]:
+        """Hard-delete every item in the given inbox status (bulk clear)."""
+        items = (
+            db.query(UnknownContextItem)
+            .filter(
+                UnknownContextItem.tenant_id == tenant_id,
+                UnknownContextItem.status == status,
+            )
+            .all()
+        )
+        return self._delete_items(items, db, actor_id, tenant_id)
+
+    def _delete_items(
+        self, items: List[UnknownContextItem], db: Session, actor_id: str, tenant_id: str
+    ) -> Dict[str, Any]:
+        from app.models.unknown_cluster import UnknownCluster
+
+        item_ids = [item.id for item in items]
+        evidence_deleted = 0
+        for item in items:
+            if item.evidence_id:
+                evidence = (
+                    db.query(Evidence).filter(Evidence.id == item.evidence_id).first()
+                )
+                if evidence and evidence.project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
+                    source_event_id = evidence.source_event_id
+                    db.delete(evidence)
+                    evidence_deleted += 1
+                    if source_event_id:
+                        event = (
+                            db.query(SourceEvent)
+                            .filter(SourceEvent.event_id == source_event_id)
+                            .first()
+                        )
+                        if event and event.project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
+                            db.delete(event)
+            db.query(PossibleProjectMatch).filter(
+                PossibleProjectMatch.unknown_item_id == item.id
+            ).delete(synchronize_session=False)
+            db.delete(item)
+
+        if item_ids:
+            for cluster in db.query(UnknownCluster).filter(
+                UnknownCluster.tenant_id == tenant_id
+            ).all():
+                retained = [i for i in cluster.get_item_ids() if i not in item_ids]
+                if len(retained) != len(cluster.get_item_ids()):
+                    if retained:
+                        cluster.set_item_ids(retained)
+                    else:
+                        db.delete(cluster)
+        db.commit()
+
+        # Refresh both visual surfaces so deleted notes vanish immediately.
+        for refresher in ("board", "atlas"):
+            try:
+                if refresher == "board":
+                    from app.services.unknown_context_visual import (
+                        render_unknown_context_board,
+                    )
+
+                    render_unknown_context_board(db, tenant_id=tenant_id)
+                else:
+                    from app.services.workspace_atlas_service import (
+                        WorkspaceAtlasService,
+                    )
+
+                    WorkspaceAtlasService().get_or_sync(
+                        db=db, tenant_id=tenant_id, workspace_id="ws_default", force=False
+                    )
+            except Exception as exc:
+                logger.warning("unknown_context_delete_%s_refresh_failed: %s", refresher, exc)
+
+        self.audit_service.record_event(
+            action="unknown_context_deleted",
+            actor_id=actor_id,
+            resource_type="unknown_context_item",
+            resource_id=item_ids[0] if len(item_ids) == 1 else "bulk",
+            db=db,
+            tenant_id=tenant_id,
+            after_state={"deleted_items": len(item_ids), "deleted_evidence": evidence_deleted},
+        )
+        logger.info(
+            "unknown_context_deleted: items=%d evidence=%d actor=%s",
+            len(item_ids),
+            evidence_deleted,
+            actor_id,
+        )
+        return {
+            "deleted_items": len(item_ids),
+            "deleted_evidence": evidence_deleted,
+            "item_ids": item_ids,
+        }
+
     def create_project_from_item(
         self,
         item_id: str,

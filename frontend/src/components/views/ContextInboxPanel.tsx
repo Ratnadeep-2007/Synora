@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Check, CircleX, Inbox, Loader2, Plus, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, CircleX, Inbox, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Project, UnknownContextItem } from "@/lib/types";
 import { SourceArtifactPreview } from "@/components/common/SourceArtifactPreview";
@@ -113,6 +113,36 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
     }
   };
 
+  const deleteItem = async (itemId: string) => {
+    if (!window.confirm("Permanently delete this item and its unassigned evidence? This cannot be undone.")) return;
+    setBusy(true);
+    try {
+      await api.deleteUnknownItem(itemId);
+      setSelectedId(null);
+      await load();
+      await onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteAllPending = async () => {
+    if (!window.confirm(`Permanently delete all ${pendingCount} pending item(s) and their unassigned evidence? Assigned project memory is not affected. This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await api.deleteUnknownItemsBulk("pending");
+      setSelectedId(null);
+      await load();
+      await onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk delete failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createProject = async () => {
     if (!selected || !newProjectName.trim()) return;
     setCreating(true);
@@ -156,6 +186,17 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
             <RefreshCw className={"h-3.5 w-3.5 " + (loading ? "animate-spin" : "")} />
             Refresh
           </button>
+          {pendingCount > 0 && (
+            <button
+              type="button"
+              onClick={deleteAllPending}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-danger/25 bg-danger/5 px-2.5 py-1.5 text-[11px] font-semibold text-danger hover:bg-danger/10 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete all pending
+            </button>
+          )}
         </div>
       </div>
 
@@ -321,15 +362,26 @@ export function ContextInboxPanel({ projects, pendingCount, onChanged }: Context
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => dismiss(selected.id)}
-                disabled={busy}
-                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-text-muted hover:text-text-main disabled:opacity-50"
-              >
-                <CircleX className="h-3.5 w-3.5" />
-                Dismiss as irrelevant
-              </button>
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => dismiss(selected.id)}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-medium text-text-muted hover:text-text-main disabled:opacity-50"
+                >
+                  <CircleX className="h-3.5 w-3.5" />
+                  Dismiss as irrelevant
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteItem(selected.id)}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-danger hover:text-danger disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete permanently
+                </button>
+              </div>
             </div>
           )}
         </div>
