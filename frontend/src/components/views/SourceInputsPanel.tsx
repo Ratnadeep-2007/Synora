@@ -1,10 +1,25 @@
 "use client";
 
-import { useState } from "react";
-import { SourceArtifactPreview } from "@/components/common/SourceArtifactPreview";
-import { AudioLines, FileText, ImagePlus, LoaderCircle, Upload } from "lucide-react";
-import { api, InputOutcome } from "@/lib/api";
+import { useRef, useState } from "react";
+import { Check, FileText, LoaderCircle, Plus, Upload, X } from "lucide-react";
+import { api, type InputOutcome } from "@/lib/api";
 import { Project } from "@/lib/types";
+
+const MAX_BYTES = 10 * 1024 * 1024;
+const DOCUMENTS = new Set(["txt", "md", "csv", "tsv", "vtt", "srt", "pdf", "docx"]);
+const IMAGES = new Set(["png", "jpg", "jpeg", "webp"]);
+const AUDIO = new Set(["mp3", "m4a", "ogg", "opus", "webm", "wav", "flac"]);
+const ACCEPT = [Array.from(DOCUMENTS), Array.from(IMAGES), Array.from(AUDIO)].flat().map(extension => `.${extension}`).join(",");
+type QueuedFile = { id: number; file: File; status: "queued" | "processing" | "saved" | "failed"; message?: string; transcript?: { text: string; artifactId?: string } };
+
+function extension(file: File) { return file.name.split(".").pop()?.toLowerCase() || ""; }
+function outcomeMessage(outcome: InputOutcome) {
+  if (outcome.outcome === "duplicate") return "Already added";
+  if (outcome.outcome === "unknown_context") return "Saved to Context Inbox for review";
+  if (outcome.conflicts_detected) return `Saved · ${outcome.conflicts_detected} conflict${outcome.conflicts_detected === 1 ? "" : "s"} to review`;
+  if (outcome.outcome === "resolved") return "Source saved";
+  return outcome.reason || "Processed; no memory change";
+}
 
 export function SourceInputsPanel({ projects, selectedProject, onChanged }: {
   projects: Project[];
@@ -12,167 +27,154 @@ export function SourceInputsPanel({ projects, selectedProject, onChanged }: {
   onChanged?: () => Promise<void> | void;
 }) {
   const [target, setTarget] = useState(selectedProject?.id || "");
-  const [title, setTitle] = useState("");
+  const [files, setFiles] = useState<QueuedFile[]>([]);
   const [text, setText] = useState("");
-  const [docFile, setDocFile] = useState<File | null>(null);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [audioArtifactId, setAudioArtifactId] = useState<string | undefined>();
-  const [retainOriginal, setRetainOriginal] = useState(true);
-  const [imagePreview, setImagePreview] = useState("");
+  const [showText, setShowText] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [transcriptNote, setTranscriptNote] = useState("");
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<InputOutcome | null>(null);
+  const [notice, setNotice] = useState("");
+  const [progress, setProgress] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  const nextId = useRef(0);
+  const inFlight = useRef(false);
+  const dragDepth = useRef(0);
   const targetProjectId = selectedProject?.id || target || undefined;
-  const inputClass = "w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-text-main placeholder:text-text-dim outline-none transition focus:border-border-active focus:ring-2 focus:ring-black/5";
-  const buttonClass = "inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary px-3.5 text-xs font-semibold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50";
+  const pendingFiles = files.filter(item => item.status === "queued" || item.status === "failed");
 
-  const pickImage = (file: File | null) => {
-    setImageFile(file);
-    setImagePreview((prev) => {
-      if (prev.startsWith("blob:")) URL.revokeObjectURL(prev);
-      return file ? URL.createObjectURL(file) : "";
+  const addFiles = (incoming: FileList | File[]) => {
+    if (inFlight.current) return;
+    setNotice("");
+    const rejected: string[] = [];
+    const accepted: QueuedFile[] = [];
+    for (const file of Array.from(incoming)) {
+      const ext = extension(file);
+      if (!DOCUMENTS.has(ext) && !IMAGES.has(ext) && !AUDIO.has(ext)) {
+        rejected.push(`${file.name}: this format is not supported yet.`);
+      } else if (!file.size || file.size > MAX_BYTES) {
+        rejected.push(`${file.name}: choose a non-empty file up to 10 MB.`);
+      } else {
+        accepted.push({ id: ++nextId.current, file, status: "queued" });
+      }
+    }
+    setFiles(current => {
+      const known = new Set(current.map(item => `${item.file.name}:${item.file.size}:${item.file.lastModified}`));
+      return [...current, ...accepted.filter(item => {
+        const key = `${item.file.name}:${item.file.size}:${item.file.lastModified}`;
+        if (known.has(key)) return false;
+        known.add(key);
+        return true;
+      })];
     });
+    setError(rejected.join(" "));
+    if (input.current) input.current.value = "";
   };
 
-  const run = async (action: () => Promise<InputOutcome>) => {
+  const submit = async () => {
+    if (inFlight.current || (!pendingFiles.length && !text.trim())) return;
+    inFlight.current = true;
     setBusy(true);
     setError("");
-    setResult(null);
+    setNotice("");
+    let saved = 0;
+    const failures: string[] = [];
+    const update = (id: number, patch: Partial<QueuedFile>) => setFiles(current => current.map(item => item.id === id ? { ...item, ...patch } : item));
     try {
-      const outcome = await action();
-      setResult(outcome);
-      if (outcome.outcome === "resolved" || outcome.outcome === "duplicate") {
-        setText("");
-        setTitle("");
-        setDocFile(null);
-        setAudioFile(null);
-        setAudioArtifactId(undefined);
-        pickImage(null);
-        setTranscriptNote("");
+      // Sequential uploads keep large audio/image requests and AI quotas bounded.
+      for (const item of pendingFiles) {
+        update(item.id, { status: "processing", message: undefined });
+        try {
+          let outcome: InputOutcome;
+          if (AUDIO.has(extension(item.file))) {
+            let transcript = item.transcript;
+            if (!transcript) {
+              setProgress(`Transcribing ${item.file.name}...`);
+              const response = await api.transcribeContextAudio(item.file, targetProjectId, true);
+              if (!response.success || !response.text.trim()) throw new Error(response.error || "No transcript was returned. Please retry.");
+              transcript = { text: response.text, artifactId: response.artifact_id };
+              update(item.id, { transcript });
+            }
+            setProgress(`Adding ${item.file.name}...`);
+            outcome = await api.ingestManualText(transcript.text, targetProjectId, item.file.name, transcript.artifactId);
+          } else {
+            setProgress(`Processing ${item.file.name}...`);
+            outcome = await api.uploadSourceFile(item.file, targetProjectId);
+          }
+          saved += 1;
+          update(item.id, { status: "saved", message: outcomeMessage(outcome) });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : "Could not process this file.";
+          failures.push(`${item.file.name}: ${message}`);
+          update(item.id, { status: "failed", message });
+        }
       }
-      await onChanged?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Submission failed");
+      if (text.trim()) {
+        try {
+          setProgress("Adding your note...");
+          const outcome = await api.ingestManualText(text.trim(), targetProjectId, "Project context note");
+          saved += 1;
+          setText("");
+          setNotice(outcomeMessage(outcome));
+        } catch (err: unknown) {
+          failures.push(err instanceof Error ? err.message : "Could not save your note.");
+        }
+      }
+      if (saved) {
+        setNotice(`${saved} source${saved === 1 ? "" : "s"} processed. Review extracted context and any conflicts.`);
+        try { await onChanged?.(); } catch { setNotice("Sources saved. Reopen Project Context to refresh the results."); }
+      }
+      if (failures.length) setError(failures.join(" "));
     } finally {
+      setProgress("");
       setBusy(false);
-    }
-  };
-
-  const transcribe = async () => {
-    if (!audioFile) return;
-    setTranscribing(true);
-    setError("");
-    setTranscriptNote("");
-    try {
-      const response = await api.transcribeContextAudio(audioFile, targetProjectId, retainOriginal);
-      setAudioArtifactId(response.artifact_id);
-      if (!response.success) throw new Error(response.error || "Transcription needs a retry. The original recording is retained.");
-      setText(response.text);
-      setTitle(`Audio transcript — ${response.filename}`);
-      const duration = response.duration_seconds ? ` · ${Math.round(response.duration_seconds)} sec` : "";
-      setTranscriptNote(`Transcript ready${duration}. Review or edit it before adding it to project memory.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Audio transcription failed");
-    } finally {
-      setTranscribing(false);
+      inFlight.current = false;
     }
   };
 
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-xs">
-      <div className="border-b border-border-subtle px-5 py-4 sm:px-6">
-        <div className="flex items-start gap-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border bg-surface-muted text-text-muted"><Upload className="h-4 w-4" /></span>
-          <div>
-            <h2 className="text-sm font-semibold text-text-main">Add project context</h2>
-            <p className="mt-1 text-xs leading-relaxed text-text-muted">Add a focused note, document, transcript, or audio. Synora extracts useful facts and keeps the original evidence linked for traceability.</p>
-          </div>
-        </div>
-        {!selectedProject && (
-          <label className="mt-4 block max-w-sm space-y-1.5 text-xs font-medium text-text-muted">
-            Route to project
-            <select className={inputClass} value={target} disabled={busy || transcribing} onChange={(event) => setTarget(event.target.value)}>
-              <option value="">Automatically match a project</option>
-              {projects.filter((project) => project.id !== "proj_unknown_context" && !(project as any).is_system).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-            </select>
-          </label>
-        )}
+    <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-xs" aria-label="Add project context" aria-busy={busy}>
+      <div className="px-5 pt-5 sm:px-6 sm:pt-6">
+        <h2 className="text-sm font-semibold text-text-main">Add context</h2>
+        <p className="mt-1 text-xs leading-relaxed text-text-muted">Drop your files here. Synora reads the content and connects it to {selectedProject?.name || "your project"}.</p>
+        {!selectedProject && <label className="mt-4 block text-xs font-medium text-text-muted">Project
+          <select className="mt-1.5 w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm" value={target} disabled={busy} onChange={event => setTarget(event.target.value)}>
+            <option value="">Automatically match a project</option>
+            {projects.filter(project => project.id !== "proj_unknown_context").map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+        </label>}
       </div>
 
-      <div className="grid gap-0 lg:grid-cols-[1.1fr_.9fr]">
-        <div className="space-y-4 border-b border-border-subtle p-5 sm:p-6 lg:border-b-0 lg:border-r">
-          <div>
-            <label htmlFor="context-title" className="mb-1.5 block text-xs font-semibold text-text-main">Source title <span className="font-normal text-text-dim">(optional)</span></label>
-            <input id="context-title" className={inputClass} value={title} maxLength={255} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Product discovery meeting — Oct 13" />
-          </div>
-          <div>
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <label htmlFor="manual-source" className="text-xs font-semibold text-text-main">Text or transcript</label>
-              <span className="text-[10px] tabular-nums text-text-dim">{text.length.toLocaleString()} / 200,000</span>
-            </div>
-            <textarea id="manual-source" className={`${inputClass} min-h-52 resize-y leading-relaxed`} rows={9} value={text} maxLength={200000} disabled={busy || transcribing}
-              onChange={(event) => setText(event.target.value)} placeholder="Paste meeting notes, decisions, requirements, or a transcript…" />
-            {transcriptNote && <p className="mt-2 text-[11px] leading-relaxed text-text-muted" role="status">{transcriptNote}</p>}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4">
-            <p className="max-w-sm text-[10px] leading-relaxed text-text-dim">Useful project facts are extracted into memory. The source remains available as evidence; repeated facts are deduplicated by the memory pipeline.</p>
-            <button className={buttonClass} disabled={busy || transcribing || !text.trim()} onClick={() => run(() => api.ingestManualText(text, targetProjectId, title.trim() || "Project context note", audioArtifactId))}>
-              {busy ? <><LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Processing…</> : "Add to project memory"}
-            </button>
-          </div>
+      <div className="space-y-4 p-5 sm:p-6">
+        <input ref={input} type="file" multiple accept={ACCEPT} disabled={busy} className="sr-only" aria-label="Choose context files" onChange={event => { if (event.target.files) addFiles(event.target.files); }} />
+        <button type="button" disabled={busy} onClick={() => input.current?.click()}
+          onDragEnter={event => { event.preventDefault(); if (busy) return; dragDepth.current += 1; setDragging(true); }}
+          onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = busy ? "none" : "copy"; }}
+          onDragLeave={event => { event.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragging(false); }}
+          onDrop={event => { event.preventDefault(); dragDepth.current = 0; setDragging(false); addFiles(event.dataTransfer.files); }}
+          className={`flex min-h-52 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-8 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-wait disabled:opacity-60 ${dragging ? "border-primary bg-primary/5" : "border-border bg-canvas hover:border-border-active hover:bg-surface-muted/50"}`}>
+          <span className="mb-3 grid h-11 w-11 place-items-center rounded-xl border border-border bg-surface text-text-muted"><Upload className="h-5 w-5" /></span>
+          <span className="text-sm font-medium text-text-main">{dragging ? "Drop files to add them" : "Drag and drop files, or browse"}</span>
+          <span className="mt-2 text-xs text-text-muted">Documents, images, transcripts and audio</span>
+          <span className="mt-1 max-w-sm text-[10px] leading-relaxed text-text-dim">PDF, DOCX, TXT, Markdown, CSV, TSV, VTT, SRT, PNG, JPG, WebP, MP3, M4A, WAV, OGG, Opus, WebM, FLAC · up to 10 MB per file</span>
+        </button>
+
+        {files.length > 0 && <ul className="divide-y divide-border-subtle rounded-lg border border-border" aria-label="Selected files">{files.map(item => <li key={item.id} className="flex items-start gap-3 px-3 py-3">
+          {item.status === "processing" ? <LoaderCircle className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-text-muted" /> : item.status === "saved" ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> : <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />}
+          <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium text-text-main">{item.file.name}</p><p className={`mt-1 break-words text-[10px] ${item.status === "failed" ? "text-danger" : "text-text-muted"}`}>{item.message || `${(item.file.size / 1024 / 1024).toFixed(2)} MB · ${item.status === "processing" ? "Processing" : "Ready to add"}`}</p></div>
+          <button type="button" disabled={busy} aria-label={`Remove ${item.file.name}`} onClick={() => setFiles(current => current.filter(file => file.id !== item.id))} className="rounded p-1 text-text-muted hover:bg-canvas disabled:opacity-40"><X className="h-3.5 w-3.5" /></button>
+        </li>)}</ul>}
+
+        <button type="button" disabled={busy} onClick={() => setShowText(current => !current)} aria-expanded={showText} aria-controls="context-text-input" className="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text-main disabled:opacity-50"><Plus className="h-3.5 w-3.5" />{showText ? "Hide text editor" : "Or paste text"}</button>
+        {showText && <div id="context-text-input"><label htmlFor="context-note" className="sr-only">Text or transcript</label><textarea id="context-note" value={text} maxLength={200000} disabled={busy} onChange={event => setText(event.target.value)} rows={6} placeholder="Paste notes, requirements, or a transcript..." className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-border-active focus:ring-2 focus:ring-black/5" /><p className="mt-1 text-right text-[10px] text-text-dim">{text.length.toLocaleString()} / 200,000</p></div>}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4">
+          <p className="max-w-sm text-[10px] leading-relaxed text-text-dim">Original sources stay linked. Conflicting changes are held for review.</p>
+          <button type="button" onClick={() => { void submit(); }} disabled={busy || (!pendingFiles.length && !text.trim())} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-xs font-semibold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50">{busy ? <><LoaderCircle className="h-3.5 w-3.5 animate-spin" />Processing...</> : "Add to project"}</button>
         </div>
-
-        <div className="space-y-5 p-5 sm:p-6">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-text-main"><FileText className="h-3.5 w-3.5 text-text-muted" /> Documents and images</div>
-            <label htmlFor="source-doc" className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border bg-canvas px-4 py-4 text-center transition hover:border-border-active hover:bg-surface-muted/60">
-              <Upload className="mb-2 h-4 w-4 text-text-muted" />
-              <span className="text-xs font-medium text-text-main">{docFile?.name || "Choose a document"}</span>
-              <span className="mt-1 text-[10px] text-text-dim">TXT, Markdown, CSV, VTT, SRT, PDF or DOCX · max 10 MB</span>
-              <input id="source-doc" className="sr-only" type="file" disabled={busy} accept=".txt,.md,.csv,.tsv,.vtt,.srt,.pdf,.docx" onChange={(event) => setDocFile(event.target.files?.[0] || null)} />
-            </label>
-            <button className={`${buttonClass} mt-2`} disabled={busy || !docFile} onClick={() => docFile && run(() => api.uploadSourceFile(docFile, targetProjectId, title.trim() || undefined))}>Process document</button>
-          </div>
-
-          <div className="border-t border-border-subtle pt-5">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-text-main"><ImagePlus className="h-3.5 w-3.5 text-text-muted" /> Image or whiteboard</div>
-            <label htmlFor="source-image" className="flex min-h-20 cursor-pointer items-center gap-3 rounded-lg border border-dashed border-border bg-canvas px-4 py-3 transition hover:border-border-active hover:bg-surface-muted/60">
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-surface text-text-muted"><ImagePlus className="h-4 w-4" /></span>
-              <span className="min-w-0"><span className="block truncate text-xs font-medium text-text-main">{imageFile?.name || "Choose an image"}</span><span className="mt-1 block text-[10px] text-text-dim">PNG, JPG or WebP · max 10 MB</span></span>
-              <input id="source-image" className="sr-only" type="file" disabled={busy} accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={(event) => pickImage(event.target.files?.[0] || null)} />
-            </label>
-            {imagePreview && <img src={imagePreview} alt="Selected context upload preview" className="mt-2 max-h-32 rounded-md border border-border object-contain" />}
-            <button className={`${buttonClass} mt-2`} disabled={busy || !imageFile} onClick={() => imageFile && run(() => api.uploadSourceFile(imageFile, targetProjectId, title.trim() || undefined))}>Analyze image</button>
-          </div>
-
-          <div className="border-t border-border-subtle pt-5">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-text-main"><AudioLines className="h-3.5 w-3.5 text-text-muted" /> Audio recording</div>
-            <label htmlFor="context-audio" className="flex min-h-20 cursor-pointer items-center gap-3 rounded-lg border border-dashed border-border bg-canvas px-4 py-3 transition hover:border-border-active hover:bg-surface-muted/60">
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-surface text-text-muted"><AudioLines className="h-4 w-4" /></span>
-              <span className="min-w-0"><span className="block truncate text-xs font-medium text-text-main">{audioFile?.name || "Choose an audio file"}</span><span className="mt-1 block text-[10px] text-text-dim">MP3, M4A, WAV, OGG, WebM or FLAC · max 10 MB</span></span>
-              <input id="context-audio" className="sr-only" type="file" disabled={busy || transcribing} accept="audio/*,.mp3,.m4a,.ogg,.opus,.webm,.wav,.flac" onChange={(event) => { setAudioFile(event.target.files?.[0] || null); setTranscriptNote(""); }} />
-            </label>
-            <button className={`${buttonClass} mt-2`} disabled={!audioFile || busy || transcribing} onClick={transcribe}>
-              {transcribing ? <><LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Transcribing…</> : "Transcribe to editable text"}
-            </button>
-            <label className="mt-3 flex items-center gap-2 text-[11px] text-text-muted"><input type="checkbox" checked={retainOriginal} onChange={(event) => setRetainOriginal(event.target.checked)} />Keep the original recording with the transcript</label>
-            <p className="mt-2 text-[10px] leading-relaxed text-text-dim">Review the transcript before submitting. Retained recordings remain available for source inspection and retry.</p>
-            <SourceArtifactPreview artifactId={audioArtifactId} onUseTranscript={setText} />
-          </div>
-        </div>
-      </div>
-
-      {(error || result) && <div className="border-t border-border-subtle px-5 py-4 sm:px-6">
+        {progress && <p role="status" className="text-xs text-text-muted">{progress}</p>}
+        {notice && <p role="status" className="rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-text-main">{notice}</p>}
         {error && <p role="alert" className="rounded-lg border border-danger/20 bg-danger/5 px-3 py-2 text-xs text-danger">{error}</p>}
-        {result && <div role="status" className="rounded-lg border border-border bg-surface-muted/60 px-3.5 py-3 text-xs">
-          <strong className="text-text-main">{result.outcome === "unknown_context" ? "Saved in Context Inbox for review" : result.outcome === "resolved" && result.conflicts_detected ? `${result.conflicts_detected} conflict${result.conflicts_detected === 1 ? "" : "s"} need review` : result.outcome === "resolved" ? "Source added to project memory" : result.outcome === "duplicate" ? "This source was already submitted" : "No project memory change"}</strong>
-          <p className="mt-1 leading-relaxed text-text-muted">{result.conflicts_detected ? "The conflicting proposal was held out of memory. Review it below before deciding whether to replace the current project decision." : result.reason}</p>
-          {!!result.candidates_created && <p className="mt-1 text-[10px] text-text-dim">{result.candidates_created} memory candidate{result.candidates_created === 1 ? "" : "s"} extracted · evidence ID {result.evidence_id || "pending"}</p>}
-        </div>}
-      </div>}
+      </div>
     </section>
   );
 }

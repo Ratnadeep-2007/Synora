@@ -101,13 +101,17 @@ function HomeWorkspace() {
   });
 
   const refreshInFlight = useRef(false);
+  const refreshEpoch = useRef(0);
+  const projectDeletionInFlight = useRef(false);
 
   // Keep slow cloud requests from accumulating overlapping refresh batches.
   const refreshAll = useCallback(async (preferredProjectId?: string | null) => {
-    if (refreshInFlight.current) return;
+    if (refreshInFlight.current || projectDeletionInFlight.current) return;
+    const epoch = refreshEpoch.current;
     refreshInFlight.current = true;
     try {
       const projListData = await api.getProjects().catch(() => [] as Project[]);
+      if (epoch !== refreshEpoch.current) return;
       setProjects((prev) => {
         if (
           prev.length === projListData.length &&
@@ -130,6 +134,7 @@ function HomeWorkspace() {
           api.getWorkspaceAtlas(),
           api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
         ]);
+        if (epoch !== refreshEpoch.current) return;
         if (atlasResult.status === "fulfilled") {
           setAtlasData((prev) => {
             if (!prev) return atlasResult.value;
@@ -160,7 +165,7 @@ function HomeWorkspace() {
       const activeId =
         preferredProjectId !== undefined
           ? preferredProjectId
-          : currentProjectId || projListData[0]?.id || null;
+          : (projListData.some((project) => project.id === currentProjectId) ? currentProjectId : projListData[0]?.id) || null;
       if (!activeId) {
         setState(null);
         setHistory([]);
@@ -172,7 +177,7 @@ function HomeWorkspace() {
         setExcalProposals([]);
         return;
       }
-      if (!currentProjectId) setCurrentProjectId(activeId);
+      if (currentProjectId !== activeId) setCurrentProjectId(activeId);
 
       const [
         stateData,
@@ -204,6 +209,7 @@ function HomeWorkspace() {
         api.getUnknownContextSummary().catch(() => ({ pending: 0 })),
       ]);
 
+      if (epoch !== refreshEpoch.current) return;
       if (stateData.status === "fulfilled") {
         setState((prev) => (prev?.current_version === stateData.value?.current_version ? prev : stateData.value));
       }
@@ -239,7 +245,7 @@ function HomeWorkspace() {
     } catch (err) {
       console.error("Failed to load project context:", err);
     } finally {
-      refreshInFlight.current = false;
+      if (epoch === refreshEpoch.current) refreshInFlight.current = false;
     }
   }, [currentProjectId, currentTab]);
 
@@ -387,6 +393,10 @@ function HomeWorkspace() {
   };
 
   const handleDeleteProject = async (projectId: string) => {
+    if (projectDeletionInFlight.current) throw new Error("Project deletion is already in progress.");
+    projectDeletionInFlight.current = true;
+    refreshEpoch.current += 1;
+    refreshInFlight.current = false;
     try {
       await api.deleteProject(projectId);
 
@@ -397,6 +407,11 @@ function HomeWorkspace() {
       setCurrentProjectId(nextProjectId);
       setCurrentTab("overview");
       setSelectedMeetingId(null);
+      setMeetingDetail(null);
+      setMeetingCanvas(null);
+      evidenceRequest.current += 1;
+      setDrawerOpen(false);
+      setDrawerData({ title: "", contextType: "", evidenceItems: [] });
 
       setState(null);
       setHistory([]);
@@ -411,12 +426,10 @@ function HomeWorkspace() {
       setMeetSubscriptions([]);
       setMeetEvents([]);
       setUnknownPendingCount(0);
-      setAtlasData(null);
-
-      await api.syncWorkspaceAtlas().catch(() => null);
-      await refreshAll(nextProjectId);
     } catch (err: any) {
       throw new Error(err.message || "Project deletion failed");
+    } finally {
+      projectDeletionInFlight.current = false;
     }
   };
 

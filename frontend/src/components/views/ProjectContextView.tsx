@@ -44,6 +44,11 @@ export function ProjectContextView({
   const [briefing, setBriefing] = useState<ProjectMemoryBriefing | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState(false);
+  const memoryRefreshKey = JSON.stringify([
+    evidence.map(item => item.id),
+    candidates.map(item => [item.id, item.status]),
+    conflicts.map(item => [item.id, item.status]),
+  ]);
   useEffect(() => {
     let cancelled = false;
     const projectId = project?.id;
@@ -63,7 +68,7 @@ export function ProjectContextView({
       if (!cancelled) setBriefingLoading(false);
     });
     return () => { cancelled = true; };
-  }, [project?.id, evidence, candidates, conflicts]);
+  }, [project?.id, memoryRefreshKey]);
   const currentBriefing = briefing?.project_id === project?.id ? briefing : null;
   const memoryRows = (["constraints", "decisions", "open_questions", "requirements"] as const).flatMap((section) =>
     (currentBriefing?.project_state[section] || []).slice(0, 3).map((item, index) => ({
@@ -117,7 +122,7 @@ export function ProjectContextView({
       </section>}
 
       <section className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(280px,.7fr)] xl:items-start">
-        <SourceInputsPanel projects={projects} selectedProject={project} onChanged={onChanged} />
+        <SourceInputsPanel key={project.id} projects={projects} selectedProject={project} onChanged={onChanged} />
 
         <aside className="space-y-4">
           <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-xs" aria-label="Current project memory">

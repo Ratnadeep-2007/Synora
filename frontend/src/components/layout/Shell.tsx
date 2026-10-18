@@ -180,7 +180,7 @@ export function Shell({
 
   const submitDelete = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedProject || deleteText.trim().toUpperCase() !== "DELETE" || !onDeleteProject) return;
+    if (deleting || !selectedProject || deleteText.trim().toUpperCase() !== "DELETE" || !onDeleteProject) return;
     try {
       setDeleting(true);
       await onDeleteProject(selectedProject.id);
@@ -802,10 +802,10 @@ export function Shell({
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold">Delete {selectedProject.name}?</h2>
                 <p className="mt-1 text-[10px] leading-relaxed text-text-muted">
-                  This permanently removes the project state, evidence references and visual artifact. This cannot be undone.
+                  Permanently deletes this project's memory and history, uploaded files, evidence, proposals, conflicts and canvases. Meetings used by other projects are preserved. This cannot be undone.
                 </p>
               </div>
-              <button type="button" onClick={() => setDeleteOpen(false)} className="ml-auto rounded-lg p-1.5 text-text-dim hover:bg-canvas hover:text-text-main">
+              <button type="button" disabled={deleting} aria-label="Close delete project dialog" onClick={() => setDeleteOpen(false)} className="ml-auto rounded-lg p-1.5 text-text-dim hover:bg-canvas hover:text-text-main disabled:opacity-50">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -818,6 +818,7 @@ export function Shell({
                 <input
                   autoFocus
                   value={deleteText}
+                  disabled={deleting}
                   onChange={(event) => setDeleteText(event.target.value)}
                   className="mt-2 w-full rounded-xl border border-border bg-canvas px-3 py-2.5 text-sm focus:border-danger focus:outline-none"
                   placeholder="DELETE"
@@ -828,6 +829,7 @@ export function Shell({
                 <button
                   type="button"
                   onClick={() => setDeleteOpen(false)}
+                  disabled={deleting}
                   className="rounded-xl px-3 py-2 text-xs font-semibold text-text-muted hover:bg-canvas hover:text-text-main"
                 >
                   Cancel

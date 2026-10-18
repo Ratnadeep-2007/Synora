@@ -161,6 +161,9 @@ def create_project(
     try:
         from app.services.unknown_context_service import UnknownContextService
 
+        # Bounded re-rank (most recent pending items): an unbounded refresh
+        # over a large Unknown Context backlog previously held project
+        # creation past the frontend's 90s timeout on a warm backend.
         refreshed = UnknownContextService().refresh_pending_suggestions(
             db,
             tenant_id=getattr(current_user, "tenant_id", "default_tenant"),
@@ -232,116 +235,40 @@ def delete_project(
     current_user: User = Depends(get_current_user),
 ):
     """Hard-delete a user project while preserving the reserved system project."""
-    from app.models.context_resolution import (
-        ContextResolution,
-        PossibleProjectMatch,
-        UnknownContextItem,
-        UnknownItemStatus,
-    )
-    from app.models.evidence import Evidence
-    from app.models.excalidraw import ExcalidrawArtifact
-    from app.models.intelligence import AgentRun, CandidateKnowledge
-    from app.models.meeting import Meeting
-    from app.models.meet_event_record import MeetEventRecord
-    from app.models.meet_subscription import MeetSubscription
-    from app.models.project_domain import ProjectDomainProfile
-    from app.models.project_state import ProjectState
-    from app.models.source_event import SourceEvent
-    from app.models.task_job import TaskJob
-    from app.models.memory_engine import MemoryClaimRevision, MemoryIndex, MemoryTerm, SourceArtifact, TopicWindow
-    from app.models.proactive_memory import ProactiveEvent, ProactiveHint
-    from app.models.visual_revision import VisualWorkspace
+    from app.core.config import settings
+    from app.models.workspace_membership import WorkspaceMembership
+    from app.services.project_deletion_service import ProjectDeletionBusy, purge_project_data
 
     if project_id == "proj_unknown_context":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The reserved Unknown Context system project cannot be deleted.",
-        )
+        raise HTTPException(status_code=400, detail="The reserved Unknown Context system project cannot be deleted.")
+    if settings.AUTH_REQUIRED and not db.query(WorkspaceMembership).filter_by(
+        workspace_id=workspace_id, user_id=current_user.id, status="active",
+    ).first():
+        raise HTTPException(status_code=403, detail="You do not have access to this workspace.")
 
-    project = (
-        db.query(Project)
-        .filter(Project.id == project_id, Project.workspace_id == workspace_id, Project.is_system.is_(False))
-        .first()
-    )
+    project = db.query(Project).filter(
+        Project.id == project_id, Project.workspace_id == workspace_id, Project.is_system.is_(False),
+    ).with_for_update().first()
     if not project:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
-
+        raise HTTPException(status_code=404, detail="Project not found.")
     project_name = project.name
-
     try:
-        # Unknown Context is a system quarantine. Clear recommendations that
-        # point to the deleted project, then return those items to reviewable state.
-        db.query(PossibleProjectMatch).filter(
-            PossibleProjectMatch.candidate_project_id == project_id
-        ).delete(synchronize_session=False)
-        db.query(UnknownContextItem).filter(
-            UnknownContextItem.assigned_project_id == project_id
-        ).update(
-            {
-                UnknownContextItem.assigned_project_id: None,
-                UnknownContextItem.assigned_by: None,
-                UnknownContextItem.assigned_at: None,
-                UnknownContextItem.status: UnknownItemStatus.PENDING.value,
-            },
-            synchronize_session=False,
-        )
-
-        # Delete project-scoped rows that use loose project_id ownership.
-        db.query(Evidence).filter(Evidence.project_id == project_id).delete(synchronize_session=False)
-        db.query(CandidateKnowledge).filter(CandidateKnowledge.project_id == project_id).delete(synchronize_session=False)
-        db.query(AgentRun).filter(AgentRun.project_id == project_id).delete(synchronize_session=False)
-        db.query(AgentExecution).filter(AgentExecution.project_id == project_id).delete(synchronize_session=False)
-        db.query(Conflict).filter(Conflict.project_id == project_id).delete(synchronize_session=False)
-        db.query(ContextResolution).filter(ContextResolution.project_id == project_id).delete(synchronize_session=False)
-        db.query(SourceEvent).filter(SourceEvent.project_id == project_id).delete(synchronize_session=False)
-        db.query(TaskJob).filter(TaskJob.project_id == project_id).delete(synchronize_session=False)
-        # Memory-derived rows and retained originals are project scoped too.
-        # Bulk deletes bypass ORM cascades, so remove dependents explicitly.
-        index_ids = [row[0] for row in db.query(MemoryIndex.id).filter(MemoryIndex.project_id == project_id).all()]
-        if index_ids:
-            db.query(MemoryTerm).filter(MemoryTerm.record_id.in_(index_ids)).delete(synchronize_session=False)
-        db.query(MemoryIndex).filter(MemoryIndex.project_id == project_id).delete(synchronize_session=False)
-        db.query(MemoryClaimRevision).filter(MemoryClaimRevision.project_id == project_id).delete(synchronize_session=False)
-        db.query(SourceArtifact).filter(SourceArtifact.project_id == project_id).delete(synchronize_session=False)
-        db.query(TopicWindow).filter(TopicWindow.project_id == project_id).delete(synchronize_session=False)
-        db.query(ProactiveHint).filter(ProactiveHint.project_id == project_id).delete(synchronize_session=False)
-        db.query(ProactiveEvent).filter(ProactiveEvent.project_id == project_id).delete(synchronize_session=False)
-        db.query(MeetEventRecord).filter(MeetEventRecord.project_id == project_id).delete(synchronize_session=False)
-        db.query(MeetSubscription).filter(MeetSubscription.project_id == project_id).delete(synchronize_session=False)
-        db.query(ProjectDomainProfile).filter(ProjectDomainProfile.project_id == project_id).delete(synchronize_session=False)
-
-        # ORM deletes preserve child cascades for meeting and visual trees.
-        for meeting in db.query(Meeting).filter(Meeting.project_id == project_id).all():
-            db.delete(meeting)
-
-        for workspace in db.query(VisualWorkspace).filter(VisualWorkspace.project_id == project_id).all():
-            db.delete(workspace)
-
-        for artifact in db.query(ExcalidrawArtifact).filter(ExcalidrawArtifact.project_id == project_id).all():
-            db.delete(artifact)
-
-        # ProjectState owns versions and state changes through ORM cascades.
-        project_state = db.query(ProjectState).filter(ProjectState.project_id == project_id).first()
-        if project_state:
-            db.delete(project_state)
-
-        db.flush()
-        db.delete(project)
+        result = purge_project_data(db, project)
         db.commit()
-
         return {
             "success": True,
             "project_id": project_id,
             "project_name": project_name,
-            "message": f"Project '{project_name}' and its project-scoped data were permanently deleted.",
+            "message": f"Project '{project_name}' and its project-owned data were permanently deleted.",
+            **result,
         }
-    except Exception as exc:
+    except ProjectDeletionBusy as exc:
         db.rollback()
-        logger.error(f"Project deletion failed for {project_id}: {exc}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Project deletion failed: {str(exc)}",
-        )
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception:
+        db.rollback()
+        logger.exception("Project deletion failed for %s", project_id)
+        raise HTTPException(status_code=500, detail="Project deletion failed. No changes were saved. Please retry.")
 
 
 @router.get(
