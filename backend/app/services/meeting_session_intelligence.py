@@ -619,6 +619,9 @@ class MeetingSessionIntelligenceService:
             return False
         if ContextIntelligenceService.is_casual_chatter(raw):
             return False
+        literal_words = [word.strip(".,!?।") for word in raw.lower().split()]
+        if literal_words and all(word in cls._FILLER_WORDS for word in literal_words):
+            return False
         words = [w.lower() for w in re.findall(r"[^\W_]+", raw, flags=re.UNICODE) if len(w) > 1 or w.isdigit()]
         if not words:
             return False
