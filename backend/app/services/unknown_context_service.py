@@ -220,8 +220,15 @@ class UnknownContextService:
         db: Session,
         tenant_id: str = "default_tenant",
         workspace_id: str = "ws_default",
+        limit: int = 100,
     ) -> Dict[str, int]:
-        """Re-rank pending inbox items after a project changes the candidate set."""
+        """Re-rank pending inbox items after a project changes the candidate set.
+
+        Bounded to the most recent ``limit`` pending items: with a large
+        backlog a full re-rank takes minutes of database round-trips, and
+        suggestions are advisory. Older items are re-ranked on the next
+        project change or when opened in triage.
+        """
         project_ids = self.project_ids_for_workspace(db, workspace_id)
         projects = self.context_service._authorized_projects(db, tenant_id, project_ids)
         corpus = self.context_service._build_corpus(projects, db, tenant_id)
@@ -232,6 +239,7 @@ class UnknownContextService:
                 UnknownContextItem.status == UnknownItemStatus.PENDING.value,
             )
             .order_by(UnknownContextItem.created_at.desc())
+            .limit(limit)
             .all()
         )
         refreshed = 0
