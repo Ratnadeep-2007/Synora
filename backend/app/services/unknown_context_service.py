@@ -681,28 +681,57 @@ class UnknownContextService:
         from app.models.unknown_cluster import UnknownCluster
 
         item_ids = [item.id for item in items]
-        evidence_deleted = 0
-        for item in items:
-            if item.evidence_id:
-                evidence = (
-                    db.query(Evidence).filter(Evidence.id == item.evidence_id).first()
-                )
-                if evidence and evidence.project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
-                    source_event_id = evidence.source_event_id
-                    db.delete(evidence)
-                    evidence_deleted += 1
-                    if source_event_id:
-                        event = (
-                            db.query(SourceEvent)
-                            .filter(SourceEvent.event_id == source_event_id)
-                            .first()
-                        )
-                        if event and event.project_id == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
-                            db.delete(event)
+
+        # Bulk deletes with IN queries: a per-item loop over a large backlog
+        # (hundreds of items x several Neon round-trips each) outlived every
+        # client timeout and rolled back, deleting nothing.
+        def _chunks(values, size=200):
+            for i in range(0, len(values), size):
+                yield values[i:i + size]
+
+        evidence_ids = [item.evidence_id for item in items if item.evidence_id]
+        deletable_evidence_ids: List[str] = []
+        deletable_event_ids: List[str] = []
+        for chunk in _chunks(evidence_ids):
+            rows = (
+                db.query(Evidence.id, Evidence.project_id, Evidence.source_event_id)
+                .filter(Evidence.id.in_(chunk))
+                .all()
+            )
+            for ev_id, ev_project, ev_event in rows:
+                if ev_project == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID:
+                    deletable_evidence_ids.append(ev_id)
+                    if ev_event:
+                        deletable_event_ids.append(ev_event)
+        owned_event_ids: List[str] = []
+        for chunk in _chunks(deletable_event_ids):
+            rows = (
+                db.query(SourceEvent.event_id, SourceEvent.project_id)
+                .filter(SourceEvent.event_id.in_(chunk))
+                .all()
+            )
+            owned_event_ids.extend(
+                event_id for event_id, ev_project in rows
+                if ev_project == SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+            )
+
+        for chunk in _chunks(item_ids):
             db.query(PossibleProjectMatch).filter(
-                PossibleProjectMatch.unknown_item_id == item.id
+                PossibleProjectMatch.unknown_item_id.in_(chunk)
             ).delete(synchronize_session=False)
-            db.delete(item)
+        for chunk in _chunks(deletable_evidence_ids):
+            db.query(Evidence).filter(Evidence.id.in_(chunk)).delete(
+                synchronize_session=False
+            )
+        for chunk in _chunks(owned_event_ids):
+            db.query(SourceEvent).filter(
+                SourceEvent.event_id.in_(chunk)
+            ).delete(synchronize_session=False)
+        evidence_deleted = len(deletable_evidence_ids)
+        for chunk in _chunks(item_ids):
+            db.query(UnknownContextItem).filter(
+                UnknownContextItem.id.in_(chunk)
+            ).delete(synchronize_session=False)
 
         if item_ids:
             for cluster in db.query(UnknownCluster).filter(
