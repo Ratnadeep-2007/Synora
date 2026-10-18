@@ -34,8 +34,11 @@ def main():
     (OUT / "english_translations.json").write_text(json.dumps(translations, ensure_ascii=False, indent=2), encoding="utf-8")
     notes = ["# Notes from the deployed meeting canvas", "", "Exported from the actual Render scene; these are generated notes, not approved project memory.", ""]
     block_counts = Counter()
-    for element in texts:
+    note_elements = [element for element in texts if ((element.get("customData") or {}).get("visual") or {}).get("type") in {"note_block", "note_section_header"}]
+    for element in sorted(note_elements, key=lambda item: (item.get("y", 0), item.get("x", 0))):
         visual = (element.get("customData") or {}).get("visual") or {}
+        if visual.get("type") == "note_section_header":
+            notes += ["## " + " ".join(element["text"].split()), ""]
         if visual.get("type") == "note_block":
             block_counts[visual.get("block_type")] += 1
             notes += ["- " + " ".join(element["text"].split()), ""]
