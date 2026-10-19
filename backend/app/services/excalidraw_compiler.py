@@ -464,7 +464,7 @@ class ExcalidrawCompiler:
             lines = _wrap_text(rendered, notes_w - 56, font).split("\n")
             return max(34, int(font * 1.4 * len(lines)) + 9)
 
-        meeting_document = plan.prompt_version == "meeting-notes-v1"
+        meeting_document = plan.prompt_version.startswith("meeting-notes-v")
         if document and document.get("sections"):
             ordered_sections = sorted(
                 document.get("sections") or [],
@@ -617,7 +617,7 @@ class ExcalidrawCompiler:
                     sec_id = str(section.get("id") or section.get("title") or f"section_{sec_index}")
                     sec_key = hashlib.sha1(sec_id.encode("utf-8")).hexdigest()[:12]
                     heading = str(section.get("title") or "Notes")[:100]
-                    section_evidence = [str(e) for e in (section.get("evidence_ids") or [])][:4]
+                    section_evidence = [str(e) for e in (section.get("evidence_ids") or [])]
                     section_support = str(section.get("support_type") or ("explicit" if section_evidence else "inferred"))
                     heading_wrapped = _wrap_text(heading, notes_w - 48, 16 if meeting_document else 14)
                     heading_h = 20 + 16 * max(0, len(heading_wrapped.split("\n")) - 1)
@@ -672,7 +672,7 @@ class ExcalidrawCompiler:
                         # path emits legacy_block_N per kind bucket), and an
                         # unscoped hash collides across sections.
                         block_key = hashlib.sha1(f"{sec_id}:{block_id}".encode("utf-8")).hexdigest()[:12]
-                        block_evidence = [str(e) for e in (block.get("evidence_ids") or section_evidence)][:4]
+                        block_evidence = [str(e) for e in (block.get("evidence_ids") or section_evidence)]
                         block_support = str(block.get("support_type") or ("explicit" if block_evidence else "inferred"))
                         rendered = _block_text(block)
                         bh = _block_height(block)

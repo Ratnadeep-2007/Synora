@@ -259,6 +259,10 @@ def get_meeting_canvas(
         .order_by(Evidence.occurred_at.asc())
         .all()
     ]
+    if refresh:
+        # Serialize explicit refresh claims before checking/stamping cooldown.
+        # The commit below releases this lock before any provider call.
+        db.refresh(artifact, with_for_update=True)
     try:
         app_state = json.loads(artifact.app_state_json or "{}")
     except (TypeError, ValueError):
@@ -268,6 +272,9 @@ def get_meeting_canvas(
     stored_ai = canvas_meta.get("ai_status")
     evidence_changed = stored_ids != evidence_ids
     ai_upgrade_available = stored_ai in (None, "deterministic", "partial")
+    from app.services.meeting_note_document import MEETING_NOTES_VERSION
+    template_upgrade = canvas_meta.get("notes_structure_version") != MEETING_NOTES_VERSION
+    first_template_attempt = template_upgrade and canvas_meta.get("last_refresh_template_version") != MEETING_NOTES_VERSION
 
     def _cached(reason: str, **extra):
         return {
@@ -276,7 +283,8 @@ def get_meeting_canvas(
             "reason": reason,
             "ai_status": stored_ai,
             "evidence_changed": evidence_changed,
-            "refresh_available": bool(evidence_changed or ai_upgrade_available),
+            "refresh_available": bool(evidence_changed or ai_upgrade_available or template_upgrade),
+            "template_upgrade_available": template_upgrade,
             "artifact": excal.format_artifact_read(artifact).model_dump(),
             **extra,
         }
@@ -295,7 +303,7 @@ def get_meeting_canvas(
     last_attempt = _canvas_last_refresh_attempt(canvas_meta)
     if cooldown and last_attempt is not None:
         elapsed = (now - last_attempt).total_seconds()
-        if 0 <= elapsed < cooldown:
+        if 0 <= elapsed < cooldown and not first_template_attempt:
             return _cached(
                 "refresh_cooldown",
                 retry_after_seconds=int(cooldown - elapsed),
@@ -307,12 +315,14 @@ def get_meeting_canvas(
         state_blob = dict(app_state)
         meta_blob = dict(state_blob.get("meeting_canvas") or {})
         meta_blob["last_refresh_attempt_at"] = now.isoformat()
+        meta_blob["last_refresh_template_version"] = MEETING_NOTES_VERSION
         state_blob["meeting_canvas"] = meta_blob
         artifact.app_state_json = json.dumps(state_blob)
         db.commit()
     except Exception as exc:
         logger.warning("meeting_canvas_refresh_stamp_failed: meeting=%s error=%s", meeting_id, exc)
         db.rollback()
+        return _cached("refresh_claim_failed")
 
     try:
         service = MeetingSessionIntelligenceService()
@@ -332,6 +342,7 @@ def get_meeting_canvas(
         state_blob = json.loads(artifact.app_state_json or "{}")
         meta_blob = dict(state_blob.get("meeting_canvas") or {})
         meta_blob["last_refresh_attempt_at"] = now.isoformat()
+        meta_blob["last_refresh_template_version"] = MEETING_NOTES_VERSION
         state_blob["meeting_canvas"] = meta_blob
         artifact.app_state_json = json.dumps(state_blob)
         db.commit()

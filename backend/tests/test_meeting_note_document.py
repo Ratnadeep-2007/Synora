@@ -115,3 +115,22 @@ def test_variable_height_notebook_pages_do_not_overlap():
     for i, left in enumerate(pages):
         for right in pages[i + 1:]:
             assert left["x"] + left["width"] <= right["x"] or right["x"] + right["width"] <= left["x"] or left["y"] + left["height"] <= right["y"] or right["y"] + right["height"] <= left["y"]
+
+
+def test_fragmented_rejection_is_named_from_earlier_proposal_and_not_an_agreed_decision():
+    snippets = [source("proposal", "I suggest a proposal to replace Postgres with MongoDB"),
+                source("release", "For this release"), source("name", "MongoDB's"),
+                source("fragment", "Parastav"), source("reject", "is rejected")]
+    result = assemble_meeting_notes(state(), snippets)
+    assert "MongoDB proposal rejected for this release" in block_text(result, "Discussed and rejected")
+    assert "MongoDB" not in block_text(result, "Decisions")
+    reject = next(s for s in result.notes_document.sections if s.title == "Discussed and rejected").blocks[0]
+    assert set(reject.evidence_ids) == {"proposal", "release", "name", "fragment", "reject"}
+    elements = ExcalidrawCompiler().compile(result)
+    rendered = next(e for e in elements if e.get("customData", {}).get("visual", {}).get("block_id") == reject.id and e["type"] == "text")
+    assert len(rendered["customData"]["visual"]["evidence_ids"]) == 5
+
+
+def test_unapproved_budget_is_not_a_rejected_proposal():
+    result = assemble_meeting_notes(state(), [source(text="The budget is not approved")])
+    assert not block_text(result, "Discussed and rejected")

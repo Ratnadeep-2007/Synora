@@ -83,8 +83,9 @@ def test_canvas_read_partial_ai_status_still_cached(client: TestClient, db_sessi
 
 
 def test_canvas_refresh_respects_cooldown(client: TestClient, db_session: Session, test_user: User, seeded_canvas_meeting, counting_sync):
+    from app.services.meeting_note_document import MEETING_NOTES_VERSION
     recent = datetime.now(timezone.utc).isoformat()
-    _seed_artifact(db_session, seeded_canvas_meeting.id, {"ai_status": "partial", "evidence_ids": [], "last_refresh_attempt_at": recent})
+    _seed_artifact(db_session, seeded_canvas_meeting.id, {"ai_status": "partial", "evidence_ids": [], "last_refresh_attempt_at": recent, "last_refresh_template_version": MEETING_NOTES_VERSION})
     response = client.get(f"/meetings/{seeded_canvas_meeting.id}/canvas?refresh=true", headers={"X-User-ID": test_user.id})
     assert response.status_code == 200
     body = response.json()
@@ -92,6 +93,17 @@ def test_canvas_refresh_respects_cooldown(client: TestClient, db_session: Sessio
     assert body["reason"] == "refresh_cooldown"
     assert body["retry_after_seconds"] > 0
     assert counting_sync.calls == 0
+
+
+def test_explicit_template_upgrade_gets_one_attempt_then_cooldown(client, db_session, test_user, seeded_canvas_meeting, counting_sync):
+    _seed_artifact(db_session, seeded_canvas_meeting.id, {"ai_status": "ai", "evidence_ids": [], "last_refresh_attempt_at": datetime.now(timezone.utc).isoformat(), "notes_structure_version": "legacy"})
+    url = f"/meetings/{seeded_canvas_meeting.id}/canvas"
+    headers = {"X-User-ID": test_user.id}
+    assert client.get(url, headers=headers).json()["template_upgrade_available"] is True
+    assert counting_sync.calls == 0
+    assert client.get(url + "?refresh=true", headers=headers).json()["reason"] == "fake_sync"
+    assert client.get(url + "?refresh=true", headers=headers).json()["reason"] == "refresh_cooldown"
+    assert counting_sync.calls == 1
 
 
 def test_canvas_refresh_syncs_once_after_cooldown(client: TestClient, db_session: Session, test_user: User, seeded_canvas_meeting, counting_sync):

@@ -10,7 +10,7 @@ from app.schemas.visual_plan import NoteBlock, NoteSection, NotesDocument, Visua
 from app.services.translation_service import needs_translation
 
 
-MEETING_NOTES_VERSION = "meeting-notes-v1"
+MEETING_NOTES_VERSION = "meeting-notes-v2"
 MEETING_NOTES_PROMPT = """DEFAULT MEETING READING ORDER:
 Summary (one or two sentences), Decisions, Next steps, Topics discussed (topic
 subheadings), Discussed and rejected, Open questions, Details and diagrams.
@@ -37,7 +37,7 @@ even when they have no extracted candidates or approved project memory.
 
 ORDER = ["Summary", "Decisions", "Next steps", "Topics discussed",
          "Discussed and rejected", "Open questions", "Details"]
-REJECTED = re.compile(r"\b(reject(?:ed|ing)?|ruled out|not proceeding|will not adopt|decided against|not approved)\b", re.I)
+REJECTED = re.compile(r"\b(reject(?:ed|ing)?|ruled out|not proceeding|will not adopt|decided against)\b", re.I)
 CONDITIONAL = re.compile(r"\b(without|unless|only if|provided that|subject to|pending approval)\b", re.I)
 
 
@@ -188,6 +188,31 @@ def assemble_meeting_notes(
                 text = f"{text}" + (f" — Due: {item['due_hint']}" if item.get("due_hint") else "")
             project = str((state.get("project_names") or {}).get(item.get("project_id")) or item.get("project_id") or "")
             add(target_category, text, item.get("evidence_ids") or [], "checklist" if category == "Next steps" else "bullets", project)
+
+    if not grouped["Discussed and rejected"]:
+        for pos, (source_id, source) in enumerate(ordered_sources):
+            rejection = str(source.get("text") or source.get("content") or "")
+            if not _rejected(rejection):
+                continue
+            context = ordered_sources[max(0, pos - 3):pos + 1]
+            context_text = " ".join(str(s.get("text") or s.get("content") or "") for _, s in context)
+            refs = [eid for eid, _ in context]
+            # Name a fragmented rejection only when that exact name also
+            # occurs in an earlier explicit proposal, not by guessing a topic.
+            names = set(re.findall(r"\b[A-Z][A-Za-z0-9_-]{2,}\b", context_text)) - {"For", "This", "The", "Now", "But", "Confirm"}
+            subject = None
+            for proposal_id, proposal in reversed(ordered_sources[:pos]):
+                proposal_text = str(proposal.get("text") or proposal.get("content") or "")
+                if re.search(r"\b(proposal|suggest|consider)\b", proposal_text, re.I):
+                    matches = sorted(name for name in names if re.search(r"\b" + re.escape(name) + r"\b", proposal_text))
+                    if len(matches) == 1:
+                        subject = matches[0]
+                        refs.append(proposal_id)
+                        break
+            text = (f"{subject} proposal rejected" if subject else rejection)
+            if subject and "for this release" in context_text.lower():
+                text += " for this release"
+            add("Discussed and rejected", text, refs)
 
     if not any(grouped.values()):
         for source_id, source in sources.items():
