@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.evidence import Evidence
 from app.models.intelligence import CandidateKnowledge
 from app.models.meeting import Meeting, Transcript, TranscriptEntry
-from app.models.project import SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
+from app.models.project import Project, SYSTEM_UNKNOWN_CONTEXT_PROJECT_ID
 from app.services.visual_plan_service import VisualPlanService
 from app.services.translation_service import english_note_text, needs_translation
 
@@ -676,6 +676,11 @@ class MeetingSessionIntelligenceService:
                     "id": entry.id,
                     "content": f"{speaker}: {text}",
                     "source": "meeting_transcript",
+                    "text": text,
+                    "timestamp": (
+                        f"{int(max(0, (entry.start_time - ordered_entries[0].start_time).total_seconds())) // 60:02d}:"
+                        f"{int(max(0, (entry.start_time - ordered_entries[0].start_time).total_seconds())) % 60:02d}"
+                    ) if entry.start_time and ordered_entries[0].start_time else None,
                 }
             )
         if snippets:
@@ -792,6 +797,10 @@ class MeetingSessionIntelligenceService:
             statuses.append(status)
 
         merged = plans[0] if len(plans) == 1 else _merge_meeting_plans(plans, meeting_title)
+        if state_summary.get("context_scope") == "complete_meeting_discussion":
+            from app.services.meeting_note_document import assemble_meeting_notes
+            # Assemble once, after all batches, so the overview is never repeated.
+            merged = assemble_meeting_notes(state_summary, evidence_snippets, merged if any(s == "ai" for s in statuses) else None)
         if all(status == "ai" for status in statuses):
             overall = "ai"
         elif all(status == "deterministic" for status in statuses):
@@ -889,6 +898,14 @@ class MeetingSessionIntelligenceService:
             "transcript_entry_count": len(entries),
             "discussion_snippet_count": len(evidence_snippets),
             "context_scope": "complete_meeting_discussion",
+            "meeting_intelligence": self.build_session_intelligence(meeting_id, db),
+            "project_names": {p.id: p.name for p in db.query(Project).filter(Project.id.in_({e.project_id for e in evidence_records})).all()},
+            "evidence_aliases": {e.id: e.transcript_entry_id or e.id for e in evidence_records},
+            "meeting_date": meeting.start_time.isoformat() if meeting.start_time else None,
+            "meeting_duration": (
+                f"{int(max(0, (meeting.end_time - meeting.start_time).total_seconds())) // 60} min "
+                f"{int(max(0, (meeting.end_time - meeting.start_time).total_seconds())) % 60} sec"
+            ) if meeting.start_time and meeting.end_time else None,
             "requirements": [],
             "architecture": [],
             "decisions": [],
@@ -915,6 +932,9 @@ class MeetingSessionIntelligenceService:
             "Do not import project-wide status, Project State, or information from other meetings. "
             "The workspace outside this canvas handles project routing."
         )
+        from app.services.meeting_note_document import MEETING_NOTES_PROMPT
+        focus = focus.replace("There are NO required sections, categories, note formats, or diagram types. ", "")
+        focus += "\n" + MEETING_NOTES_PROMPT
 
         plan, ai_status, batch_info = self._build_canvas_plans(
             meeting=meeting,

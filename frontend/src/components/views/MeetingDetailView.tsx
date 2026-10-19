@@ -38,17 +38,39 @@ type NoteElement = {
   x?: number;
   y?: number;
   isDeleted?: boolean;
-  customData?: { visual?: { type?: string; evidence_ids?: string[] } };
+  customData?: {
+    visual?: {
+      type?: string;
+      evidence_ids?: string[];
+      section_id?: string;
+      section_order?: number;
+      block_type?: string;
+      block_items?: string[];
+      block_text?: string;
+      block_rows?: string[][];
+      tone?: string;
+    };
+  };
 };
 type NoteSection = {
   id: string;
   title: string;
-  notes: { id: string; text: string; sourceIds: string[] }[];
+  order?: number;
+  notes: {
+    id: string;
+    text: string;
+    sourceIds: string[];
+    kind?: string;
+    items?: string[];
+    rows?: string[][];
+    tone?: string;
+  }[];
 };
 
 // The readable notes and diagram editor consume the same persisted notebook.
 function notebookSections(elements: NoteElement[]): NoteSection[] {
   const sections: NoteSection[] = [];
+  const byId = new Map<string, NoteSection>();
   const ordered = elements
     .filter(
       (element) =>
@@ -57,8 +79,30 @@ function notebookSections(elements: NoteElement[]): NoteSection[] {
     .sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
   for (const element of ordered) {
     const visual = element.customData?.visual;
+    if (visual?.type === "note_section_header" && visual.section_id) {
+      const section = {
+        id: visual.section_id,
+        title: element.text!.trim(),
+        order: visual.section_order,
+        notes: [],
+      };
+      sections.push(section);
+      byId.set(visual.section_id, section);
+    }
+  }
+  let legacySection: NoteSection | undefined;
+  for (const element of ordered) {
+    const visual = element.customData?.visual;
     if (visual?.type === "note_section_header") {
-      sections.push({ id: element.id, title: element.text!.trim(), notes: [] });
+      if (visual.section_id) legacySection = byId.get(visual.section_id);
+      else {
+        legacySection = {
+          id: element.id,
+          title: element.text!.trim(),
+          notes: [],
+        };
+        sections.push(legacySection);
+      }
     } else if (visual?.type === "note_block") {
       const text = element.text!.replace(/\s+/g, " ").trim();
       if (
@@ -69,7 +113,10 @@ function notebookSections(elements: NoteElement[]): NoteSection[] {
         continue;
       if (!sections.length)
         sections.push({ id: "notes", title: "Meeting notes", notes: [] });
-      const section = sections[sections.length - 1];
+      const section =
+        (visual.section_id && byId.get(visual.section_id)) ||
+        legacySection ||
+        sections[sections.length - 1];
       const duplicate = section.notes.find(
         (note) => note.text.toLowerCase() === text.toLowerCase(),
       );
@@ -82,10 +129,16 @@ function notebookSections(elements: NoteElement[]): NoteSection[] {
           id: element.id,
           text,
           sourceIds: visual.evidence_ids || [],
+          kind: visual.block_type,
+          items: visual.block_items,
+          rows: visual.block_rows,
+          tone: visual.tone,
         });
     }
   }
-  return sections.filter((section) => section.notes.length);
+  return sections
+    .filter((section) => section.notes.length)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
 
 export function MeetingDetailView({
@@ -347,10 +400,54 @@ export function MeetingDetailView({
                     <h3 className="mb-2 text-xs font-semibold text-text-main">
                       {section.title}
                     </h3>
-                    <ul className="list-disc space-y-3 pl-4 text-xs leading-relaxed text-text-main marker:text-text-muted">
+                    <div
+                      className={`space-y-3 rounded-lg p-3 text-xs leading-relaxed text-text-main ${section.title === "Decisions" ? "bg-green-50" : section.title === "Next steps" ? "bg-amber-50" : section.title === "Open questions" ? "bg-slate-50" : ""}`}
+                    >
                       {section.notes.map((note) => (
-                        <li key={note.id} className="pl-1">
-                          <span className="break-words">{note.text}</span>
+                        <div key={note.id} className="break-words">
+                          {note.kind === "key_value" && note.rows?.length ? (
+                            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                              {note.rows.map((row, index) => (
+                                <React.Fragment key={index}>
+                                  <dt className="text-text-muted">{row[0]}</dt>
+                                  <dd>{row[1]}</dd>
+                                </React.Fragment>
+                              ))}
+                            </dl>
+                          ) : note.kind === "heading" ? (
+                            <h4 className="pt-2 font-semibold">{note.text}</h4>
+                          ) : note.kind === "checklist" ? (
+                            <ul className="space-y-2">
+                              {(note.items?.length
+                                ? note.items
+                                : [note.text]
+                              ).map((item, index) => (
+                                <li key={index} className="flex gap-2">
+                                  <span aria-hidden="true">☐</span>
+                                  <span>{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : note.kind === "bullets" || !note.kind ? (
+                            <ul className="list-disc space-y-1 pl-4">
+                              {(note.items?.length
+                                ? note.items
+                                : [note.text]
+                              ).map((item, index) => (
+                                <li key={index}>{item}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p
+                              className={
+                                note.kind === "callout"
+                                  ? "rounded-md border border-border bg-surface-muted p-3 font-medium"
+                                  : "whitespace-pre-line"
+                              }
+                            >
+                              {note.text}
+                            </p>
+                          )}
                           {note.sourceIds.some((id) => entryIds.has(id)) && (
                             <button
                               type="button"
@@ -361,9 +458,9 @@ export function MeetingDetailView({
                               Show source
                             </button>
                           )}
-                        </li>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   </section>
                 ))
               ) : (

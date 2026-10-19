@@ -462,8 +462,9 @@ class ExcalidrawCompiler:
             # draw boxes far shorter than their overflowing text.
             font = 17 if kind == "heading" else 12
             lines = _wrap_text(rendered, notes_w - 56, font).split("\n")
-            return min(720, max(34, 15 * len(lines) + 8))
+            return max(34, 15 * len(lines) + 8)
 
+        meeting_document = plan.prompt_version == "meeting-notes-v1"
         if document and document.get("sections"):
             ordered_sections = sorted(
                 document.get("sections") or [],
@@ -486,6 +487,10 @@ class ExcalidrawCompiler:
                 blocks = [b for b in blocks if _block_text(b) or str(b.get("block_type") or "").lower() == "divider"]
                 if not blocks:
                     continue
+                if meeting_document and sec.get("id") == "meeting_transcript_appendix" and current_page:
+                    pages.append(current_page)
+                    current_page = []
+                    current_height = 96
                 section_height = 42 + sum(_block_height(b) + 12 for b in blocks) + 18
                 if current_page and current_height + section_height > max_page_height:
                     pages.append(current_page)
@@ -497,22 +502,28 @@ class ExcalidrawCompiler:
                 pages.append(current_page)
 
             title_digest = hashlib.sha1((document.get("title") or "PROJECT NOTES").encode("utf-8")).hexdigest()[:12]
+            document_x = notes_x
+            page_y = notes_y
             for page_index, page_sections in enumerate(pages):
+                appendix_page = meeting_document and page_sections[0][0].get("id") == "meeting_transcript_appendix"
+                notes_x = document_x + notes_w + 400 if appendix_page else document_x
+                if appendix_page:
+                    page_y = BASE_Y
                 page_height = 120
                 for _, blocks in page_sections:
                     page_height += 52 + sum(_block_height(b) + 12 for b in blocks) + 18
-                page_height = min(max(page_height, 520), max_page_height)
+                page_height = max(page_height, 520)
                 page_id = f"notes_page_{title_digest}_{page_index}"
                 elements.append({
                     "id": page_id,
                     "type": "rectangle",
                     "x": notes_x,
-                    "y": notes_y + page_index * (page_height + 70),
+                    "y": page_y,
                     "width": notes_w,
                     "height": page_height,
                     "angle": 0,
                     "strokeColor": "#8a8a8a",
-                    "backgroundColor": "#fffdf7",
+                    "backgroundColor": "#f3f4f6" if appendix_page else "#fffdf7",
                     "fillStyle": "solid",
                     "strokeWidth": 1,
                     "roughness": 0,
@@ -528,7 +539,7 @@ class ExcalidrawCompiler:
                         }
                     },
                 })
-                cursor_y = notes_y + page_index * (page_height + 70) + 24
+                cursor_y = page_y + 24
                 doc_title = str(document.get("title") or "PROJECT NOTES")
                 if page_index == 0:
                     title_text = doc_title
@@ -608,7 +619,7 @@ class ExcalidrawCompiler:
                     heading = str(section.get("title") or "Notes")[:100]
                     section_evidence = [str(e) for e in (section.get("evidence_ids") or [])][:4]
                     section_support = str(section.get("support_type") or ("explicit" if section_evidence else "inferred"))
-                    heading_wrapped = _wrap_text(heading, notes_w - 48, 14)
+                    heading_wrapped = _wrap_text(heading, notes_w - 48, 16 if meeting_document else 14)
                     heading_h = 20 + 16 * max(0, len(heading_wrapped.split("\n")) - 1)
                     elements.append({
                         "id": f"note_section_{sec_key}_header",
@@ -619,7 +630,7 @@ class ExcalidrawCompiler:
                         "height": heading_h,
                         "text": heading_wrapped,
                         "originalText": heading_wrapped,
-                        "fontSize": 14,
+                        "fontSize": 16 if meeting_document else 14,
                         "fontFamily": 1,
                         "textAlign": "left",
                         "verticalAlign": "top",
@@ -639,6 +650,7 @@ class ExcalidrawCompiler:
                             "visual": {
                                 "type": "note_section_header",
                                 "section_id": sec_id,
+                                "section_order": section.get("order", 0),
                                 "evidence_ids": section_evidence,
                                 "support_type": section_support,
                             }
@@ -759,6 +771,11 @@ class ExcalidrawCompiler:
                                     "type": "note_block",
                                     "block_id": block_id,
                                     "block_type": kind,
+                                    "section_id": sec_id,
+                                    "block_items": list(block.get("items") or []),
+                                    "block_text": str(block.get("text") or ""),
+                                    "block_rows": list(block.get("rows") or []),
+                                    "tone": block.get("tone"),
                                     "evidence_ids": block_evidence,
                                     "support_type": block_support,
                                 }
@@ -797,7 +814,7 @@ class ExcalidrawCompiler:
                         "height": body_height,
                         "angle": 0,
                         "strokeColor": "#e2e6e1",
-                        "backgroundColor": "#fbfdfb",
+                        "backgroundColor": ({"Decisions": "#edf8f0", "Next steps": "#fff8e6", "Open questions": "#eef3f8"}.get(heading, "#fbfdfb") if meeting_document else "#fbfdfb"),
                         "fillStyle": "solid",
                         "strokeWidth": 1,
                         "roughness": 0,
@@ -815,7 +832,10 @@ class ExcalidrawCompiler:
                         },
                     })
 
-                if page_index == len(pages) - 1:
+                    if meeting_document:
+                        cursor_y += 28
+
+                if page_index == len(pages) - 1 and not meeting_document:
                     footer = str(document.get("updated_label") or "Maintained automatically from project memory")
                     footer_text = footer + " • rechecked every 30 seconds"
                     footer_wrapped = _wrap_text(footer_text[:300], notes_w - 48, 9)
@@ -824,7 +844,7 @@ class ExcalidrawCompiler:
                         "id": f"notes_footer_{title_digest}",
                         "type": "text",
                         "x": notes_x + 24,
-                        "y": notes_y + page_index * (page_height + 70) + page_height - 34,
+                        "y": page_y + page_height - 34,
                         "width": notes_w - 48,
                         "height": footer_h,
                         "text": footer_wrapped,
@@ -847,6 +867,8 @@ class ExcalidrawCompiler:
                         "isDeleted": False,
                         "customData": {"visual": {"type": "project_notes_footer"}},
                     })
+                page_y += page_height + 70
+            notes_x = document_x
 
         # Compatibility metadata for the old notes API. These elements
         # are intentionally deleted: existing integrations/tests can still

@@ -266,13 +266,15 @@ class VisualPlanService:
         )
 
         free_mode = bool(free or settings.visual_design_free)
+        meeting_mode = state_summary.get("context_scope") == "complete_meeting_discussion"
         prompt_lines = [
             f"You are the visual canvas designer for '{project_title}'.",
             "Your output is the living visual workspace for ONE project or ONE scoped conversation.",
             "",
             "CONTENT AND REPRESENTATION ARE OPEN-ENDED.",
             "OUTPUT LANGUAGE: English only for all headings, notes, labels, tables, questions and actions. Translate Hindi and Marathi meaning into English. Preserve numbers, negation and uncertainty; do not transliterate sentences or invent missing translations. Translation-pending markers are processing status, never project facts.",
-            "There is NO required note-taking structure, no mandatory sections, no fixed note categories, no fixed diagram type, and no minimum number of diagrams.",
+            ("Use the default meeting reading order in REQUESTED FOCUS; diagram form remains free."
+             if meeting_mode else "There is NO required note-taking structure, no mandatory sections, no fixed note categories, no fixed diagram type, and no minimum number of diagrams."),
             "Choose the representation that best communicates the information: prose, headings, bullets, tables, callouts, sketches, timelines, flows, hierarchies, matrices, or a custom composition.",
             "Do not force unrelated information into categories merely because a schema offers them.",
             "For project work, keep useful context understandable as a maintained working canvas and evolve obsolete material instead of blindly accumulating duplicates.",
@@ -708,6 +710,9 @@ class VisualPlanService:
         focus_prompt: Optional[str] = None,
         evidence_snippets: Optional[List[Any]] = None,
     ) -> VisualPlan:
+        if state_summary.get("context_scope") == "complete_meeting_discussion":
+            from app.services.meeting_note_document import assemble_meeting_notes
+            return assemble_meeting_notes(state_summary, evidence_snippets or [])
         # In free design mode, an unavailable model must not silently fall back to
         # the old fixed architecture template. Preserve the user's content as a
         # plain derived notebook entry instead of fabricating a diagram.
