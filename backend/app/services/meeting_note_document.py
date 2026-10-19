@@ -115,7 +115,7 @@ def assemble_meeting_notes(
         # complete cited source instead of guessing how to reconstruct a rule.
         if category != "Details" and CONDITIONAL.search(source_text) and not CONDITIONAL.search(text):
             text = source_text
-        if _rejected(text):
+        if _rejected(text) and category in ("Decisions", "Topics discussed", "Discussed and rejected"):
             category = "Discussed and rejected"
             kind = "bullets"
         elif category == "Decisions" and re.search(r"\b(proposed|proposal|tentative|considering|might|could)\b", text, re.I):
