@@ -1070,6 +1070,7 @@ class MeetingSessionIntelligenceService:
                 "viewBackgroundColor": "#ffffff",
                 "meeting_canvas": {
                     "meeting_id": meeting_id,
+                    "notes_structure_version": plan.prompt_version,
                     "ai_status": ai_status,
                     "plan_fingerprint": plan_fingerprint,
                     "evidence_ids": [e.id for e in evidence_records],

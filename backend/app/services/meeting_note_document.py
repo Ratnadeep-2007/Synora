@@ -29,12 +29,27 @@ Discussed and rejected. Keep project identity in each claim/topic; independent
 projects must never share an invented integration. Proposed memory is not approved
 memory. Do not fill empty sections with invented content. Preserve implementation
 detail below the overview and draw useful evidence-backed relationships freely.
+For a chronological batch, cite ONLY the source IDs supplied in that batch.
+Global context explains corrections; never copy another batch's claims instead
+of recording this batch's discussion. New/unknown project topics deserve notes
+even when they have no extracted candidates or approved project memory.
 """
 
 ORDER = ["Summary", "Decisions", "Next steps", "Topics discussed",
          "Discussed and rejected", "Open questions", "Details"]
 REJECTED = re.compile(r"\b(reject(?:ed|ing)?|ruled out|not proceeding|will not adopt|decided against|not approved)\b", re.I)
 CONDITIONAL = re.compile(r"\b(without|unless|only if|provided that|subject to|pending approval)\b", re.I)
+
+
+def _rejected(text: str) -> bool:
+    # A negated rejection is not evidence that the proposal lost.
+    cleaned = re.sub(r"\b(?:not|never|do not|don't)\s+reject(?:ed|ing)?\b", "", text, flags=re.I)
+    return bool(REJECTED.search(cleaned))
+
+
+def _words(text: str):
+    stop = {"the", "a", "an", "to", "for", "of", "in", "on", "and", "or", "as", "is", "are", "be", "will", "must", "should", "we", "it", "this", "that", "with", "use", "our", "by", "from", "not", "no", "their", "they", "have", "has"}
+    return {w.rstrip("s") for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in stop and len(w) > 1}
 
 
 def _category(title: str) -> str:
@@ -64,6 +79,17 @@ def assemble_meeting_notes(
     aliases = state.get("evidence_aliases") or {}
     grouped: Dict[str, List[NoteBlock]] = {key: [] for key in ORDER}
     seen = set()
+    ordered_sources = list(sources.items())
+    conditional_contexts = []
+    for pos, (source_id, source) in enumerate(ordered_sources):
+        text = str(source.get("text") or source.get("content") or "")
+        if CONDITIONAL.search(text) and len(text) < 160 and pos + 1 < len(ordered_sources):
+            next_id, next_source = ordered_sources[pos + 1]
+            next_text = str(next_source.get("text") or next_source.get("content") or "")
+            # Recover adjacent speech fragments such as 'Without approval' /
+            # 'there will be no manual stock correction', not a new inference.
+            if not re.search(r"[.!?]$", text.strip()) and not CONDITIONAL.search(next_text):
+                conditional_contexts.append((text + ", " + next_text, [source_id, next_id], _words(next_text)))
 
     def add(category: str, text: str, ids: List[str], kind: str = "bullets",
             topic: str = "", tone: Optional[str] = None) -> None:
@@ -72,16 +98,35 @@ def assemble_meeting_notes(
         text = re.sub(r"^(?:Unknown Speaker|SPEAKER_\d+|Speaker):\s*", "", text.strip(), flags=re.I)
         if not refs or not text or needs_translation(text) or "translation pending" in text.lower():
             return
+        claim_words = _words(text)
+        for context, context_refs, operation_words in conditional_contexts:
+            if (not CONDITIONAL.search(text) and operation_words
+                    and len(claim_words & operation_words) >= 3
+                    and len(claim_words & operation_words) / len(operation_words) >= 0.6):
+                text, refs = context, context_refs
+                claim_words = _words(text)
+                break
         source_text = " ".join(str(sources[i].get("text") or sources[i].get("content") or "") for i in refs)
+        # A real ID alone does not support an unrelated claim. This is a
+        # conservative lexical gate, not a claim of semantic verification.
+        if claim_words and len(claim_words & _words(source_text)) / len(claim_words) < 0.35:
+            return
         # Conservative repair of the observed lost-condition failure. Keep the
         # complete cited source instead of guessing how to reconstruct a rule.
         if category != "Details" and CONDITIONAL.search(source_text) and not CONDITIONAL.search(text):
             text = source_text
-        if REJECTED.search(text):
+        if _rejected(text):
             category = "Discussed and rejected"
             kind = "bullets"
         elif category == "Decisions" and re.search(r"\b(proposed|proposal|tentative|considering|might|could)\b", text, re.I):
             category = "Topics discussed"
+        for existing in grouped[category]:
+            existing_text = existing.text or " ".join(existing.items)
+            old_words = _words(existing_text)
+            union = old_words | claim_words
+            if topic == (existing.title or "") and union and len(old_words & claim_words) / len(union) >= 0.8:
+                existing.evidence_ids = list(dict.fromkeys(existing.evidence_ids + refs))
+                return
         key = (category, topic.casefold(), re.sub(r"\W+", " ", text.lower()).strip())
         if key in seen:
             existing = next((b for b in grouped[category] if b.id == seen_map[key]), None)
@@ -133,7 +178,7 @@ def assemble_meeting_notes(
             target_category = category
             # Candidate classification alone is not proof that the meeting
             # agreed. With no explicit agreement wording, retain it as a topic.
-            if category == "Decisions" and not REJECTED.search(text):
+            if category == "Decisions" and not _rejected(text):
                 refs = [str(aliases.get(str(i), i)) for i in item.get("evidence_ids") or []]
                 support = " ".join(str(sources.get(i, {}).get("text") or sources.get(i, {}).get("content") or "") for i in refs)
                 if not re.search(r"\b(agreed|decided|approved|confirmed|will use|we will keep|we are keeping)\b", support, re.I):
@@ -150,9 +195,25 @@ def assemble_meeting_notes(
 
     # Each batch may propose a summary. Keep one brief overview, with other
     # supported summaries retained as detail rather than repeated at the top.
-    if len(grouped["Summary"]) > 1:
-        grouped["Details"].extend(grouped["Summary"][1:])
-        grouped["Summary"] = grouped["Summary"][:1]
+    grouped["Summary"] = grouped["Summary"][:1]
+
+    # Preserve content missed by partial or over-selective extraction. Group
+    # adjacent uncovered turns as source excerpts, never a per-line notebook.
+    covered = {eid for blocks in grouped.values() for block in blocks for eid in block.evidence_ids}
+    pending = []
+    def flush_uncovered():
+        if pending:
+            add("Details", " ".join(str(s.get("text") or s.get("content") or "") for _, s in pending),
+                [eid for eid, _ in pending], "paragraph", "Additional discussion · source excerpts")
+            pending.clear()
+    for source_id, source in ordered_sources:
+        if source_id in covered:
+            flush_uncovered()
+        else:
+            pending.append((source_id, source))
+            if len(pending) >= 5:
+                flush_uncovered()
+    flush_uncovered()
 
     sections = [NoteSection(id="meeting_header", title="Meeting", order=0, blocks=[NoteBlock(
         id="meeting_metadata", block_type="key_value", rows=[

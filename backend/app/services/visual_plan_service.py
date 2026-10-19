@@ -267,6 +267,19 @@ class VisualPlanService:
 
         free_mode = bool(free or settings.visual_design_free)
         meeting_mode = state_summary.get("context_scope") == "complete_meeting_discussion"
+        prompt_state = state_summary
+        if meeting_mode:
+            # Global candidate hints biased every batch toward the known
+            # project. Keep only hints whose source is present in this slice.
+            ids = {_evidence_id_of(s) for s in evidence_snippets or []}
+            aliases = state_summary.get("evidence_aliases") or {}
+            hints = state_summary.get("meeting_intelligence") or {}
+            prompt_state = {key: state_summary.get(key) for key in
+                            ("title", "participants", "meeting_date", "meeting_duration", "context_scope")}
+            prompt_state["extracted_proposals"] = {
+                field: [item for item in hints.get(field) or []
+                        if any(str(aliases.get(str(eid), eid)) in ids for eid in item.get("evidence_ids") or [])]
+                for field in ("decisions", "requirements", "action_items", "open_questions")}
         prompt_lines = [
             f"You are the visual canvas designer for '{project_title}'.",
             "Your output is the living visual workspace for ONE project or ONE scoped conversation.",
@@ -288,7 +301,8 @@ class VisualPlanService:
             "Never emit raw Excalidraw JSON.",
             "",
             "CURRENT CANVAS.",
-            "Treat the current canvas as an existing working document. Preserve useful content, update stale representations, and avoid pointless duplication.",
+            ("Existing canvas text is appearance context only. Rebuild meeting facts from this batch's evidence, not old generated summaries."
+             if meeting_mode else "Treat the current canvas as an existing working document. Preserve useful content, update stale representations, and avoid pointless duplication."),
         ]
 
         if free_mode:
@@ -308,8 +322,8 @@ class VisualPlanService:
             "",
             f"Return ONLY JSON matching this schema: {schema}",
             "",
-            "--- CURRENT PROJECT MEMORY ---",
-            json.dumps(state_summary, default=str)[:7000],
+            "--- MEETING EXTRACTION HINTS (PROPOSALS, NOT APPROVED MEMORY) ---" if meeting_mode else "--- CURRENT PROJECT MEMORY ---",
+            json.dumps(prompt_state, default=str)[:7000],
             "",
             "--- CURRENT CANVAS SUMMARY ---",
             json.dumps(current_nodes, default=str)[:2500],

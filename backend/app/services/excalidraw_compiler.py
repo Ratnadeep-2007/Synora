@@ -462,7 +462,7 @@ class ExcalidrawCompiler:
             # draw boxes far shorter than their overflowing text.
             font = 17 if kind == "heading" else 12
             lines = _wrap_text(rendered, notes_w - 56, font).split("\n")
-            return max(34, 15 * len(lines) + 8)
+            return max(34, int(font * 1.4 * len(lines)) + 9)
 
         meeting_document = plan.prompt_version == "meeting-notes-v1"
         if document and document.get("sections"):
@@ -814,7 +814,7 @@ class ExcalidrawCompiler:
                         "height": body_height,
                         "angle": 0,
                         "strokeColor": "#e2e6e1",
-                        "backgroundColor": ({"Decisions": "#edf8f0", "Next steps": "#fff8e6", "Open questions": "#eef3f8"}.get(heading, "#fbfdfb") if meeting_document else "#fbfdfb"),
+                        "backgroundColor": ("#f3f4f6" if appendix_page else {"Decisions": "#edf8f0", "Next steps": "#fff8e6", "Open questions": "#eef3f8"}.get(heading, "#fbfdfb") if meeting_document else "#fbfdfb"),
                         "fillStyle": "solid",
                         "strokeWidth": 1,
                         "roughness": 0,

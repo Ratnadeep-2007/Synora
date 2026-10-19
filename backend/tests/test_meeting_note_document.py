@@ -49,9 +49,9 @@ def test_empty_extraction_preserves_source_in_details_and_translation_status_not
 
 
 def test_one_overview_deduped_sources_and_topic_timestamp():
-    sections = [NoteSection(id=f"s{i}", title="Summary", blocks=[NoteBlock(id=f"b{i}", text=f"Outcome {i}", evidence_ids=["turn1"])]) for i in range(2)]
+    sections = [NoteSection(id=f"s{i}", title="Summary", blocks=[NoteBlock(id=f"b{i}", text=text, evidence_ids=["turn1"])]) for i, text in enumerate(["Track stock", "Track warehouse stock"])]
     sections += [NoteSection(id="topic", title="Harbor scope", blocks=[NoteBlock(id="t", text="Track stock", evidence_ids=["turn1"])])]
-    result = assemble_meeting_notes(state(), [source()], VisualPlan(notes_sections=sections))
+    result = assemble_meeting_notes(state(), [source(text="Track warehouse stock")], VisualPlan(notes_sections=sections))
     summary = next(s for s in result.notes_document.sections if s.title == "Summary")
     assert len(summary.blocks) == 1
     assert "00:12" in block_text(result, "Topics discussed")
@@ -60,7 +60,7 @@ def test_one_overview_deduped_sources_and_topic_timestamp():
 
 def test_compiled_blocks_keep_source_and_type_appendix_is_to_right_and_text_grows():
     result = assemble_meeting_notes(state(meeting_intelligence={"action_items": [
-        {"content": "Build dashboard", "evidence_ids": ["turn1"]}]}), [source()])
+        {"content": "Build dashboard", "evidence_ids": ["turn1"]}]}), [source(text="We will build dashboard")])
     elements = ExcalidrawCompiler().compile(result)
     notes = [e for e in elements if e.get("customData", {}).get("visual", {}).get("type") == "note_block"]
     checklist = next(e for e in notes if e["customData"]["visual"]["block_type"] == "checklist")
@@ -76,3 +76,42 @@ def test_candidate_proposal_cannot_become_agreed_decision():
         "content": "Use MongoDB", "evidence_ids": ["turn1"]}]}), [source(text="We could consider MongoDB.")])
     assert "Use MongoDB" not in block_text(result, "Decisions")
     assert "Use MongoDB" in block_text(result, "Topics discussed")
+
+
+def test_condition_split_across_turns_repairs_over_summarized_claim():
+    snippets = [source("condition", "Without the warehouse manager's approval", "00:36"),
+                source("rule", "There will be no manual stock correction", "00:44")]
+    plan = VisualPlan(notes_sections=[NoteSection(id="d", title="Decisions", blocks=[
+        NoteBlock(id="ban", text="No manual stock correction allowed", evidence_ids=["rule"])])])
+    result = assemble_meeting_notes(state(), snippets, plan)
+    assert "Without the warehouse manager's approval" in block_text(result, "Decisions")
+    block = next(s for s in result.notes_document.sections if s.title == "Decisions").blocks[0]
+    assert block.evidence_ids == ["condition", "rule"]
+
+
+def test_valid_but_unrelated_reference_is_not_grounding_and_unknown_discussion_survives():
+    snippets = [source("a", "A frappe agent helps with corrections"),
+                source("b", "Nimbus Cold Chain buffers temperature readings offline", "02:30")]
+    plan = VisualPlan(notes_sections=[NoteSection(id="r", title="Discussed and rejected", blocks=[
+        NoteBlock(id="bad", text="MongoDB migration rejected", evidence_ids=["a"])])])
+    result = assemble_meeting_notes(state(), snippets, plan)
+    assert "MongoDB" not in result.model_dump_json()
+    assert "Nimbus Cold Chain" in block_text(result, "Details")
+
+
+def test_negated_rejection_is_not_a_rejected_outcome():
+    snippets = [source(text="MongoDB was not rejected")]
+    plan = VisualPlan(notes_sections=[NoteSection(id="d", title="Topics", blocks=[
+        NoteBlock(id="x", text="MongoDB was not rejected", evidence_ids=["turn1"])])])
+    result = assemble_meeting_notes(state(), snippets, plan)
+    assert "MongoDB" not in block_text(result, "Discussed and rejected")
+
+
+def test_variable_height_notebook_pages_do_not_overlap():
+    sources = [source(str(i), f"Recorded detail {i}: " + "warehouse stock detail " * 50) for i in range(15)]
+    plan = assemble_meeting_notes(state(), sources)
+    elements = ExcalidrawCompiler().compile(plan)
+    pages = [e for e in elements if e.get("customData", {}).get("visual", {}).get("type") == "project_notes_page"]
+    for i, left in enumerate(pages):
+        for right in pages[i + 1:]:
+            assert left["x"] + left["width"] <= right["x"] or right["x"] + right["width"] <= left["x"] or left["y"] + left["height"] <= right["y"] or right["y"] + right["height"] <= left["y"]
