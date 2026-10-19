@@ -224,6 +224,62 @@ export function MeetingDetailView({
     }
   };
 
+  const renderNote = (note: NoteSection["notes"][number]) => (
+    <div key={note.id} className="break-words">
+      {note.kind === "key_value" && note.rows?.length ? (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+          {note.rows.map((row, index) => (
+            <React.Fragment key={index}>
+              <dt className="text-text-muted">{row[0]}</dt>
+              <dd>{row[1]}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      ) : note.kind === "heading" ? (
+        <h4 className="pt-2 font-semibold">{note.text}</h4>
+      ) : note.kind === "checklist" ? (
+        <ul className="space-y-2">
+          {(note.items?.length ? note.items : [note.text]).map(
+            (item, index) => (
+              <li key={index} className="flex gap-2">
+                <span aria-hidden="true">☐</span>
+                <span>{item}</span>
+              </li>
+            ),
+          )}
+        </ul>
+      ) : note.kind === "bullets" || !note.kind ? (
+        <ul className="list-disc space-y-1 pl-4">
+          {(note.items?.length ? note.items : [note.text]).map(
+            (item, index) => (
+              <li key={index}>{item}</li>
+            ),
+          )}
+        </ul>
+      ) : (
+        <p
+          className={
+            note.kind === "callout"
+              ? "rounded-md border border-border bg-surface-muted p-3 font-medium"
+              : "whitespace-pre-line"
+          }
+        >
+          {note.text}
+        </p>
+      )}
+      {note.sourceIds.some((id) => entryIds.has(id)) && (
+        <button
+          type="button"
+          onClick={() => showSource(note.sourceIds)}
+          aria-label={`Show transcript source for: ${note.text}`}
+          className="ml-2 inline-flex text-[10px] font-medium text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary"
+        >
+          Show source
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-5 view-enter">
       <header className="space-y-3">
@@ -383,7 +439,7 @@ export function MeetingDetailView({
                 Draft
               </span>
             </div>
-            <div className="max-h-[480px] space-y-5 overflow-y-auto p-5">
+            <div className="max-h-[640px] space-y-4 overflow-y-auto p-5">
               {pendingTranslations > 0 && (
                 <p
                   role="status"
@@ -403,63 +459,25 @@ export function MeetingDetailView({
                     <div
                       className={`space-y-3 rounded-lg p-3 text-xs leading-relaxed text-text-main ${section.title === "Decisions" ? "bg-green-50" : section.title === "Next steps" ? "bg-amber-50" : section.title === "Open questions" ? "bg-slate-50" : ""}`}
                     >
-                      {section.notes.map((note) => (
-                        <div key={note.id} className="break-words">
-                          {note.kind === "key_value" && note.rows?.length ? (
-                            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                              {note.rows.map((row, index) => (
-                                <React.Fragment key={index}>
-                                  <dt className="text-text-muted">{row[0]}</dt>
-                                  <dd>{row[1]}</dd>
-                                </React.Fragment>
-                              ))}
-                            </dl>
-                          ) : note.kind === "heading" ? (
-                            <h4 className="pt-2 font-semibold">{note.text}</h4>
-                          ) : note.kind === "checklist" ? (
-                            <ul className="space-y-2">
-                              {(note.items?.length
-                                ? note.items
-                                : [note.text]
-                              ).map((item, index) => (
-                                <li key={index} className="flex gap-2">
-                                  <span aria-hidden="true">☐</span>
-                                  <span>{item}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : note.kind === "bullets" || !note.kind ? (
-                            <ul className="list-disc space-y-1 pl-4">
-                              {(note.items?.length
-                                ? note.items
-                                : [note.text]
-                              ).map((item, index) => (
-                                <li key={index}>{item}</li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p
-                              className={
-                                note.kind === "callout"
-                                  ? "rounded-md border border-border bg-surface-muted p-3 font-medium"
-                                  : "whitespace-pre-line"
-                              }
-                            >
-                              {note.text}
-                            </p>
-                          )}
-                          {note.sourceIds.some((id) => entryIds.has(id)) && (
-                            <button
-                              type="button"
-                              onClick={() => showSource(note.sourceIds)}
-                              aria-label={`Show transcript source for: ${note.text}`}
-                              className="ml-2 inline-flex text-[10px] font-medium text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary"
-                            >
-                              Show source
-                            </button>
-                          )}
-                        </div>
-                      ))}
+                      {section.notes
+                        .slice(
+                          0,
+                          ["Decisions", "Next steps"].includes(section.title)
+                            ? 3
+                            : undefined,
+                        )
+                        .map(renderNote)}
+                      {["Decisions", "Next steps"].includes(section.title) &&
+                        section.notes.length > 3 && (
+                          <details className="pt-2">
+                            <summary className="cursor-pointer font-medium text-text-muted">
+                              Show {section.notes.length - 3} more
+                            </summary>
+                            <div className="mt-3 space-y-3">
+                              {section.notes.slice(3).map(renderNote)}
+                            </div>
+                          </details>
+                        )}
                     </div>
                   </section>
                 ))
