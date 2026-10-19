@@ -168,6 +168,13 @@ async def test_wait_for_bot_active_returns_completed_when_bot_gone(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_process_meeting_transcribes_recovered_recording(monkeypatch, db_session):
+    from sqlalchemy.orm import sessionmaker
+    from app.models.meeting import Meeting
+    import app.core.database as database
+
+    # The ingestion worker owns a new session. Point that factory at this
+    # test's connection, not the separate empty application SQLite database.
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
     service = VexaSarvamService(vexa_api_key="test", sarvam_api_key="")
 
     async def fake_completed(code):
@@ -200,7 +207,8 @@ async def test_process_meeting_transcribes_recovered_recording(monkeypatch, db_s
     assert result["status"] == "completed"
     from app.services.vexa_sarvam_service import get_capture_metadata
 
-    assert get_capture_metadata(meeting)["recording_id"] == 99
+    stored = db_session.query(Meeting).filter(Meeting.id == "mtg_recover_test").first()
+    assert get_capture_metadata(stored)["recording_id"] == 99
 
 
 def test_processing_claim_is_single_flight():
