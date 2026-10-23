@@ -14,6 +14,9 @@ if /i "%~1"=="test" goto opt_tests
 if /i "%~1"=="tests" goto opt_tests
 if /i "%~1"=="all" goto opt_all
 if /i "%~1"=="both" goto opt_all
+if /i "%~1"=="core" goto opt_core
+if /i "%~1"=="backendfrontend" goto opt_core
+if /i "%~1"=="bf" goto opt_core
 if /i "%~1"=="agent" goto opt_agent
 
 :menu
@@ -94,12 +97,13 @@ echo    [3] Start Frontend UI Only (:3002)
 echo    [4] Start WhatsApp Baileys Bridge Only
 echo    [5] Run Full Test Suite (pytest)
 echo    [6] Refresh Health and Port Status
-echo    [7] Local Agent Mode (Vexa + Baileys only, app from Render)
+echo    [7] Start Backend + Frontend ONLY (:8000 + :3002, no Baileys, no workers)
+echo    [8] Local Agent Mode (Vexa + Baileys only, app from Render)
 echo    [0] Exit
 echo ==============================================================================
 echo.
 
-choice /t 5 /d 1 /c 12345670 /m "Enter choice (auto-starts [1] in 5 seconds): "
+choice /t 5 /d 1 /c 123456780 /m "Enter choice (auto-starts [1] in 5 seconds): "
 set "SEL=%errorlevel%"
 
 if "%SEL%"=="1" goto opt_all
@@ -108,8 +112,9 @@ if "%SEL%"=="3" goto opt_frontend
 if "%SEL%"=="4" goto opt_baileys
 if "%SEL%"=="5" goto opt_tests
 if "%SEL%"=="6" goto menu
-if "%SEL%"=="7" goto opt_agent
-if "%SEL%"=="8" goto opt_exit
+if "%SEL%"=="7" goto opt_core
+if "%SEL%"=="8" goto opt_agent
+if "%SEL%"=="9" goto opt_exit
 goto opt_all
 
 :opt_all
@@ -137,6 +142,32 @@ echo ===========================================================================
 echo.
 echo Dedicated terminal windows have been opened for Backend, Frontend, and Baileys.
 echo To link WhatsApp, scan the QR code in the Baileys window with your phone.
+echo To terminate a service, press CTRL+C in its dedicated window.
+echo.
+pause
+exit /b 0
+
+:opt_core
+echo.
+call :kill_stale_clones
+echo ==============================================================================
+echo [1/2] Launching Backend API in new window (http://localhost:8000)...
+start "Synora Backend (API :8000)" cmd /k call "%~dp0start_backend.bat"
+
+echo [2/2] Launching Frontend UI in new window (http://localhost:3002)...
+start "Synora Frontend (UI :3002)" cmd /k call "%~dp0start_frontend.bat"
+
+echo.
+echo ==============================================================================
+echo              BACKEND + FRONTEND LAUNCHED (no Baileys, no workers)
+echo ==============================================================================
+echo  - Frontend Web UI:          http://localhost:3002
+echo  - Backend API and Docs:     http://localhost:8000/docs
+echo  - System Health:            http://localhost:8000/health
+echo ==============================================================================
+echo.
+echo Dedicated terminal windows have been opened for Backend and Frontend only.
+echo WhatsApp Baileys and background workers were NOT started (they run on Render).
 echo To terminate a service, press CTRL+C in its dedicated window.
 echo.
 pause

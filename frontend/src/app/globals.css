@@ -30,6 +30,43 @@
   --scrim: rgba(0, 0, 0, 0.4);
   --shadow-color: rgba(0, 0, 0, 0.07);
   --radius: 0.5rem;
+  /* Complete colors, shared by existing Synora and shadcn utilities. */
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface);
+  --popover-foreground: var(--foreground);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: var(--surface-soft);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--surface-soft);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--danger);
+  --destructive-foreground: oklch(1 0 0);
+  --input: var(--border);
+  --ring: var(--primary);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --canvas: var(--background);
+  --surface: oklch(0.145 0 0);
+  --surface-soft: oklch(0.269 0 0);
+  --surface-muted: oklch(0.205 0 0);
+  --border: oklch(0.269 0 0);
+  --border-subtle: oklch(0.205 0 0);
+  --border-active: oklch(0.556 0 0);
+  --text-main: var(--foreground);
+  --text-muted: oklch(0.708 0 0);
+  --text-dim: oklch(0.65 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-hover: oklch(0.87 0 0);
+  --primary-soft: var(--surface-soft);
+  --primary-foreground: oklch(0.205 0 0);
+  --ring: oklch(0.708 0 0);
 }
 
 html {
